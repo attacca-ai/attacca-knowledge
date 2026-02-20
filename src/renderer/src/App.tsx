@@ -6,7 +6,7 @@ import { useGateway } from '@/hooks/useGateway'
 import { useOnlineStatus } from '@/hooks/useOnlineStatus'
 import { LicenseGate } from '@/components/license/LicenseGate'
 import { OnboardingWizard } from '@/components/onboarding/OnboardingWizard'
-import { DashboardPlaceholder } from '@/components/dashboard/DashboardPlaceholder'
+import { AppShell } from '@/components/layout/AppShell'
 
 function App(): React.JSX.Element {
   const page = useAppStore((s) => s.page)
@@ -76,7 +76,7 @@ function App(): React.JSX.Element {
     case 'onboarding':
       return <OnboardingWizard onComplete={handleOnboardingComplete} />
     case 'dashboard':
-      return <DashboardPlaceholder />
+      return <AppShell />
     default:
       return <LicenseGate onActivated={handleLicenseActivated} />
   }
