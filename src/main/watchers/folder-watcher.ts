@@ -1,6 +1,6 @@
 import { watch, type FSWatcher } from 'fs'
 import { readFileSync, renameSync, existsSync, mkdirSync } from 'fs'
-import { join, extname, basename } from 'path'
+import { join, extname } from 'path'
 import { getMainWindow } from '../window/main-window'
 
 const SUPPORTED_EXTENSIONS = ['.txt', '.md', '.docx', '.pdf', '.vtt', '.srt']

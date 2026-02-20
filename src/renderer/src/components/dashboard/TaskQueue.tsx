@@ -5,7 +5,7 @@ import { useGatewayStore } from '@/stores/gateway-store'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { ListTodo, Plus, Loader2, CheckCircle, Clock, AlertCircle } from 'lucide-react'
+import { ListTodo, Plus, Loader2, Clock } from 'lucide-react'
 
 export function TaskQueue(): React.JSX.Element {
   const { currentTask, taskQueue, addTask, isProcessing } = useAgentStore()

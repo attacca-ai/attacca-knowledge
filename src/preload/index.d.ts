@@ -86,9 +86,9 @@ export interface AttaccaAPI {
 
 interface OnboardingState {
   currentStep: number
-  llmProvider?: string
-  llmModel?: string
-  apiKeyValidated?: boolean
+  llmProvider: string | null
+  llmModel: string | null
+  apiKeyValidated: boolean
   connectedTools: string[]
   selectedUseCases: string[]
   completed: boolean

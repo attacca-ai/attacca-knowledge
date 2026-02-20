@@ -1,4 +1,6 @@
 import { ChildProcess, spawn } from 'child_process'
+import path from 'path'
+import { app } from 'electron'
 import { ensureConfig } from './config'
 import { getMainWindow } from '../window/main-window'
 import { IPC } from '../ipc/channels'
@@ -41,16 +43,13 @@ export function getGatewayState(): GatewayInfo {
   }
 }
 
-function resolveOpenClawBin(): string {
-  // In development, use the npx-installed binary
-  // In production, use the bundled binary from extraResources
-  try {
-    const openclawPath = require.resolve('openclaw/bin/openclaw')
-    return openclawPath
-  } catch {
-    // Fallback: try the command directly
-    return 'openclaw'
+function resolveOpenClawMjs(): string {
+  if (app.isPackaged) {
+    // Production: bundled in extraResources
+    return path.join(process.resourcesPath, 'openclaw', 'openclaw.mjs')
   }
+  // Development: resolve from node_modules
+  return path.join(app.getAppPath(), 'node_modules', 'openclaw', 'openclaw.mjs')
 }
 
 export function startGateway(): Promise<void> {
@@ -75,8 +74,8 @@ export function startGateway(): Promise<void> {
     const config = ensureConfig()
 
     try {
-      const bin = resolveOpenClawBin()
-      gatewayProcess = spawn(bin, ['gateway', '--port', String(config.gateway.port)], {
+      const openclawMjs = resolveOpenClawMjs()
+      gatewayProcess = spawn('node', [openclawMjs, 'gateway', '--port', String(config.gateway.port)], {
         stdio: ['ignore', 'pipe', 'pipe'],
         env: { ...process.env },
         windowsHide: true

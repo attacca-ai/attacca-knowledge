@@ -13,7 +13,7 @@ function App(): React.JSX.Element {
   const setPage = useAppStore((s) => s.setPage)
   const setVersion = useAppStore((s) => s.setVersion)
   const { checkExisting, status: licenseStatus } = useLicenseStore()
-  const { loadState, completed: onboardingCompleted } = useOnboardingStore()
+  const { loadState } = useOnboardingStore()
 
   // Initialize gateway connection
   useGateway()

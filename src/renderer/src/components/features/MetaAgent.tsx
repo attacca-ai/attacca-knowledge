@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Loader2, Plug, Check, ExternalLink } from 'lucide-react'
+import { Loader2, Plug, Check } from 'lucide-react'
 
 interface ConnectionProposal {
   name: string
