@@ -7,6 +7,8 @@ import { Dashboard } from '@/components/dashboard/Dashboard'
 import { ScheduleView } from '@/components/features/ScheduleView'
 import { TranscriptUpload } from '@/components/features/TranscriptUpload'
 import { WorkflowAdder } from '@/components/features/WorkflowAdder'
+import { TakeOverMode } from '@/components/features/TakeOverMode'
+import { MetaAgent } from '@/components/features/MetaAgent'
 import { SettingsPage } from '@/components/settings/SettingsPage'
 import { ConnectionsPage } from '@/components/settings/ConnectionsPage'
 
@@ -25,6 +27,8 @@ export function AppShell(): React.JSX.Element {
             {activeView === 'schedule' && <ScheduleView />}
             {activeView === 'transcripts' && <TranscriptUpload />}
             {activeView === 'workflows' && <WorkflowAdder />}
+            {activeView === 'takeover' && <TakeOverMode />}
+            {activeView === 'meta-agent' && <MetaAgent />}
             {activeView === 'settings' && <SettingsPage />}
             {activeView === 'connections' && <ConnectionsPage />}
           </ErrorBoundary>

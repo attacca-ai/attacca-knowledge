@@ -6,7 +6,9 @@ import {
   ChevronRight,
   FileText,
   Workflow,
-  Calendar
+  Calendar,
+  Zap,
+  Plug
 } from 'lucide-react'
 import { useState } from 'react'
 import { cn } from '@/lib/utils'
@@ -18,6 +20,8 @@ export type SidebarView =
   | 'schedule'
   | 'transcripts'
   | 'workflows'
+  | 'takeover'
+  | 'meta-agent'
   | 'connections'
   | 'settings'
 
@@ -30,7 +34,9 @@ const MAIN_NAV: { id: SidebarView; label: string; icon: React.ReactNode }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard className="h-4 w-4" /> },
   { id: 'schedule', label: 'Schedule', icon: <Calendar className="h-4 w-4" /> },
   { id: 'transcripts', label: 'Transcripts', icon: <FileText className="h-4 w-4" /> },
-  { id: 'workflows', label: 'Workflows', icon: <Workflow className="h-4 w-4" /> }
+  { id: 'workflows', label: 'Workflows', icon: <Workflow className="h-4 w-4" /> },
+  { id: 'takeover', label: 'Take Over', icon: <Zap className="h-4 w-4" /> },
+  { id: 'meta-agent', label: 'Custom Tools', icon: <Plug className="h-4 w-4" /> }
 ]
 
 const BOTTOM_NAV: { id: SidebarView; label: string; icon: React.ReactNode }[] = [
