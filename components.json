@@ -4,6 +4,13 @@
   "rsc": false,
   "tsx": true,
   "aliases": {
+    "components": "@/components",
+    "utils": "@/lib/utils",
+    "ui": "@/components/ui",
+    "lib": "@/lib",
+    "hooks": "@/hooks"
+  },
+  "resolvedPaths": {
     "components": "src/renderer/src/components",
     "utils": "src/renderer/src/lib/utils",
     "ui": "src/renderer/src/components/ui",
