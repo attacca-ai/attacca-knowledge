@@ -51,6 +51,8 @@ export interface AttaccaAPI {
   oauth: {
     start: (provider: string) => Promise<{ success: boolean; error?: string }>
     getStatus: (provider: string) => Promise<{ connected: boolean; error?: string }>
+    disconnect: (provider: string) => Promise<{ success: boolean; error?: string }>
+    getConnected: () => Promise<string[]>
     onCallback: (callback: (result: { provider: string; success: boolean; error?: string }) => void) => () => void
   }
 

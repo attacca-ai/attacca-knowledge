@@ -5,9 +5,13 @@ import { net } from 'electron'
 import { OAUTH_PROVIDERS } from './providers'
 import { getMainWindow } from '../window/main-window'
 import { IPC } from '../ipc/channels'
-
-// Track connected tools
-const connectedTools = new Map<string, { token: string; connectedAt: number }>()
+import {
+  saveTokens,
+  getTokens,
+  deleteTokens,
+  getAllConnectedToolIds,
+  type StoredTokens
+} from './token-store'
 
 let activeServer: Server | null = null
 
@@ -51,7 +55,9 @@ export async function startOAuthFlow(
 
       if (error) {
         res.writeHead(200, { 'Content-Type': 'text/html' })
-        res.end('<html><body><h2>Connection failed</h2><p>You can close this window.</p></body></html>')
+        res.end(
+          '<html><body><h2>Connection failed</h2><p>You can close this window.</p></body></html>'
+        )
         server.close()
         activeServer = null
         notifyRenderer(provider, false, error)
@@ -63,9 +69,9 @@ export async function startOAuthFlow(
         // Exchange code for token
         try {
           const redirectUri = `http://127.0.0.1:${(server.address() as { port: number }).port}/callback`
-          const token = await exchangeCodeForToken(provider, code, redirectUri)
+          const tokenData = await exchangeCodeForToken(provider, code, redirectUri)
 
-          connectedTools.set(provider, { token, connectedAt: Date.now() })
+          saveTokens(provider, tokenData)
 
           res.writeHead(200, { 'Content-Type': 'text/html' })
           res.end(
@@ -101,8 +107,13 @@ export async function startOAuthFlow(
       authUrl.searchParams.set('redirect_uri', redirectUri)
       authUrl.searchParams.set('response_type', 'code')
       authUrl.searchParams.set('state', state)
-      authUrl.searchParams.set('access_type', 'offline')
-      authUrl.searchParams.set('prompt', 'consent')
+
+      // Apply provider-specific extra auth params (e.g. access_type, prompt)
+      if (config.extraAuthParams) {
+        for (const [key, value] of Object.entries(config.extraAuthParams)) {
+          authUrl.searchParams.set(key, value)
+        }
+      }
 
       if (config.scopes.length > 0) {
         authUrl.searchParams.set('scope', config.scopes.join(' '))
@@ -130,32 +141,63 @@ async function exchangeCodeForToken(
   provider: string,
   code: string,
   redirectUri: string
-): Promise<string> {
+): Promise<StoredTokens> {
   const config = OAUTH_PROVIDERS[provider]
   if (!config) throw new Error(`Unknown provider: ${provider}`)
 
-  const clientSecret = process.env[`${provider.toUpperCase().replace('-', '_')}_CLIENT_SECRET`] || ''
+  const clientSecret = config.clientSecret || ''
 
-  const body = new URLSearchParams({
-    grant_type: 'authorization_code',
-    code,
-    redirect_uri: redirectUri,
-    client_id: config.clientId,
-    client_secret: clientSecret
-  })
+  let response: Response
 
-  const response = await net.fetch(config.tokenUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: body.toString()
-  })
+  if (config.tokenExchangeMethod === 'query') {
+    // ClickUp-style: POST with query params instead of form body
+    const params = new URLSearchParams({
+      client_id: config.clientId,
+      client_secret: clientSecret,
+      code
+    })
+    response = await net.fetch(`${config.tokenUrl}?${params}`, {
+      method: 'POST'
+    })
+  } else {
+    // Standard form body exchange
+    const body = new URLSearchParams({
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: redirectUri,
+      client_id: config.clientId,
+      client_secret: clientSecret
+    })
 
-  if (!response.ok) {
-    throw new Error(`Token exchange failed (status ${response.status})`)
+    response = await net.fetch(config.tokenUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString()
+    })
   }
 
-  const data = (await response.json()) as { access_token: string }
-  return data.access_token
+  if (!response.ok) {
+    const text = await response.text()
+    throw new Error(`Token exchange failed (status ${response.status}): ${text}`)
+  }
+
+  const data = (await response.json()) as {
+    access_token: string
+    refresh_token?: string
+    expires_in?: number
+    token_type?: string
+    scope?: string
+  }
+
+  const tokenData: StoredTokens = {
+    access_token: data.access_token,
+    refresh_token: data.refresh_token,
+    expires_at: data.expires_in ? Date.now() + data.expires_in * 1000 : undefined,
+    token_type: data.token_type,
+    scope: data.scope
+  }
+
+  return tokenData
 }
 
 function notifyRenderer(provider: string, success: boolean, error?: string): void {
@@ -166,9 +208,13 @@ function notifyRenderer(provider: string, success: boolean, error?: string): voi
 }
 
 export function getOAuthStatus(provider: string): { connected: boolean } {
-  return { connected: connectedTools.has(provider) }
+  return { connected: getTokens(provider) !== null }
 }
 
 export function getConnectedTools(): string[] {
-  return Array.from(connectedTools.keys())
+  return getAllConnectedToolIds()
+}
+
+export function disconnectTool(provider: string): void {
+  deleteTokens(provider)
 }

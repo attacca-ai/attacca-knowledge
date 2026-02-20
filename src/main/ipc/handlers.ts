@@ -11,11 +11,22 @@ import { writeConfig, readConfig } from '../gateway/config'
 export function registerIpcHandlers(): void {
   // ── License ──
   ipcMain.handle(IPC.LICENSE_VALIDATE, async (_event, key: string) => {
-    return validateNewKey(key)
+    const result = await validateNewKey(key)
+    return {
+      success: result.status === 'valid',
+      plan: result.plan,
+      error: result.error
+    }
   })
 
   ipcMain.handle(IPC.LICENSE_CHECK_EXISTING, async () => {
-    return checkExistingLicense()
+    const result = await checkExistingLicense()
+    return {
+      exists: result.status !== 'unchecked',
+      valid: result.status === 'valid' || result.status === 'grace',
+      plan: result.plan,
+      error: result.error
+    }
   })
 
   ipcMain.handle(IPC.LICENSE_GET_STATUS, () => {
@@ -129,6 +140,25 @@ export function registerIpcHandlers(): void {
       return getOAuthStatus(provider)
     } catch {
       return { connected: false }
+    }
+  })
+
+  ipcMain.handle(IPC.OAUTH_DISCONNECT, async (_event, provider: string) => {
+    try {
+      const { disconnectTool } = await import('../oauth/server')
+      disconnectTool(provider)
+      return { success: true }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : 'Disconnect failed' }
+    }
+  })
+
+  ipcMain.handle(IPC.OAUTH_GET_CONNECTED, async () => {
+    try {
+      const { getConnectedTools } = await import('../oauth/server')
+      return getConnectedTools()
+    } catch {
+      return []
     }
   })
 

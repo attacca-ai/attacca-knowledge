@@ -49,6 +49,15 @@ export function ToolConnectionStep({
   const [connecting, setConnecting] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
+  // Restore persisted OAuth connections on mount
+  useEffect(() => {
+    window.api.oauth.getConnected().then((tools) => {
+      for (const tool of tools) {
+        addConnectedTool(tool)
+      }
+    })
+  }, [addConnectedTool])
+
   // Listen for OAuth callbacks
   useEffect(() => {
     const unsub = window.api.oauth.onCallback((result) => {

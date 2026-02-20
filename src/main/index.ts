@@ -4,6 +4,9 @@ import { createMainWindow, destroyMainWindow, getMainWindow } from './window/mai
 import { createTray, destroyTray } from './tray/tray'
 import { registerIpcHandlers } from './ipc/handlers'
 import { startGateway, stopGateway } from './gateway/lifecycle'
+import './oauth/integrations/gmail'
+import './oauth/integrations/clickup'
+import './oauth/integrations/google-drive'
 
 // Single instance lock
 const gotTheLock = app.requestSingleInstanceLock()

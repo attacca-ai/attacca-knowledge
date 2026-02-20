@@ -1,0 +1,26 @@
+import { registerProvider } from '../providers'
+
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || ''
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || ''
+
+if (!GOOGLE_CLIENT_ID) {
+  console.warn('[Gmail] GOOGLE_CLIENT_ID not set — integration disabled')
+}
+
+registerProvider({
+  provider: 'google',
+  tool: 'gmail',
+  clientId: GOOGLE_CLIENT_ID,
+  clientSecret: GOOGLE_CLIENT_SECRET,
+  authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
+  tokenUrl: 'https://oauth2.googleapis.com/token',
+  scopes: [
+    'https://www.googleapis.com/auth/gmail.readonly',
+    'https://www.googleapis.com/auth/gmail.modify',
+    'https://www.googleapis.com/auth/gmail.send'
+  ],
+  extraAuthParams: {
+    access_type: 'offline',
+    prompt: 'consent'
+  }
+})

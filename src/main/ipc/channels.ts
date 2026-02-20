@@ -19,6 +19,8 @@ export const IPC = {
   // OAuth
   OAUTH_START: 'oauth:start',
   OAUTH_STATUS: 'oauth:status',
+  OAUTH_DISCONNECT: 'oauth:disconnect',
+  OAUTH_GET_CONNECTED: 'oauth:get-connected',
 
   // LLM Provider
   LLM_TEST_CONNECTION: 'llm:test-connection',

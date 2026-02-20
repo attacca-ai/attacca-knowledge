@@ -33,6 +33,8 @@ const api = {
   oauth: {
     start: (provider: string) => ipcRenderer.invoke('oauth:start', provider),
     getStatus: (provider: string) => ipcRenderer.invoke('oauth:status', provider),
+    disconnect: (provider: string) => ipcRenderer.invoke('oauth:disconnect', provider),
+    getConnected: () => ipcRenderer.invoke('oauth:get-connected'),
     onCallback: (callback: (result: unknown) => void) => {
       const handler = (_event: unknown, result: unknown): void => callback(result)
       ipcRenderer.on('event:oauth-callback', handler)
