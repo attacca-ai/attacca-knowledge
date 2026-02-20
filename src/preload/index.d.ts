@@ -84,6 +84,31 @@ export interface AttaccaAPI {
   fs: {
     selectFolder: () => Promise<string | null>
   }
+
+  activecollab: {
+    connectCloud: (
+      email: string,
+      password: string
+    ) => Promise<{
+      success: boolean
+      error?: string
+      config?: { companyName?: string; email: string }
+    }>
+    connectSelfHosted: (
+      url: string,
+      email: string,
+      password: string
+    ) => Promise<{
+      success: boolean
+      error?: string
+      config?: { instanceUrl: string; email: string }
+    }>
+    status: () => Promise<{
+      connected: boolean
+      config: { companyName?: string; email: string; isCloud: boolean } | null
+    }>
+    disconnect: () => Promise<{ success: boolean; error?: string }>
+  }
 }
 
 interface OnboardingState {

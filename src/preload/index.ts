@@ -68,6 +68,16 @@ const api = {
   // File system
   fs: {
     selectFolder: () => ipcRenderer.invoke('fs:select-folder')
+  },
+
+  // ActiveCollab (non-OAuth — credential-based auth)
+  activecollab: {
+    connectCloud: (email: string, password: string) =>
+      ipcRenderer.invoke('activecollab:connect-cloud', email, password),
+    connectSelfHosted: (url: string, email: string, password: string) =>
+      ipcRenderer.invoke('activecollab:connect-selfhosted', url, email, password),
+    status: () => ipcRenderer.invoke('activecollab:status'),
+    disconnect: () => ipcRenderer.invoke('activecollab:disconnect')
   }
 }
 

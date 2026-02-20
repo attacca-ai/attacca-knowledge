@@ -32,7 +32,7 @@ export type LLMProviderKey = keyof typeof LLM_PROVIDERS
 export const TOOL_CATEGORIES = {
   calendar: { name: 'Calendar', tools: ['google-calendar', 'outlook-calendar'] },
   email: { name: 'Email', tools: ['gmail', 'outlook-email'] },
-  pm: { name: 'Project Management', tools: ['clickup', 'asana', 'trello', 'notion'] },
+  pm: { name: 'Project Management', tools: ['clickup', 'asana', 'trello', 'notion', 'activecollab'] },
   storage: { name: 'File Storage', tools: ['google-drive', 'onedrive', 'dropbox'] },
   communication: { name: 'Communication', tools: ['slack', 'teams', 'telegram'] }
 } as const

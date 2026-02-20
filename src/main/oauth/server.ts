@@ -181,20 +181,31 @@ async function exchangeCodeForToken(
     throw new Error(`Token exchange failed (status ${response.status}): ${text}`)
   }
 
-  const data = (await response.json()) as {
-    access_token: string
-    refresh_token?: string
-    expires_in?: number
-    token_type?: string
-    scope?: string
+  const data = (await response.json()) as Record<string, unknown>
+
+  // Slack nests the user token under authed_user
+  if (
+    config.provider === 'slack' &&
+    (data as { authed_user?: { access_token?: string } }).authed_user?.access_token
+  ) {
+    const authedUser = (data as { authed_user: { access_token: string; scope?: string } })
+      .authed_user
+    return {
+      access_token: authedUser.access_token,
+      // Slack user tokens don't expire
+      token_type: 'user',
+      scope: authedUser.scope
+    }
   }
 
   const tokenData: StoredTokens = {
-    access_token: data.access_token,
-    refresh_token: data.refresh_token,
-    expires_at: data.expires_in ? Date.now() + data.expires_in * 1000 : undefined,
-    token_type: data.token_type,
-    scope: data.scope
+    access_token: data.access_token as string,
+    refresh_token: data.refresh_token as string | undefined,
+    expires_at: data.expires_in
+      ? Date.now() + (data.expires_in as number) * 1000
+      : undefined,
+    token_type: data.token_type as string | undefined,
+    scope: data.scope as string | undefined
   }
 
   return tokenData

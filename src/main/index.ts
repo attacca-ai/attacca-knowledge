@@ -7,6 +7,8 @@ import { startGateway, stopGateway } from './gateway/lifecycle'
 import './oauth/integrations/gmail'
 import './oauth/integrations/clickup'
 import './oauth/integrations/google-drive'
+import './oauth/integrations/slack'
+import './oauth/integrations/outlook-email'
 
 // Single instance lock
 const gotTheLock = app.requestSingleInstanceLock()

@@ -69,5 +69,16 @@ export function isTokenExpired(tokens: StoredTokens): boolean {
 
 export function getAllConnectedToolIds(): string[] {
   const store = loadAll()
-  return Object.keys(store)
+  const tools = Object.keys(store)
+
+  // Check non-OAuth tools (Telegram, ActiveCollab) by their config files
+  const userDataPath = app.getPath('userData')
+  if (existsSync(join(userDataPath, 'telegram-config.json'))) {
+    tools.push('telegram')
+  }
+  if (existsSync(join(userDataPath, 'activecollab-config.json'))) {
+    tools.push('activecollab')
+  }
+
+  return tools
 }

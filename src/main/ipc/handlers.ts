@@ -7,8 +7,12 @@ import { checkGatewayHealth } from '../gateway/health'
 import { validateNewKey, checkExistingLicense } from '../license/validator'
 import { loadLicense } from '../license/store'
 import { writeConfig, readConfig } from '../gateway/config'
+import { registerActiveCollabHandlers } from './activecollab-handlers'
+import { getMainWindow } from '../window/main-window'
 
 export function registerIpcHandlers(): void {
+  // Register non-OAuth integration handlers
+  registerActiveCollabHandlers()
   // ── License ──
   ipcMain.handle(IPC.LICENSE_VALIDATE, async (_event, key: string) => {
     const result = await validateNewKey(key)
@@ -126,6 +130,33 @@ export function registerIpcHandlers(): void {
 
   // ── OAuth ──
   ipcMain.handle(IPC.OAUTH_START, async (_event, provider: string) => {
+    // Telegram uses a bot token + deep link flow, not standard OAuth
+    if (provider === 'telegram') {
+      try {
+        const { startConnection } = await import('../integrations/telegram/connector')
+        await startConnection()
+        const mainWindow = getMainWindow()
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send(IPC.EVENT_OAUTH_CALLBACK, {
+            provider: 'telegram',
+            success: true
+          })
+        }
+        return { success: true }
+      } catch (err) {
+        const error = err instanceof Error ? err.message : 'Telegram connection failed'
+        const mainWindow = getMainWindow()
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send(IPC.EVENT_OAUTH_CALLBACK, {
+            provider: 'telegram',
+            success: false,
+            error
+          })
+        }
+        return { success: false, error }
+      }
+    }
+
     try {
       const { startOAuthFlow } = await import('../oauth/server')
       return startOAuthFlow(provider)
@@ -145,6 +176,18 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC.OAUTH_DISCONNECT, async (_event, provider: string) => {
     try {
+      // Non-OAuth tools have their own disconnect logic
+      if (provider === 'telegram') {
+        const { disconnect } = await import('../integrations/telegram/connector')
+        disconnect()
+        return { success: true }
+      }
+      if (provider === 'activecollab') {
+        const { disconnect } = await import('../integrations/activecollab/connector')
+        disconnect()
+        return { success: true }
+      }
+
       const { disconnectTool } = await import('../oauth/server')
       disconnectTool(provider)
       return { success: true }

@@ -37,7 +37,8 @@ const TOOL_NAMES: Record<string, string> = {
   dropbox: 'Dropbox',
   slack: 'Slack',
   teams: 'Microsoft Teams',
-  telegram: 'Telegram'
+  telegram: 'Telegram',
+  activecollab: 'ActiveCollab'
 }
 
 export function ToolConnectionStep({
@@ -72,6 +73,12 @@ export function ToolConnectionStep({
   }, [addConnectedTool])
 
   const handleConnect = async (tool: string): Promise<void> => {
+    // ActiveCollab requires credential input — skip during onboarding
+    if (tool === 'activecollab') {
+      setError('ActiveCollab requires email and password. Connect it in Settings after onboarding.')
+      return
+    }
+
     setConnecting(tool)
     setError(null)
 

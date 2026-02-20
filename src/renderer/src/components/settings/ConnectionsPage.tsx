@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -12,6 +14,15 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger
 } from '@/components/ui/alert-dialog'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from '@/components/ui/dialog'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useOnboardingStore } from '@/stores/onboarding-store'
 import { TOOL_CATEGORIES } from '@/lib/constants'
 import { Loader2 } from 'lucide-react'
@@ -20,11 +31,12 @@ const TOOL_NAMES: Record<string, string> = {
   'google-calendar': 'Google Calendar',
   'outlook-calendar': 'Outlook Calendar',
   gmail: 'Gmail',
-  'outlook-email': 'Outlook',
+  'outlook-email': 'Outlook Email',
   clickup: 'ClickUp',
   asana: 'Asana',
   trello: 'Trello',
   notion: 'Notion',
+  activecollab: 'ActiveCollab',
   'google-drive': 'Google Drive',
   onedrive: 'OneDrive',
   dropbox: 'Dropbox',
@@ -33,7 +45,7 @@ const TOOL_NAMES: Record<string, string> = {
   telegram: 'Telegram'
 }
 
-// All tools that support OAuth connection
+// All tools from categories
 const ALL_TOOLS = Object.values(TOOL_CATEGORIES).flatMap((c) => c.tools)
 
 export function ConnectionsPage(): React.JSX.Element {
@@ -41,6 +53,14 @@ export function ConnectionsPage(): React.JSX.Element {
   const [connecting, setConnecting] = useState<string | null>(null)
   const [disconnecting, setDisconnecting] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  // ActiveCollab dialog state
+  const [acDialogOpen, setAcDialogOpen] = useState(false)
+  const [acTab, setAcTab] = useState<string>('cloud')
+  const [acEmail, setAcEmail] = useState('')
+  const [acPassword, setAcPassword] = useState('')
+  const [acInstanceUrl, setAcInstanceUrl] = useState('')
+  const [acConnecting, setAcConnecting] = useState(false)
 
   // Load persisted connected tools on mount
   useEffect(() => {
@@ -65,6 +85,12 @@ export function ConnectionsPage(): React.JSX.Element {
   }, [addConnectedTool])
 
   const handleConnect = async (tool: string): Promise<void> => {
+    // ActiveCollab uses credential-based auth — open dialog
+    if (tool === 'activecollab') {
+      setAcDialogOpen(true)
+      return
+    }
+
     setConnecting(tool)
     setError(null)
     const result = await window.api.oauth.start(tool)
@@ -72,6 +98,31 @@ export function ConnectionsPage(): React.JSX.Element {
       setError(result.error || 'Could not start connection')
       setConnecting(null)
     }
+  }
+
+  const handleActiveCollabConnect = async (): Promise<void> => {
+    setAcConnecting(true)
+    setError(null)
+
+    try {
+      const result =
+        acTab === 'cloud'
+          ? await window.api.activecollab.connectCloud(acEmail, acPassword)
+          : await window.api.activecollab.connectSelfHosted(acInstanceUrl, acEmail, acPassword)
+
+      if (result.success) {
+        addConnectedTool('activecollab')
+        setAcDialogOpen(false)
+        setAcEmail('')
+        setAcPassword('')
+        setAcInstanceUrl('')
+      } else {
+        setError(result.error || 'ActiveCollab connection failed')
+      }
+    } catch {
+      setError('ActiveCollab connection failed')
+    }
+    setAcConnecting(false)
   }
 
   const handleDisconnect = async (tool: string): Promise<void> => {
@@ -167,6 +218,93 @@ export function ConnectionsPage(): React.JSX.Element {
           )
         })}
       </div>
+
+      {/* ActiveCollab Connection Dialog */}
+      <Dialog open={acDialogOpen} onOpenChange={setAcDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Connect ActiveCollab</DialogTitle>
+            <DialogDescription>
+              Your password is sent directly to ActiveCollab and is not stored by Attacca.
+            </DialogDescription>
+          </DialogHeader>
+
+          <Tabs value={acTab} onValueChange={setAcTab}>
+            <TabsList className="w-full">
+              <TabsTrigger value="cloud" className="flex-1">
+                Cloud
+              </TabsTrigger>
+              <TabsTrigger value="selfhosted" className="flex-1">
+                Self-Hosted
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="cloud" className="mt-4 flex flex-col gap-3">
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="ac-cloud-email">Email</Label>
+                <Input
+                  id="ac-cloud-email"
+                  type="email"
+                  value={acEmail}
+                  onChange={(e) => setAcEmail(e.target.value)}
+                  placeholder="you@company.com"
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="ac-cloud-password">Password</Label>
+                <Input
+                  id="ac-cloud-password"
+                  type="password"
+                  value={acPassword}
+                  onChange={(e) => setAcPassword(e.target.value)}
+                />
+              </div>
+            </TabsContent>
+
+            <TabsContent value="selfhosted" className="mt-4 flex flex-col gap-3">
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="ac-sh-url">Instance URL</Label>
+                <Input
+                  id="ac-sh-url"
+                  type="url"
+                  value={acInstanceUrl}
+                  onChange={(e) => setAcInstanceUrl(e.target.value)}
+                  placeholder="https://projects.mycompany.com"
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="ac-sh-email">Email</Label>
+                <Input
+                  id="ac-sh-email"
+                  type="email"
+                  value={acEmail}
+                  onChange={(e) => setAcEmail(e.target.value)}
+                  placeholder="you@company.com"
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="ac-sh-password">Password</Label>
+                <Input
+                  id="ac-sh-password"
+                  type="password"
+                  value={acPassword}
+                  onChange={(e) => setAcPassword(e.target.value)}
+                />
+              </div>
+            </TabsContent>
+          </Tabs>
+
+          <DialogFooter>
+            <Button
+              onClick={handleActiveCollabConnect}
+              disabled={acConnecting || !acEmail || !acPassword || (acTab === 'selfhosted' && !acInstanceUrl)}
+            >
+              {acConnecting ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
+              Connect
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
