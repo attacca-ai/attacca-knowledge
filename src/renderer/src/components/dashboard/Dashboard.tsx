@@ -2,17 +2,27 @@ import { useEffect } from 'react'
 import { gatewayClient } from '@/lib/gateway-client'
 import { useAgentStore } from '@/stores/agent-store'
 import { useGatewayStore } from '@/stores/gateway-store'
+import { useUsageStore } from '@/stores/usage-store'
 import { MorningBriefing } from './MorningBriefing'
 import { NotificationBox } from './NotificationBox'
 import { ActivityFeed } from './ActivityFeed'
 import { TaskQueue } from './TaskQueue'
 import { EmergencyStop } from './EmergencyStop'
+import { UsageLimitBanner } from '@/components/shared/UsageLimitBanner'
 import { ApprovalDialog } from '@/components/permissions/ApprovalDialog'
 import type { JsonRpcEvent } from '@/types/gateway'
 
 export function Dashboard(): React.JSX.Element {
   const connectionState = useGatewayStore((s) => s.connectionState)
   const addActivity = useAgentStore((s) => s.addActivity)
+  const fetchUsage = useUsageStore((s) => s.fetchUsage)
+
+  // Fetch usage on mount and periodically
+  useEffect(() => {
+    fetchUsage()
+    const interval = setInterval(fetchUsage, 5 * 60 * 1000) // every 5 minutes
+    return () => clearInterval(interval)
+  }, [fetchUsage])
 
   // Subscribe to gateway events
   useEffect(() => {
@@ -63,6 +73,9 @@ export function Dashboard(): React.JSX.Element {
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
+      {/* Usage limit banner */}
+      <UsageLimitBanner />
+
       {/* 4-quadrant grid */}
       <div className="grid flex-1 grid-cols-2 grid-rows-2 gap-px overflow-hidden bg-border">
         {/* Top-left: Morning Briefing */}

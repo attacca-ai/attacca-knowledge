@@ -49,11 +49,9 @@ describe('App', () => {
     })
     useOnboardingStore.setState({
       currentStep: 0,
-      llmProvider: null,
-      llmModel: null,
-      apiKeyValidated: false,
       connectedTools: [],
       selectedUseCases: [],
+      telemetryOptIn: false,
       completed: false
     })
   })
@@ -114,11 +112,9 @@ describe('App', () => {
     window.api.onboarding.getState = vi.fn().mockResolvedValue({
       currentStep: 4,
       completed: true,
-      llmProvider: 'anthropic',
-      llmModel: 'claude-4',
-      apiKeyValidated: true,
       connectedTools: [],
-      selectedUseCases: []
+      selectedUseCases: [],
+      telemetryOptIn: false
     })
 
     render(<App />)
@@ -137,11 +133,9 @@ describe('App', () => {
     window.api.onboarding.getState = vi.fn().mockResolvedValue({
       currentStep: 1,
       completed: false,
-      llmProvider: null,
-      llmModel: null,
-      apiKeyValidated: false,
       connectedTools: [],
-      selectedUseCases: []
+      selectedUseCases: [],
+      telemetryOptIn: false
     })
 
     render(<App />)

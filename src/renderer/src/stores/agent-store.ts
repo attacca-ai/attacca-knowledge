@@ -25,6 +25,7 @@ interface AgentStore {
   taskQueue: AgentTask[]
   activityFeed: ActivityEntry[]
   isProcessing: boolean
+  usageLimitReached: boolean
   morningBriefing: string | null
   briefingDate: string | null
 
@@ -34,6 +35,7 @@ interface AgentStore {
   addActivity: (entry: Omit<ActivityEntry, 'id' | 'timestamp'>) => void
   clearActivity: () => void
   setMorningBriefing: (content: string) => void
+  setUsageLimitReached: (reached: boolean) => void
   emergencyStop: () => void
 }
 
@@ -45,10 +47,31 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
   taskQueue: [],
   activityFeed: [],
   isProcessing: false,
+  usageLimitReached: false,
   morningBriefing: null,
   briefingDate: null,
 
+  setUsageLimitReached: (reached) => {
+    set({ usageLimitReached: reached })
+    if (reached) {
+      get().addActivity({
+        type: 'error',
+        description: 'Usage limit reached — agent paused. Enable BYOK in Settings to continue.'
+      })
+      set({ isProcessing: false })
+    }
+  },
+
   addTask: (description) => {
+    const { usageLimitReached } = get()
+    if (usageLimitReached) {
+      get().addActivity({
+        type: 'error',
+        description: `Cannot start task: usage limit reached`
+      })
+      return
+    }
+
     const task: AgentTask = {
       id: `task_${++taskIdCounter}`,
       description,
@@ -75,11 +98,17 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
 
     if (currentTask?.id === taskId) {
       const completedTask = { ...currentTask, status: 'completed' as const, completedAt: Date.now(), result }
+      const durationMs = completedTask.startedAt ? Date.now() - completedTask.startedAt : 0
 
       get().addActivity({
         type: 'info',
         description: `Task completed: ${completedTask.description}`,
         details: result
+      })
+
+      window.api.telemetry.emit('agent.task.completed', {
+        durationMs,
+        hadFallback: false
       })
 
       // Move to next task
@@ -100,10 +129,17 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     const { currentTask, taskQueue } = get()
 
     if (currentTask?.id === taskId) {
+      const durationMs = currentTask.startedAt ? Date.now() - currentTask.startedAt : 0
+
       get().addActivity({
         type: 'error',
         description: `Task failed: ${currentTask.description}`,
         details: error
+      })
+
+      window.api.telemetry.emit('agent.task.failed', {
+        durationMs,
+        errorCategory: 'unknown'
       })
 
       if (taskQueue.length > 0) {

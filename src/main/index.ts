@@ -4,11 +4,15 @@ import { createMainWindow, destroyMainWindow, getMainWindow } from './window/mai
 import { createTray, destroyTray } from './tray/tray'
 import { registerIpcHandlers } from './ipc/handlers'
 import { startGateway, stopGateway } from './gateway/lifecycle'
-import './oauth/integrations/gmail'
-import './oauth/integrations/clickup'
-import './oauth/integrations/google-drive'
-import './oauth/integrations/slack'
-import './oauth/integrations/outlook-email'
+import { initTelemetryCollector, getTelemetryCollector } from './telemetry/collector'
+
+// DEPRECATED: Direct OAuth integrations replaced by Composio relay in v1.1
+// Kept for backward compatibility during migration
+// import './oauth/integrations/gmail'
+// import './oauth/integrations/clickup'
+// import './oauth/integrations/google-drive'
+// import './oauth/integrations/slack'
+// import './oauth/integrations/outlook-email'
 
 // Single instance lock
 const gotTheLock = app.requestSingleInstanceLock()
@@ -30,6 +34,9 @@ if (!gotTheLock) {
     app.on('browser-window-created', (_, window) => {
       optimizer.watchWindowShortcuts(window)
     })
+
+    // Initialize telemetry collector
+    initTelemetryCollector()
 
     // Register IPC handlers before creating windows
     registerIpcHandlers()
@@ -80,6 +87,13 @@ async function quitApp(): Promise<void> {
   app.quit()
 }
 
-app.on('before-quit', () => {
+app.on('before-quit', async () => {
   isQuitting = true
+  // Flush telemetry queue before quitting
+  try {
+    const collector = getTelemetryCollector()
+    await collector.flush()
+  } catch {
+    // Best effort
+  }
 })

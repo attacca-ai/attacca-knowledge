@@ -2,15 +2,15 @@ import { useEffect } from 'react'
 import { useOnboardingStore } from '@/stores/onboarding-store'
 import { Progress } from '@/components/ui/progress'
 import { WelcomeStep } from './steps/WelcomeStep'
-import { LLMProviderStep } from './steps/LLMProviderStep'
 import { ToolConnectionStep } from './steps/ToolConnectionStep'
+import { TelemetryConsentStep } from './steps/TelemetryConsentStep'
 import { UseCaseStep } from './steps/UseCaseStep'
 import { CompletionStep } from './steps/CompletionStep'
 
 const STEPS = [
   { title: 'Welcome', component: WelcomeStep },
-  { title: 'AI Provider', component: LLMProviderStep },
   { title: 'Connect Tools', component: ToolConnectionStep },
+  { title: 'Telemetry', component: TelemetryConsentStep },
   { title: 'Use Cases', component: UseCaseStep },
   { title: 'Ready', component: CompletionStep }
 ]

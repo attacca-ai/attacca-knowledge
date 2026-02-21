@@ -2,11 +2,9 @@ import { create } from 'zustand'
 
 export interface OnboardingState {
   currentStep: number
-  llmProvider: string | null
-  llmModel: string | null
-  apiKeyValidated: boolean
   connectedTools: string[]
   selectedUseCases: string[]
+  telemetryOptIn: boolean
   completed: boolean
 }
 
@@ -14,11 +12,10 @@ interface OnboardingStore extends OnboardingState {
   setStep: (step: number) => void
   nextStep: () => void
   prevStep: () => void
-  setLLMProvider: (provider: string, model: string) => void
-  setApiKeyValidated: (validated: boolean) => void
   addConnectedTool: (tool: string) => void
   removeConnectedTool: (tool: string) => void
   setSelectedUseCases: (useCases: string[]) => void
+  setTelemetryOptIn: (optIn: boolean) => void
   complete: () => void
   loadState: () => Promise<void>
   persist: () => Promise<void>
@@ -28,11 +25,9 @@ const TOTAL_STEPS = 5
 
 export const useOnboardingStore = create<OnboardingStore>((set, get) => ({
   currentStep: 0,
-  llmProvider: null,
-  llmModel: null,
-  apiKeyValidated: false,
   connectedTools: [],
   selectedUseCases: [],
+  telemetryOptIn: false,
   completed: false,
 
   setStep: (step) => {
@@ -56,16 +51,6 @@ export const useOnboardingStore = create<OnboardingStore>((set, get) => ({
     }
   },
 
-  setLLMProvider: (provider, model) => {
-    set({ llmProvider: provider, llmModel: model })
-    get().persist()
-  },
-
-  setApiKeyValidated: (validated) => {
-    set({ apiKeyValidated: validated })
-    get().persist()
-  },
-
   addConnectedTool: (tool) => {
     const { connectedTools } = get()
     if (!connectedTools.includes(tool)) {
@@ -84,8 +69,16 @@ export const useOnboardingStore = create<OnboardingStore>((set, get) => ({
     get().persist()
   },
 
+  setTelemetryOptIn: (optIn) => {
+    set({ telemetryOptIn: optIn })
+    get().persist()
+  },
+
   complete: async () => {
     set({ completed: true })
+    // Persist telemetry consent to the main process
+    const { telemetryOptIn } = get()
+    await window.api.telemetry.setOptIn(telemetryOptIn)
     await window.api.onboarding.complete()
   },
 
@@ -94,34 +87,22 @@ export const useOnboardingStore = create<OnboardingStore>((set, get) => ({
     if (state) {
       set({
         currentStep: state.currentStep ?? 0,
-        llmProvider: state.llmProvider ?? null,
-        llmModel: state.llmModel ?? null,
-        apiKeyValidated: state.apiKeyValidated ?? false,
         connectedTools: state.connectedTools ?? [],
         selectedUseCases: state.selectedUseCases ?? [],
+        telemetryOptIn: state.telemetryOptIn ?? false,
         completed: state.completed ?? false
       })
     }
   },
 
   persist: async () => {
-    const {
-      currentStep,
-      llmProvider,
-      llmModel,
-      apiKeyValidated,
-      connectedTools,
-      selectedUseCases,
-      completed
-    } = get()
+    const { currentStep, connectedTools, selectedUseCases, telemetryOptIn, completed } = get()
 
     await window.api.onboarding.saveState({
       currentStep,
-      llmProvider,
-      llmModel,
-      apiKeyValidated,
       connectedTools,
       selectedUseCases,
+      telemetryOptIn,
       completed
     })
   }

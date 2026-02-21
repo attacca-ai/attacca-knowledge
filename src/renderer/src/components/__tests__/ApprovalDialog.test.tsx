@@ -1,11 +1,19 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { ApprovalDialog } from '../permissions/ApprovalDialog'
 import { usePermissionStore } from '../../stores/permission-store'
 import { useNotificationStore } from '../../stores/notification-store'
+import { useTrustStore } from '../../stores/trust-store'
+import { installMockApi, cleanupMockApi } from '../../../../../tests/helpers'
+
+// Mock CountdownApproval to avoid rendering it in tests
+vi.mock('../permissions/CountdownApproval', () => ({
+  CountdownApproval: () => <div data-testid="countdown-approval">Countdown</div>
+}))
 
 describe('ApprovalDialog', () => {
   beforeEach(() => {
+    installMockApi()
     usePermissionStore.setState({
       grants: new Map(),
       pendingApprovals: []
@@ -14,6 +22,13 @@ describe('ApprovalDialog', () => {
       notifications: [],
       unreadCount: 0
     })
+    useTrustStore.setState({
+      profile: 'cautious'
+    })
+  })
+
+  afterEach(() => {
+    cleanupMockApi()
   })
 
   it('returns null when no pending approvals', () => {
@@ -71,7 +86,7 @@ describe('ApprovalDialog', () => {
     expect(screen.getByText(/30-day standing approval/i)).toBeInTheDocument()
   })
 
-  it('does not show standing checkbox for medium tier', () => {
+  it('returns null for medium tier (dialog only shows high-risk)', () => {
     usePermissionStore.getState().addPendingApproval({
       actionType: 'draft.email',
       toolId: 'gmail',
@@ -79,8 +94,8 @@ describe('ApprovalDialog', () => {
       description: 'Draft email'
     })
 
-    render(<ApprovalDialog />)
-    expect(screen.queryByText(/30-day standing approval/i)).not.toBeInTheDocument()
+    const { container } = render(<ApprovalDialog />)
+    expect(container.firstChild).toBeNull()
   })
 
   it('approve click grants permission, removes from pending, adds notification', () => {
@@ -138,7 +153,7 @@ describe('ApprovalDialog', () => {
     })
 
     render(<ApprovalDialog />)
-    expect(screen.getByText(/2 more approvals pending/i)).toBeInTheDocument()
+    expect(screen.getByText(/2 more approval/i)).toBeInTheDocument()
   })
 
   it('displays correct tier label', () => {
@@ -168,5 +183,19 @@ describe('ApprovalDialog', () => {
     const grant = usePermissionStore.getState().grants.get('gmail:send.email')
     expect(grant).toBeDefined()
     expect(grant!.standing).toBe(true)
+  })
+
+  it('shows countdown for autonomous profile high-risk', () => {
+    useTrustStore.setState({ profile: 'autonomous' })
+
+    usePermissionStore.getState().addPendingApproval({
+      actionType: 'send.email',
+      toolId: 'gmail',
+      tier: 'high',
+      description: 'Send email'
+    })
+
+    render(<ApprovalDialog />)
+    expect(screen.getByTestId('countdown-approval')).toBeInTheDocument()
   })
 })

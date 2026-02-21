@@ -1,3 +1,5 @@
+// DEPRECATED in v1.1: Local OAuth server replaced by Composio relay proxy.
+// Kept for backward compatibility with credential-based tools (ActiveCollab, Telegram).
 import { createServer, type Server } from 'http'
 import { shell } from 'electron'
 import { URL } from 'url'

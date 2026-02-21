@@ -63,6 +63,19 @@ export function installMockApi(): void {
       connectSelfHosted: vi.fn().mockResolvedValue({ success: true }),
       status: vi.fn().mockResolvedValue({ connected: false, config: null }),
       disconnect: vi.fn().mockResolvedValue({ success: true })
+    },
+    relay: {
+      initiateOAuth: vi.fn().mockResolvedValue({ success: true, connectionId: 'conn_1', redirectUrl: 'https://example.com' }),
+      getOAuthStatus: vi.fn().mockResolvedValue({ connectionId: 'conn_1', status: 'active', appName: 'test' }),
+      disconnectOAuth: vi.fn().mockResolvedValue({ success: true }),
+      getUsage: vi.fn().mockResolvedValue({ totalCostUsd: 0, limitUsd: 30, requestCount: 0, limitReached: false, resetDate: '2026-03-01' }),
+      getConnected: vi.fn().mockResolvedValue([])
+    },
+    telemetry: {
+      setOptIn: vi.fn().mockResolvedValue({ success: true }),
+      getOptIn: vi.fn().mockResolvedValue({ optIn: false }),
+      deleteData: vi.fn().mockResolvedValue({ success: true }),
+      emit: vi.fn().mockResolvedValue({ success: true })
     }
   }
 

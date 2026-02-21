@@ -1,5 +1,4 @@
 import { useOnboardingStore } from '@/stores/onboarding-store'
-import { LLM_PROVIDERS, type LLMProviderKey } from '@/lib/constants'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Check, Rocket } from 'lucide-react'
@@ -22,16 +21,12 @@ const TOOL_NAMES: Record<string, string> = {
 }
 
 export function CompletionStep({ onComplete }: { onComplete: () => void }): React.JSX.Element {
-  const { llmProvider, connectedTools, selectedUseCases, complete } = useOnboardingStore()
+  const { connectedTools, selectedUseCases, telemetryOptIn, complete } = useOnboardingStore()
 
   const handleStart = async (): Promise<void> => {
     await complete()
     onComplete()
   }
-
-  const providerName = llmProvider
-    ? LLM_PROVIDERS[llmProvider as LLMProviderKey]?.name || llmProvider
-    : 'Not configured'
 
   return (
     <div className="flex flex-1 flex-col items-center justify-center p-8">
@@ -47,15 +42,6 @@ export function CompletionStep({ onComplete }: { onComplete: () => void }): Reac
         </div>
 
         <div className="mb-8 flex flex-col gap-4">
-          {/* AI Provider */}
-          <div className="flex items-center justify-between rounded-md border border-border p-3">
-            <div className="flex items-center gap-2 text-sm">
-              <Check className="h-4 w-4 text-green-500" />
-              <span className="text-muted-foreground">AI Provider</span>
-            </div>
-            <Badge variant="secondary">{providerName}</Badge>
-          </div>
-
           {/* Connected Tools */}
           <div className="rounded-md border border-border p-3">
             <div className="mb-2 flex items-center gap-2 text-sm">
@@ -71,6 +57,15 @@ export function CompletionStep({ onComplete }: { onComplete: () => void }): Reac
                 </Badge>
               ))}
             </div>
+          </div>
+
+          {/* Telemetry Status */}
+          <div className="flex items-center justify-between rounded-md border border-border p-3">
+            <div className="flex items-center gap-2 text-sm">
+              <Check className="h-4 w-4 text-green-500" />
+              <span className="text-muted-foreground">Research Telemetry</span>
+            </div>
+            <Badge variant="secondary">{telemetryOptIn ? 'Opted in' : 'Opted out'}</Badge>
           </div>
 
           {/* Selected Workflow */}

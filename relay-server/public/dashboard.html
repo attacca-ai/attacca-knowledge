@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Attacca Research Dashboard</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0a0a0a; color: #e5e5e5; padding: 2rem; }
+    h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
+    .subtitle { color: #737373; margin-bottom: 2rem; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; }
+    .card { background: #171717; border: 1px solid #262626; border-radius: 0.5rem; padding: 1.5rem; }
+    .card h2 { font-size: 0.875rem; color: #a3a3a3; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 1rem; }
+    .stat { font-size: 2rem; font-weight: 700; margin-bottom: 0.25rem; }
+    .stat-label { color: #737373; font-size: 0.875rem; }
+    table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; }
+    th, td { text-align: left; padding: 0.5rem; font-size: 0.875rem; }
+    th { color: #737373; border-bottom: 1px solid #262626; }
+    td { border-bottom: 1px solid #1a1a1a; }
+    .bar { height: 8px; background: #262626; border-radius: 4px; overflow: hidden; }
+    .bar-fill { height: 100%; border-radius: 4px; }
+    .bar-green { background: #22c55e; }
+    .bar-red { background: #ef4444; }
+    .bar-blue { background: #3b82f6; }
+    .error { color: #ef4444; padding: 1rem; text-align: center; }
+    .loading { color: #737373; padding: 2rem; text-align: center; }
+    #secret-form { margin-bottom: 2rem; display: flex; gap: 0.5rem; align-items: center; }
+    #secret-form input { background: #171717; border: 1px solid #262626; color: #e5e5e5; padding: 0.5rem; border-radius: 0.25rem; font-size: 0.875rem; }
+    #secret-form button { background: #3b82f6; color: white; border: none; padding: 0.5rem 1rem; border-radius: 0.25rem; cursor: pointer; font-size: 0.875rem; }
+  </style>
+</head>
+<body>
+  <h1>Attacca Research Dashboard</h1>
+  <p class="subtitle">Internal telemetry analytics (last 30 days)</p>
+
+  <div id="secret-form">
+    <input type="password" id="secret" placeholder="Dashboard secret" />
+    <button onclick="loadStats()">Load</button>
+  </div>
+
+  <div id="content" class="loading">Enter secret and click Load</div>
+
+  <script>
+    async function loadStats() {
+      const secret = document.getElementById('secret').value;
+      const content = document.getElementById('content');
+      content.innerHTML = '<div class="loading">Loading...</div>';
+
+      try {
+        const res = await fetch('/dashboard/stats', {
+          headers: { 'x-dashboard-secret': secret }
+        });
+        if (!res.ok) throw new Error('Unauthorized or server error');
+        const data = await res.json();
+        renderDashboard(data);
+      } catch (err) {
+        content.innerHTML = '<div class="error">' + err.message + '</div>';
+      }
+    }
+
+    function renderDashboard(data) {
+      const content = document.getElementById('content');
+
+      const taskCard = `
+        <div class="card">
+          <h2>Task Completion</h2>
+          <div class="stat">${data.tasks.totalCompleted}</div>
+          <div class="stat-label">Tasks completed</div>
+          <div style="margin-top:1rem">
+            <div class="stat-label">${data.tasks.totalFailed} failed</div>
+            <div class="stat-label">Avg duration: ${Math.round(data.tasks.avgDurationMs / 1000)}s</div>
+            <div class="stat-label">Fallback rate: ${(data.tasks.fallbackRate * 100).toFixed(1)}%</div>
+          </div>
+        </div>
+      `;
+
+      const permRows = data.permissions.map(p => `
+        <tr>
+          <td>${p.eventType.replace('permission.', '').replace('.resolved', '')}</td>
+          <td>${p.total}</td>
+          <td>${(p.approvalRate * 100).toFixed(0)}%</td>
+          <td>
+            <div class="bar">
+              <div class="bar-fill bar-green" style="width:${p.approvalRate * 100}%"></div>
+            </div>
+          </td>
+        </tr>
+      `).join('');
+
+      const permCard = `
+        <div class="card">
+          <h2>Permission Approval Rates</h2>
+          <table>
+            <thead><tr><th>Type</th><th>Total</th><th>Rate</th><th></th></tr></thead>
+            <tbody>${permRows || '<tr><td colspan="4">No data</td></tr>'}</tbody>
+          </table>
+        </div>
+      `;
+
+      const trustRows = data.trustProfiles.map(t => `
+        <tr>
+          <td>${t.profile}</td>
+          <td>${t.count}</td>
+          <td>
+            <div class="bar">
+              <div class="bar-fill bar-blue" style="width:${Math.min(t.count * 10, 100)}%"></div>
+            </div>
+          </td>
+        </tr>
+      `).join('');
+
+      const trustCard = `
+        <div class="card">
+          <h2>Trust Profile Distribution</h2>
+          <table>
+            <thead><tr><th>Profile</th><th>Users</th><th></th></tr></thead>
+            <tbody>${trustRows || '<tr><td colspan="3">No data</td></tr>'}</tbody>
+          </table>
+        </div>
+      `;
+
+      content.innerHTML = '<div class="grid">' + taskCard + permCard + trustCard + '</div>';
+      content.classList.remove('loading');
+    }
+  </script>
+</body>
+</html>

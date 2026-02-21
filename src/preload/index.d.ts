@@ -53,7 +53,9 @@ export interface AttaccaAPI {
     getStatus: (provider: string) => Promise<{ connected: boolean; error?: string }>
     disconnect: (provider: string) => Promise<{ success: boolean; error?: string }>
     getConnected: () => Promise<string[]>
-    onCallback: (callback: (result: { provider: string; success: boolean; error?: string }) => void) => () => void
+    onCallback: (
+      callback: (result: { provider: string; success: boolean; error?: string }) => void
+    ) => () => void
   }
 
   llm: {
@@ -61,11 +63,12 @@ export interface AttaccaAPI {
       provider: string,
       apiKey: string
     ) => Promise<{ success: boolean; error?: string }>
-    saveConfig: (
-      provider: string,
-      model: string,
-      apiKey: string
-    ) => Promise<{ success: boolean }>
+    saveConfig: (provider: string, model: string, apiKey: string) => Promise<{ success: boolean }>
+    getConfig: () => Promise<{
+      provider: string
+      model: string
+      apiKeyHint: string | null
+    } | null>
   }
 
   app: {
@@ -109,15 +112,45 @@ export interface AttaccaAPI {
     }>
     disconnect: () => Promise<{ success: boolean; error?: string }>
   }
+
+  relay: {
+    initiateOAuth: (appName: string) => Promise<{
+      success: boolean
+      connectionId?: string
+      redirectUrl?: string
+      error?: string
+    }>
+    getOAuthStatus: (connectionId: string) => Promise<{
+      connectionId: string
+      status: 'initiated' | 'active' | 'failed' | 'expired'
+      appName: string
+      error?: string
+    }>
+    disconnectOAuth: (appName: string) => Promise<{ success: boolean; error?: string }>
+    getUsage: () => Promise<{
+      totalCostUsd: number
+      limitUsd: number
+      requestCount: number
+      limitReached: boolean
+      resetDate: string
+      error?: string
+    }>
+    getConnected: () => Promise<string[]>
+  }
+
+  telemetry: {
+    setOptIn: (optIn: boolean) => Promise<{ success: boolean }>
+    getOptIn: () => Promise<{ optIn: boolean }>
+    deleteData: () => Promise<{ success: boolean }>
+    emit: (eventType: string, payload: Record<string, unknown>) => Promise<{ success: boolean }>
+  }
 }
 
 interface OnboardingState {
   currentStep: number
-  llmProvider: string | null
-  llmModel: string | null
-  apiKeyValidated: boolean
   connectedTools: string[]
   selectedUseCases: string[]
+  telemetryOptIn: boolean
   completed: boolean
 }
 

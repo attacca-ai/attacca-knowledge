@@ -1,3 +1,5 @@
+// DEPRECATED in v1.1: Embedded OAuth client IDs/secrets moved to relay server.
+// Composio handles OAuth flows server-side. This file kept for reference.
 export interface OAuthProviderConfig {
   clientId: string
   clientSecret?: string

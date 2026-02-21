@@ -3,6 +3,7 @@ import { render, screen, fireEvent, act } from '@testing-library/react'
 import { EmergencyStop } from '../dashboard/EmergencyStop'
 import { useAgentStore } from '../../stores/agent-store'
 import { useGatewayStore } from '../../stores/gateway-store'
+import { installMockApi, cleanupMockApi } from '../../../../../tests/helpers'
 
 // Mock gateway client module
 const mockRpc = vi.fn().mockResolvedValue(undefined)
@@ -15,12 +16,14 @@ vi.mock('@/lib/gateway-client', () => ({
 
 describe('EmergencyStop', () => {
   beforeEach(() => {
+    installMockApi()
     vi.useFakeTimers()
     useAgentStore.setState({
       currentTask: null,
       taskQueue: [],
       activityFeed: [],
       isProcessing: false,
+      usageLimitReached: false,
       morningBriefing: null,
       briefingDate: null
     })
@@ -30,6 +33,7 @@ describe('EmergencyStop', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+    cleanupMockApi()
   })
 
   it('shows "Emergency Stop" text initially', () => {

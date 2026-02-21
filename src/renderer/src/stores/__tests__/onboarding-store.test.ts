@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { useOnboardingStore } from '../onboarding-store'
 import { installMockApi, cleanupMockApi } from '../../../../../tests/helpers'
 
@@ -7,11 +7,9 @@ describe('onboarding-store', () => {
     installMockApi()
     useOnboardingStore.setState({
       currentStep: 0,
-      llmProvider: null,
-      llmModel: null,
-      apiKeyValidated: false,
       connectedTools: [],
       selectedUseCases: [],
+      telemetryOptIn: false,
       completed: false
     })
   })
@@ -23,11 +21,9 @@ describe('onboarding-store', () => {
   it('has correct initial state', () => {
     const state = useOnboardingStore.getState()
     expect(state.currentStep).toBe(0)
-    expect(state.llmProvider).toBeNull()
-    expect(state.llmModel).toBeNull()
-    expect(state.apiKeyValidated).toBe(false)
     expect(state.connectedTools).toEqual([])
     expect(state.selectedUseCases).toEqual([])
+    expect(state.telemetryOptIn).toBe(false)
     expect(state.completed).toBe(false)
   })
 
@@ -111,30 +107,21 @@ describe('onboarding-store', () => {
     })
   })
 
-  describe('setLLMProvider', () => {
-    it('sets provider and model', () => {
-      useOnboardingStore.getState().setLLMProvider('anthropic', 'claude-4')
-      const state = useOnboardingStore.getState()
-      expect(state.llmProvider).toBe('anthropic')
-      expect(state.llmModel).toBe('claude-4')
+  describe('setTelemetryOptIn', () => {
+    it('sets opt-in to true', () => {
+      useOnboardingStore.getState().setTelemetryOptIn(true)
+      expect(useOnboardingStore.getState().telemetryOptIn).toBe(true)
+    })
+
+    it('sets opt-in back to false', () => {
+      useOnboardingStore.getState().setTelemetryOptIn(true)
+      useOnboardingStore.getState().setTelemetryOptIn(false)
+      expect(useOnboardingStore.getState().telemetryOptIn).toBe(false)
     })
 
     it('persists state', () => {
-      useOnboardingStore.getState().setLLMProvider('openai', 'gpt-4o')
+      useOnboardingStore.getState().setTelemetryOptIn(true)
       expect(window.api.onboarding.saveState).toHaveBeenCalled()
-    })
-  })
-
-  describe('setApiKeyValidated', () => {
-    it('sets validation to true', () => {
-      useOnboardingStore.getState().setApiKeyValidated(true)
-      expect(useOnboardingStore.getState().apiKeyValidated).toBe(true)
-    })
-
-    it('sets validation back to false', () => {
-      useOnboardingStore.getState().setApiKeyValidated(true)
-      useOnboardingStore.getState().setApiKeyValidated(false)
-      expect(useOnboardingStore.getState().apiKeyValidated).toBe(false)
     })
   })
 
@@ -155,7 +142,14 @@ describe('onboarding-store', () => {
     it('sets completed to true and calls IPC', async () => {
       await useOnboardingStore.getState().complete()
       expect(useOnboardingStore.getState().completed).toBe(true)
+      expect(window.api.telemetry.setOptIn).toHaveBeenCalledWith(false)
       expect(window.api.onboarding.complete).toHaveBeenCalled()
+    })
+
+    it('passes telemetryOptIn value to telemetry.setOptIn', async () => {
+      useOnboardingStore.getState().setTelemetryOptIn(true)
+      await useOnboardingStore.getState().complete()
+      expect(window.api.telemetry.setOptIn).toHaveBeenCalledWith(true)
     })
   })
 
@@ -163,11 +157,9 @@ describe('onboarding-store', () => {
     it('loads state from IPC', async () => {
       window.api.onboarding.getState = vi.fn().mockResolvedValue({
         currentStep: 3,
-        llmProvider: 'anthropic',
-        llmModel: 'claude-4',
-        apiKeyValidated: true,
         connectedTools: ['gmail'],
         selectedUseCases: ['email'],
+        telemetryOptIn: true,
         completed: false
       })
 
@@ -175,11 +167,9 @@ describe('onboarding-store', () => {
       const state = useOnboardingStore.getState()
 
       expect(state.currentStep).toBe(3)
-      expect(state.llmProvider).toBe('anthropic')
-      expect(state.llmModel).toBe('claude-4')
-      expect(state.apiKeyValidated).toBe(true)
       expect(state.connectedTools).toEqual(['gmail'])
       expect(state.selectedUseCases).toEqual(['email'])
+      expect(state.telemetryOptIn).toBe(true)
     })
 
     it('does nothing when IPC returns null', async () => {
@@ -194,7 +184,7 @@ describe('onboarding-store', () => {
 
       const state = useOnboardingStore.getState()
       expect(state.currentStep).toBe(0)
-      expect(state.llmProvider).toBeNull()
+      expect(state.telemetryOptIn).toBe(false)
       expect(state.connectedTools).toEqual([])
     })
   })
@@ -203,22 +193,18 @@ describe('onboarding-store', () => {
     it('saves current state via IPC', async () => {
       useOnboardingStore.setState({
         currentStep: 2,
-        llmProvider: 'openai',
-        llmModel: 'gpt-4o',
-        apiKeyValidated: true,
         connectedTools: ['slack'],
         selectedUseCases: ['messaging'],
+        telemetryOptIn: true,
         completed: false
       })
 
       await useOnboardingStore.getState().persist()
       expect(window.api.onboarding.saveState).toHaveBeenCalledWith({
         currentStep: 2,
-        llmProvider: 'openai',
-        llmModel: 'gpt-4o',
-        apiKeyValidated: true,
         connectedTools: ['slack'],
         selectedUseCases: ['messaging'],
+        telemetryOptIn: true,
         completed: false
       })
     })
@@ -230,10 +216,9 @@ describe('onboarding-store', () => {
       expect(store.currentStep).toBe(0)
 
       useOnboardingStore.getState().nextStep() // 1
-      useOnboardingStore.getState().setLLMProvider('anthropic', 'claude-4')
-      useOnboardingStore.getState().setApiKeyValidated(true)
-      useOnboardingStore.getState().nextStep() // 2
       useOnboardingStore.getState().addConnectedTool('gmail')
+      useOnboardingStore.getState().nextStep() // 2
+      useOnboardingStore.getState().setTelemetryOptIn(true)
       useOnboardingStore.getState().nextStep() // 3
       useOnboardingStore.getState().setSelectedUseCases(['email'])
       useOnboardingStore.getState().nextStep() // 4

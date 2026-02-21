@@ -9,6 +9,13 @@ import { loadLicense } from '../license/store'
 import { writeConfig, readConfig } from '../gateway/config'
 import { registerActiveCollabHandlers } from './activecollab-handlers'
 import { getMainWindow } from '../window/main-window'
+import {
+  relayInitiateOAuth,
+  relayGetOAuthStatus,
+  relayGetUsage,
+  relayGetConnectedApps
+} from '../relay/client'
+import { getTelemetryCollector } from '../telemetry/collector'
 
 export function registerIpcHandlers(): void {
   // Register non-OAuth integration handlers
@@ -68,17 +75,14 @@ export function registerIpcHandlers(): void {
   })
 
   // ── LLM Provider ──
-  ipcMain.handle(
-    IPC.LLM_TEST_CONNECTION,
-    async (_event, provider: string, apiKey: string) => {
-      try {
-        const { testLLMConnection } = await import('../license/llm-test')
-        return testLLMConnection(provider, apiKey)
-      } catch (err) {
-        return { success: false, error: err instanceof Error ? err.message : 'Unknown error' }
-      }
+  ipcMain.handle(IPC.LLM_TEST_CONNECTION, async (_event, provider: string, apiKey: string) => {
+    try {
+      const { testLLMConnection } = await import('../license/llm-test')
+      return testLLMConnection(provider, apiKey)
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : 'Unknown error' }
     }
-  )
+  })
 
   ipcMain.handle(
     IPC.LLM_SAVE_CONFIG,
@@ -93,6 +97,16 @@ export function registerIpcHandlers(): void {
       return { success: true }
     }
   )
+
+  ipcMain.handle(IPC.LLM_GET_CONFIG, () => {
+    const config = readConfig()
+    if (!config.llm) return null
+    return {
+      provider: config.llm.provider,
+      model: config.llm.model,
+      apiKeyHint: config.llm.apiKey ? '****' + config.llm.apiKey.slice(-4) : null
+    }
+  })
 
   // ── Onboarding ──
   ipcMain.handle(IPC.ONBOARDING_GET_STATE, () => {
@@ -251,5 +265,74 @@ export function registerIpcHandlers(): void {
     }
     settings[key] = value
     writeFileSync(filePath, JSON.stringify(settings, null, 2), 'utf-8')
+  })
+
+  // ── Relay ──
+  ipcMain.handle(IPC.RELAY_OAUTH_INITIATE, async (_event, appName: string) => {
+    try {
+      return await relayInitiateOAuth(appName)
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : 'OAuth initiation failed' }
+    }
+  })
+
+  ipcMain.handle(IPC.RELAY_OAUTH_STATUS, async (_event, connectionId: string) => {
+    try {
+      return await relayGetOAuthStatus(connectionId)
+    } catch (err) {
+      return { status: 'failed', error: err instanceof Error ? err.message : 'Status check failed' }
+    }
+  })
+
+  ipcMain.handle(IPC.RELAY_OAUTH_DISCONNECT, async (_event, _appName: string) => {
+    // Composio connections are managed server-side; client just removes local state
+    return { success: true }
+  })
+
+  ipcMain.handle(IPC.RELAY_GET_USAGE, async () => {
+    try {
+      return await relayGetUsage()
+    } catch (err) {
+      return {
+        totalCostUsd: 0,
+        limitUsd: 30,
+        requestCount: 0,
+        limitReached: false,
+        resetDate: new Date().toISOString(),
+        error: err instanceof Error ? err.message : 'Failed to get usage'
+      }
+    }
+  })
+
+  ipcMain.handle(IPC.RELAY_GET_CONNECTED, async () => {
+    try {
+      return await relayGetConnectedApps()
+    } catch {
+      return []
+    }
+  })
+
+  // ── Telemetry ──
+  ipcMain.handle(IPC.TELEMETRY_SET_OPT_IN, (_event, optIn: boolean) => {
+    const collector = getTelemetryCollector()
+    collector.setOptIn(optIn)
+    return { success: true }
+  })
+
+  ipcMain.handle(IPC.TELEMETRY_GET_OPT_IN, () => {
+    const collector = getTelemetryCollector()
+    return { optIn: collector.getOptIn() }
+  })
+
+  ipcMain.handle(IPC.TELEMETRY_DELETE_DATA, async () => {
+    const collector = getTelemetryCollector()
+    await collector.deleteData()
+    return { success: true }
+  })
+
+  ipcMain.handle(IPC.TELEMETRY_EMIT, (_event, eventType: string, payload: Record<string, unknown>) => {
+    const collector = getTelemetryCollector()
+    collector.emit(eventType, payload)
+    return { success: true }
   })
 }

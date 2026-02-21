@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useOnboardingStore } from '@/stores/onboarding-store'
 import { TOOL_CATEGORIES } from '@/lib/constants'
 import { Button } from '@/components/ui/button'
@@ -41,6 +41,9 @@ const TOOL_NAMES: Record<string, string> = {
   activecollab: 'ActiveCollab'
 }
 
+// Tools that use credential-based auth instead of Composio OAuth
+const CREDENTIAL_BASED_TOOLS = ['activecollab', 'telegram']
+
 export function ToolConnectionStep({
   onComplete: _
 }: {
@@ -49,19 +52,103 @@ export function ToolConnectionStep({
   const { connectedTools, addConnectedTool, nextStep, prevStep } = useOnboardingStore()
   const [connecting, setConnecting] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // Restore persisted OAuth connections on mount
+  // Load relay-reported Composio connections + local credential connections on mount
   useEffect(() => {
-    window.api.oauth.getConnected().then((tools) => {
-      for (const tool of tools) {
-        addConnectedTool(tool)
+    async function loadConnections(): Promise<void> {
+      try {
+        // Get Composio connections from relay
+        const relayApps = await window.api.relay.getConnected()
+        for (const app of relayApps) {
+          addConnectedTool(app)
+        }
+      } catch {
+        // Relay may not be available yet
       }
-    })
+
+      // Get local credential-based connections
+      try {
+        const localTools = await window.api.oauth.getConnected()
+        for (const tool of localTools) {
+          addConnectedTool(tool)
+        }
+      } catch {
+        // ignore
+      }
+    }
+    loadConnections()
   }, [addConnectedTool])
 
-  // Listen for OAuth callbacks
+  // Cleanup polling on unmount
   useEffect(() => {
-    const unsub = window.api.oauth.onCallback((result) => {
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current)
+    }
+  }, [])
+
+  const handleConnect = async (tool: string): Promise<void> => {
+    // ActiveCollab requires credential input — skip during onboarding
+    if (tool === 'activecollab') {
+      setError('ActiveCollab requires email and password. Connect it in Settings after onboarding.')
+      return
+    }
+
+    // Telegram uses bot token flow — handled locally
+    if (tool === 'telegram') {
+      setConnecting(tool)
+      setError(null)
+      const result = await window.api.oauth.start(tool)
+      if (!result.success) {
+        setError(result.error || 'Could not start connection')
+        setConnecting(null)
+      }
+      return
+    }
+
+    // All other tools use Composio via relay
+    setConnecting(tool)
+    setError(null)
+
+    try {
+      const result = await window.api.relay.initiateOAuth(tool)
+      if (!result.success) {
+        setError(result.error || 'Could not start connection')
+        setConnecting(null)
+        return
+      }
+
+      // Open the OAuth URL in the browser
+      await window.api.app.openExternal(result.redirectUrl)
+
+      // Poll for completion
+      pollRef.current = setInterval(async () => {
+        try {
+          const status = await window.api.relay.getOAuthStatus(result.connectionId)
+          if (status.status === 'active') {
+            if (pollRef.current) clearInterval(pollRef.current)
+            pollRef.current = null
+            addConnectedTool(tool)
+            setConnecting(null)
+          } else if (status.status === 'failed' || status.status === 'expired') {
+            if (pollRef.current) clearInterval(pollRef.current)
+            pollRef.current = null
+            setError(`Connection ${status.status}. Please try again.`)
+            setConnecting(null)
+          }
+        } catch {
+          // Keep polling on network errors
+        }
+      }, 2000)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Connection failed')
+      setConnecting(null)
+    }
+  }
+
+  // Listen for local OAuth callbacks (Telegram)
+  useEffect(() => {
+    const unsub = window.api.oauth.onCallback((result: { success: boolean; provider: string; error?: string }) => {
       if (result.success) {
         addConnectedTool(result.provider)
       } else {
@@ -71,23 +158,6 @@ export function ToolConnectionStep({
     })
     return unsub
   }, [addConnectedTool])
-
-  const handleConnect = async (tool: string): Promise<void> => {
-    // ActiveCollab requires credential input — skip during onboarding
-    if (tool === 'activecollab') {
-      setError('ActiveCollab requires email and password. Connect it in Settings after onboarding.')
-      return
-    }
-
-    setConnecting(tool)
-    setError(null)
-
-    const result = await window.api.oauth.start(tool)
-    if (!result.success) {
-      setError(result.error || 'Could not start connection')
-      setConnecting(null)
-    }
-  }
 
   // Check minimum requirement: 2 tools from 2 different categories
   const connectedCategories = new Set<string>()

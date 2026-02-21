@@ -25,6 +25,7 @@ export const IPC = {
   // LLM Provider
   LLM_TEST_CONNECTION: 'llm:test-connection',
   LLM_SAVE_CONFIG: 'llm:save-config',
+  LLM_GET_CONFIG: 'llm:get-config',
 
   // App
   APP_QUIT: 'app:quit',
@@ -41,6 +42,19 @@ export const IPC = {
   FS_READ_FILE: 'fs:read-file',
   FS_WRITE_FILE: 'fs:write-file',
   FS_SELECT_FOLDER: 'fs:select-folder',
+
+  // Relay
+  RELAY_OAUTH_INITIATE: 'relay:oauth-initiate',
+  RELAY_OAUTH_STATUS: 'relay:oauth-status',
+  RELAY_OAUTH_DISCONNECT: 'relay:oauth-disconnect',
+  RELAY_GET_USAGE: 'relay:get-usage',
+  RELAY_GET_CONNECTED: 'relay:get-connected',
+
+  // Telemetry
+  TELEMETRY_SET_OPT_IN: 'telemetry:set-opt-in',
+  TELEMETRY_GET_OPT_IN: 'telemetry:get-opt-in',
+  TELEMETRY_DELETE_DATA: 'telemetry:delete-data',
+  TELEMETRY_EMIT: 'telemetry:emit',
 
   // Events (main → renderer)
   EVENT_GATEWAY_STATE_CHANGED: 'event:gateway-state-changed',

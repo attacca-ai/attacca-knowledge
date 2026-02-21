@@ -24,7 +24,7 @@ export function TakeOverMode(): React.JSX.Element {
     if (!active || !startedAt) return
 
     const timer = setTimeout(() => {
-      handleDeactivate()
+      handleDeactivate('timeout')
       addNotification({
         type: 'info',
         title: 'Take Over Mode Ended',
@@ -65,6 +65,8 @@ export function TakeOverMode(): React.JSX.Element {
       message: 'Your assistant is now actively monitoring and processing incoming items. High-risk actions still require your approval.'
     })
 
+    window.api.telemetry.emit('trust.takeover.activated', {})
+
     if (connectionState === 'connected') {
       try {
         await gatewayClient.rpc('agent.takeover.start', {
@@ -77,7 +79,8 @@ export function TakeOverMode(): React.JSX.Element {
     }
   }
 
-  const handleDeactivate = async (): Promise<void> => {
+  const handleDeactivate = async (trigger: 'manual' | 'timeout' = 'manual'): Promise<void> => {
+    const durationMs = startedAt ? Date.now() - startedAt : 0
     setActive(false)
     setStartedAt(null)
 
@@ -85,6 +88,8 @@ export function TakeOverMode(): React.JSX.Element {
       type: 'info',
       description: 'Take Over mode deactivated — returning to normal operation'
     })
+
+    window.api.telemetry.emit('trust.takeover.deactivated', { durationMs, trigger })
 
     if (connectionState === 'connected') {
       try {

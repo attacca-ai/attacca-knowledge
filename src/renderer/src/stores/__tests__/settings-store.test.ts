@@ -12,7 +12,10 @@ describe('settings-store', () => {
       folderWatchEnabled: false,
       folderWatchPath: null,
       takeOverSummaryInterval: 2,
-      takeOverAutoDisable: 8
+      takeOverAutoDisable: 8,
+      byokEnabled: false,
+      byokProvider: null,
+      telemetryOptIn: false
     })
   })
 
@@ -120,7 +123,10 @@ describe('settings-store', () => {
         folderWatchEnabled: false,
         folderWatchPath: null,
         takeOverSummaryInterval: 2,
-        takeOverAutoDisable: 8
+        takeOverAutoDisable: 8,
+        byokEnabled: false,
+        byokProvider: null,
+        telemetryOptIn: false
       })
     })
   })

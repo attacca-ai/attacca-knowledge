@@ -15,6 +15,10 @@ export interface OpenClawConfig {
     model: string
     apiKey: string
   }
+  relay?: {
+    url: string
+    enabled: boolean
+  }
   workspace?: string
 }
 
@@ -22,6 +26,10 @@ const DEFAULT_CONFIG: OpenClawConfig = {
   gateway: {
     port: 18789,
     host: '127.0.0.1'
+  },
+  relay: {
+    url: 'https://relay.attacca.app',
+    enabled: true
   }
 }
 

@@ -47,7 +47,8 @@ const api = {
     testConnection: (provider: string, apiKey: string) =>
       ipcRenderer.invoke('llm:test-connection', provider, apiKey),
     saveConfig: (provider: string, model: string, apiKey: string) =>
-      ipcRenderer.invoke('llm:save-config', provider, model, apiKey)
+      ipcRenderer.invoke('llm:save-config', provider, model, apiKey),
+    getConfig: () => ipcRenderer.invoke('llm:get-config')
   },
 
   // App
@@ -78,6 +79,25 @@ const api = {
       ipcRenderer.invoke('activecollab:connect-selfhosted', url, email, password),
     status: () => ipcRenderer.invoke('activecollab:status'),
     disconnect: () => ipcRenderer.invoke('activecollab:disconnect')
+  },
+
+  // Relay (managed service)
+  relay: {
+    initiateOAuth: (appName: string) => ipcRenderer.invoke('relay:oauth-initiate', appName),
+    getOAuthStatus: (connectionId: string) =>
+      ipcRenderer.invoke('relay:oauth-status', connectionId),
+    disconnectOAuth: (appName: string) => ipcRenderer.invoke('relay:oauth-disconnect', appName),
+    getUsage: () => ipcRenderer.invoke('relay:get-usage'),
+    getConnected: () => ipcRenderer.invoke('relay:get-connected')
+  },
+
+  // Telemetry
+  telemetry: {
+    setOptIn: (optIn: boolean) => ipcRenderer.invoke('telemetry:set-opt-in', optIn),
+    getOptIn: () => ipcRenderer.invoke('telemetry:get-opt-in'),
+    deleteData: () => ipcRenderer.invoke('telemetry:delete-data'),
+    emit: (eventType: string, payload: Record<string, unknown>) =>
+      ipcRenderer.invoke('telemetry:emit', eventType, payload)
   }
 }
 

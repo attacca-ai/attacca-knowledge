@@ -1,11 +1,9 @@
 export interface OnboardingState {
   currentStep: number
-  llmProvider: string | null
-  llmModel: string | null
-  apiKeyValidated: boolean
   connectedTools: string[]
   selectedUseCases: string[]
+  telemetryOptIn: boolean
   completed: boolean
 }
 
-export type OnboardingStep = 'welcome' | 'llm-provider' | 'tool-connection' | 'use-case' | 'completion'
+export type OnboardingStep = 'welcome' | 'tool-connection' | 'telemetry-consent' | 'use-case' | 'completion'

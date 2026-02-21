@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -45,6 +45,9 @@ const TOOL_NAMES: Record<string, string> = {
   telegram: 'Telegram'
 }
 
+// Tools that use credential-based auth instead of Composio OAuth
+const CREDENTIAL_BASED_TOOLS = ['activecollab', 'telegram']
+
 // All tools from categories
 const ALL_TOOLS = Object.values(TOOL_CATEGORIES).flatMap((c) => c.tools)
 
@@ -53,6 +56,7 @@ export function ConnectionsPage(): React.JSX.Element {
   const [connecting, setConnecting] = useState<string | null>(null)
   const [disconnecting, setDisconnecting] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // ActiveCollab dialog state
   const [acDialogOpen, setAcDialogOpen] = useState(false)
@@ -64,16 +68,38 @@ export function ConnectionsPage(): React.JSX.Element {
 
   // Load persisted connected tools on mount
   useEffect(() => {
-    window.api.oauth.getConnected().then((tools) => {
-      for (const tool of tools) {
-        addConnectedTool(tool)
+    async function loadConnections(): Promise<void> {
+      try {
+        const relayApps = await window.api.relay.getConnected()
+        for (const app of relayApps) {
+          addConnectedTool(app)
+        }
+      } catch {
+        // Relay may not be available
       }
-    })
+
+      try {
+        const localTools = await window.api.oauth.getConnected()
+        for (const tool of localTools) {
+          addConnectedTool(tool)
+        }
+      } catch {
+        // ignore
+      }
+    }
+    loadConnections()
   }, [addConnectedTool])
 
-  // Listen for OAuth callbacks
+  // Cleanup polling on unmount
   useEffect(() => {
-    const unsub = window.api.oauth.onCallback((result) => {
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current)
+    }
+  }, [])
+
+  // Listen for local OAuth callbacks (Telegram)
+  useEffect(() => {
+    const unsub = window.api.oauth.onCallback((result: { success: boolean; provider: string; error?: string }) => {
       if (result.success) {
         addConnectedTool(result.provider)
       } else {
@@ -91,11 +117,52 @@ export function ConnectionsPage(): React.JSX.Element {
       return
     }
 
+    // Telegram uses bot token flow — handled locally
+    if (tool === 'telegram') {
+      setConnecting(tool)
+      setError(null)
+      const result = await window.api.oauth.start(tool)
+      if (!result.success) {
+        setError(result.error || 'Could not start connection')
+        setConnecting(null)
+      }
+      return
+    }
+
+    // All other tools use Composio via relay
     setConnecting(tool)
     setError(null)
-    const result = await window.api.oauth.start(tool)
-    if (!result.success) {
-      setError(result.error || 'Could not start connection')
+
+    try {
+      const result = await window.api.relay.initiateOAuth(tool)
+      if (!result.success) {
+        setError(result.error || 'Could not start connection')
+        setConnecting(null)
+        return
+      }
+
+      await window.api.app.openExternal(result.redirectUrl)
+
+      pollRef.current = setInterval(async () => {
+        try {
+          const status = await window.api.relay.getOAuthStatus(result.connectionId)
+          if (status.status === 'active') {
+            if (pollRef.current) clearInterval(pollRef.current)
+            pollRef.current = null
+            addConnectedTool(tool)
+            setConnecting(null)
+          } else if (status.status === 'failed' || status.status === 'expired') {
+            if (pollRef.current) clearInterval(pollRef.current)
+            pollRef.current = null
+            setError(`Connection ${status.status}. Please try again.`)
+            setConnecting(null)
+          }
+        } catch {
+          // Keep polling on network errors
+        }
+      }, 2000)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Connection failed')
       setConnecting(null)
     }
   }
@@ -128,12 +195,25 @@ export function ConnectionsPage(): React.JSX.Element {
   const handleDisconnect = async (tool: string): Promise<void> => {
     setDisconnecting(tool)
     setError(null)
-    const result = await window.api.oauth.disconnect(tool)
-    if (result.success) {
-      removeConnectedTool(tool)
+
+    if (CREDENTIAL_BASED_TOOLS.includes(tool)) {
+      // Local credential-based disconnect
+      const result = await window.api.oauth.disconnect(tool)
+      if (result.success) {
+        removeConnectedTool(tool)
+      } else {
+        setError(result.error || 'Disconnect failed')
+      }
     } else {
-      setError(result.error || 'Disconnect failed')
+      // Composio tools — disconnect via relay
+      const result = await window.api.relay.disconnectOAuth(tool)
+      if (result.success) {
+        removeConnectedTool(tool)
+      } else {
+        setError('Disconnect failed')
+      }
     }
+
     setDisconnecting(null)
   }
 

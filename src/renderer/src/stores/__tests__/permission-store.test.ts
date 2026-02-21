@@ -1,9 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { usePermissionStore } from '../permission-store'
 import type { PendingApproval } from '../permission-store'
+import { installMockApi, cleanupMockApi } from '../../../../../tests/helpers'
 
 describe('permission-store', () => {
   beforeEach(() => {
+    installMockApi()
     usePermissionStore.setState({
       grants: new Map(),
       pendingApprovals: []
@@ -13,6 +15,7 @@ describe('permission-store', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+    cleanupMockApi()
   })
 
   it('has correct initial state', () => {

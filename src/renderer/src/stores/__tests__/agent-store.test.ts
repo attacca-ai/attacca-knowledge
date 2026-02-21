@@ -1,16 +1,23 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { useAgentStore } from '../agent-store'
+import { installMockApi, cleanupMockApi } from '../../../../../tests/helpers'
 
 describe('agent-store', () => {
   beforeEach(() => {
+    installMockApi()
     useAgentStore.setState({
       currentTask: null,
       taskQueue: [],
       activityFeed: [],
       isProcessing: false,
+      usageLimitReached: false,
       morningBriefing: null,
       briefingDate: null
     })
+  })
+
+  afterEach(() => {
+    cleanupMockApi()
   })
 
   describe('addTask', () => {

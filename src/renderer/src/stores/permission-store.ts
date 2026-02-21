@@ -27,6 +27,8 @@ interface PermissionStore {
   grantPermission: (approval: PendingApproval, standing?: boolean) => void
   denyPermission: (approvalId: string) => void
   revokeStanding: (toolId: string, actionType: string) => void
+  grantStandingApproval: (actionType: string, toolId: string) => void
+  isStandingApprovalActive: (actionType: string, toolId: string) => boolean
   isApproved: (toolId: string, actionType: string, tier: RiskTier) => boolean
   addPendingApproval: (approval: Omit<PendingApproval, 'id' | 'requestedAt'>) => string
   getPendingApprovals: () => PendingApproval[]
@@ -60,12 +62,37 @@ export const usePermissionStore = create<PermissionStore>((set, get) => ({
       grants,
       pendingApprovals: get().pendingApprovals.filter((a) => a.id !== approval.id)
     })
+
+    // Emit telemetry
+    const eventType = standing
+      ? 'permission.standing_approval.granted'
+      : `permission.${approval.tier}_risk.resolved`
+
+    window.api.telemetry.emit(eventType, {
+      actionType: approval.actionType,
+      toolId: approval.toolId,
+      resolution: 'approved',
+      standingApproval: standing,
+      durationMs: Date.now() - approval.requestedAt
+    })
   },
 
   denyPermission: (approvalId) => {
+    const approval = get().pendingApprovals.find((a) => a.id === approvalId)
+
     set({
       pendingApprovals: get().pendingApprovals.filter((a) => a.id !== approvalId)
     })
+
+    if (approval) {
+      window.api.telemetry.emit(`permission.${approval.tier}_risk.resolved`, {
+        actionType: approval.actionType,
+        toolId: approval.toolId,
+        resolution: 'denied',
+        standingApproval: false,
+        durationMs: Date.now() - approval.requestedAt
+      })
+    }
   },
 
   revokeStanding: (toolId, actionType) => {
@@ -73,6 +100,51 @@ export const usePermissionStore = create<PermissionStore>((set, get) => ({
     const grants = new Map(get().grants)
     grants.delete(key)
     set({ grants })
+  },
+
+  grantStandingApproval: (actionType, toolId) => {
+    const key = grantKey(toolId, actionType)
+    const grants = new Map(get().grants)
+
+    grants.set(key, {
+      toolId,
+      actionType,
+      tier: 'high',
+      grantedAt: Date.now(),
+      standing: true,
+      expiresAt: Date.now() + STANDING_DURATION_MS
+    })
+
+    set({ grants })
+
+    window.api.telemetry.emit('permission.standing_approval.granted', {
+      actionType,
+      toolId
+    })
+  },
+
+  isStandingApprovalActive: (actionType, toolId) => {
+    const key = grantKey(toolId, actionType)
+    const grant = get().grants.get(key)
+
+    if (!grant || !grant.standing) return false
+
+    if (grant.expiresAt && Date.now() > grant.expiresAt) {
+      // Expired — clean up and emit telemetry
+      const grants = new Map(get().grants)
+      grants.delete(key)
+      set({ grants })
+
+      window.api.telemetry.emit('permission.standing_approval.expired', {
+        actionType,
+        toolId,
+        durationDays: 30
+      })
+
+      return false
+    }
+
+    return true
   },
 
   isApproved: (toolId, actionType, tier) => {
@@ -109,6 +181,13 @@ export const usePermissionStore = create<PermissionStore>((set, get) => ({
       requestedAt: Date.now()
     }
     set({ pendingApprovals: [...get().pendingApprovals, pending] })
+
+    // Emit telemetry for presentation
+    window.api.telemetry.emit(`permission.${approval.tier}_risk.presented`, {
+      actionType: approval.actionType,
+      toolId: approval.toolId
+    })
+
     return id
   },
 

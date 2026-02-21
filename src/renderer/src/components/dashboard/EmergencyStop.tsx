@@ -26,6 +26,8 @@ export function EmergencyStop(): React.JSX.Element {
     emergencyStop()
     setConfirming(false)
 
+    window.api.telemetry.emit('trust.kill_switch.activated', {})
+
     // Send stop to gateway
     if (connectionState === 'connected') {
       try {

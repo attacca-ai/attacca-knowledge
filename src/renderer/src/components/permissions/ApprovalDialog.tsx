@@ -1,20 +1,31 @@
 import { useState } from 'react'
 import { usePermissionStore } from '@/stores/permission-store'
 import { useNotificationStore } from '@/stores/notification-store'
-import { getTierColor, getTierBgColor, getTierLabel } from '@/lib/permission-engine'
+import { useTrustStore } from '@/stores/trust-store'
+import { getTierColor, getTierBgColor, getTierLabel, getActionBehavior } from '@/lib/permission-engine'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ShieldAlert, Check, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { CountdownApproval } from './CountdownApproval'
 
 export function ApprovalDialog(): React.JSX.Element | null {
   const { pendingApprovals, grantPermission, denyPermission } = usePermissionStore()
   const addNotification = useNotificationStore((s) => s.add)
+  const profile = useTrustStore((s) => s.profile)
   const [standingApproval, setStandingApproval] = useState(false)
 
-  const current = pendingApprovals[0]
+  const current = pendingApprovals.find((a) => a.tier === 'high')
   if (!current) return null
 
+  const behavior = getActionBehavior(current.tier, profile)
+
+  // Autonomous high-risk: show countdown instead of blocking dialog
+  if (behavior.delayMs) {
+    return <CountdownApproval approval={current} />
+  }
+
+  // Blocking approval (Cautious/Balanced high-risk)
   const tierColor = getTierColor(current.tier)
   const tierBg = getTierBgColor(current.tier)
 
@@ -99,9 +110,10 @@ export function ApprovalDialog(): React.JSX.Element | null {
         </div>
 
         {/* Queue indicator */}
-        {pendingApprovals.length > 1 && (
+        {pendingApprovals.filter((a) => a.tier === 'high').length > 1 && (
           <div className="border-t border-border px-4 py-2 text-center text-xs text-muted-foreground">
-            {pendingApprovals.length - 1} more approval{pendingApprovals.length > 2 ? 's' : ''} pending
+            {pendingApprovals.filter((a) => a.tier === 'high').length - 1} more approval
+            {pendingApprovals.filter((a) => a.tier === 'high').length > 2 ? 's' : ''} pending
           </div>
         )}
       </div>
