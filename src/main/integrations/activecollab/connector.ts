@@ -42,15 +42,16 @@ export function disconnect(): void {
 
 /**
  * Connect to ActiveCollab Cloud
- * Uses the Intent system: POST email/password -> get accounts -> issue token
+ * Step 1: POST email/password to external/login -> get intent + accounts
+ * Step 2: POST intent to issue-token-intent on the account URL -> get token
  */
 export async function connectCloud(
   email: string,
   password: string
 ): Promise<ActiveCollabConfig> {
-  // Step 1: Get account info via Intent
-  const intentResponse = await net.fetch(
-    'https://my.activecollab.com/api/v1/external/login',
+  // Step 1: Login to get intent and accounts
+  const loginResponse = await net.fetch(
+    'https://activecollab.com/api/v1/external/login',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -58,30 +59,44 @@ export async function connectCloud(
     }
   )
 
-  if (!intentResponse.ok) {
-    const errorText = await intentResponse.text()
+  if (!loginResponse.ok) {
+    const errorText = await loginResponse.text()
     throw new Error(`ActiveCollab login failed: ${errorText}`)
   }
 
-  const intentData = (await intentResponse.json()) as {
+  const loginData = (await loginResponse.json()) as {
     is_ok: boolean
-    accounts?: Array<{ name: string; url: string }>
+    user?: {
+      intent: string
+      accounts?: Array<{ name: string; display_url: string; url: string; class: string }>
+    }
+    // 2FA flow
+    intent_id?: string
+    message?: string
   }
 
-  if (!intentData.is_ok || !intentData.accounts?.length) {
+  if (!loginData.is_ok) {
+    throw new Error(loginData.message || 'ActiveCollab login failed')
+  }
+
+  if (loginData.intent_id) {
+    throw new Error('Your account has 2FA enabled. Please disable it temporarily or use a Self-Hosted connection.')
+  }
+
+  if (!loginData.user?.intent || !loginData.user?.accounts?.length) {
     throw new Error('No ActiveCollab accounts found for this email.')
   }
 
-  // Use the first account
-  const account = intentData.accounts[0]
+  const intent = loginData.user.intent
+  const account = loginData.user.accounts[0]
+  const accountUrl = account.url.replace(/\/$/, '')
 
-  // Step 2: Issue token for this account
-  const tokenResponse = await net.fetch(`${account.url}/api/v1/issue-token`, {
+  // Step 2: Exchange intent for a token
+  const tokenResponse = await net.fetch(`${accountUrl}/api/v1/issue-token-intent`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      username: email,
-      password: password,
+      intent,
       client_name: 'Attacca',
       client_vendor: 'Attacca AI'
     })
@@ -103,7 +118,7 @@ export async function connectCloud(
   }
 
   const config: ActiveCollabConfig = {
-    instanceUrl: account.url,
+    instanceUrl: accountUrl,
     token: tokenData.token,
     userId: tokenData.logged_user_id || 0,
     email,
