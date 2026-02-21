@@ -1,7 +1,7 @@
 import { net } from 'electron'
 
 const GUMROAD_VERIFY_URL = 'https://api.gumroad.com/v2/licenses/verify'
-const PRODUCT_ID = 'attacca'
+const PRODUCT_ID = 'GHIxOJd-ONuldh9bhDQkYQ=='
 
 export interface GumroadLicenseResult {
   success: boolean

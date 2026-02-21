@@ -1,11 +1,9 @@
 import { registerProvider } from '../providers'
 
-const SLACK_CLIENT_ID = process.env.SLACK_CLIENT_ID || ''
-const SLACK_CLIENT_SECRET = process.env.SLACK_CLIENT_SECRET || ''
-
-if (!SLACK_CLIENT_ID) {
-  console.warn('[Slack] SLACK_CLIENT_ID not set — integration disabled')
-}
+const SLACK_CLIENT_ID =
+  process.env.SLACK_CLIENT_ID || 'REDACTED_SLACK_CLIENT_ID'
+const SLACK_CLIENT_SECRET =
+  process.env.SLACK_CLIENT_SECRET || 'REDACTED_SLACK_CLIENT_SECRET'
 
 // Slack OAuth v2 uses user_scope (NOT scope) for user token flows.
 // We pass scopes via extraAuthParams.user_scope and leave scopes empty

@@ -1,11 +1,9 @@
 import { registerProvider } from '../providers'
 
-const MS_CLIENT_ID = process.env.MICROSOFT_CLIENT_ID || ''
-const MS_CLIENT_SECRET = process.env.MICROSOFT_CLIENT_SECRET || ''
-
-if (!MS_CLIENT_ID) {
-  console.warn('[Outlook Email] MICROSOFT_CLIENT_ID not set — integration disabled')
-}
+const MS_CLIENT_ID =
+  process.env.MICROSOFT_CLIENT_ID || 'REDACTED_MICROSOFT_CLIENT_ID'
+const MS_CLIENT_SECRET =
+  process.env.MICROSOFT_CLIENT_SECRET || 'REDACTED_MICROSOFT_CLIENT_SECRET'
 
 registerProvider({
   provider: 'microsoft',

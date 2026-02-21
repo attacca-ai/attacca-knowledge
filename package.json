@@ -1,6 +1,6 @@
 {
   "name": "attacca",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "AI productivity assistant for knowledge workers",
   "main": "./out/main/index.js",
   "author": "Attacca",

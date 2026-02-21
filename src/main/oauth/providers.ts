@@ -10,12 +10,15 @@ export interface OAuthProviderConfig {
   tokenExchangeMethod?: 'form' | 'query'
 }
 
-// Provider configs — client IDs should be set via environment or settings
-// These are the standard OAuth endpoints
+// Built-in credentials (env vars override if set)
+const GOOGLE_CLIENT_ID =
+  process.env.GOOGLE_CLIENT_ID || 'REDACTED_GOOGLE_CLIENT_ID'
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || 'REDACTED_GOOGLE_CLIENT_SECRET'
+
 export const OAUTH_PROVIDERS: Record<string, OAuthProviderConfig> = {
   'google-calendar': {
-    clientId: process.env.GOOGLE_CLIENT_ID || '',
-    clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
+    clientId: GOOGLE_CLIENT_ID,
+    clientSecret: GOOGLE_CLIENT_SECRET,
     authUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
     tokenUrl: 'https://oauth2.googleapis.com/token',
     scopes: ['https://www.googleapis.com/auth/calendar'],
@@ -23,8 +26,8 @@ export const OAUTH_PROVIDERS: Record<string, OAuthProviderConfig> = {
     extraAuthParams: { access_type: 'offline', prompt: 'consent' }
   },
   gmail: {
-    clientId: process.env.GOOGLE_CLIENT_ID || '',
-    clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
+    clientId: GOOGLE_CLIENT_ID,
+    clientSecret: GOOGLE_CLIENT_SECRET,
     authUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
     tokenUrl: 'https://oauth2.googleapis.com/token',
     scopes: [
@@ -36,8 +39,8 @@ export const OAUTH_PROVIDERS: Record<string, OAuthProviderConfig> = {
     extraAuthParams: { access_type: 'offline', prompt: 'consent' }
   },
   'google-drive': {
-    clientId: process.env.GOOGLE_CLIENT_ID || '',
-    clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
+    clientId: GOOGLE_CLIENT_ID,
+    clientSecret: GOOGLE_CLIENT_SECRET,
     authUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
     tokenUrl: 'https://oauth2.googleapis.com/token',
     scopes: [
@@ -48,32 +51,32 @@ export const OAUTH_PROVIDERS: Record<string, OAuthProviderConfig> = {
     extraAuthParams: { access_type: 'offline', prompt: 'consent' }
   },
   'outlook-calendar': {
-    clientId: process.env.MICROSOFT_CLIENT_ID || '',
-    clientSecret: process.env.MICROSOFT_CLIENT_SECRET || '',
+    clientId: process.env.MICROSOFT_CLIENT_ID || 'REDACTED_MICROSOFT_CLIENT_ID',
+    clientSecret: process.env.MICROSOFT_CLIENT_SECRET || 'REDACTED_MICROSOFT_CLIENT_SECRET',
     authUrl: 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize',
     tokenUrl: 'https://login.microsoftonline.com/common/oauth2/v2.0/token',
     scopes: ['Calendars.ReadWrite', 'offline_access'],
     provider: 'microsoft'
   },
   'outlook-email': {
-    clientId: process.env.MICROSOFT_CLIENT_ID || '',
-    clientSecret: process.env.MICROSOFT_CLIENT_SECRET || '',
+    clientId: process.env.MICROSOFT_CLIENT_ID || 'REDACTED_MICROSOFT_CLIENT_ID',
+    clientSecret: process.env.MICROSOFT_CLIENT_SECRET || 'REDACTED_MICROSOFT_CLIENT_SECRET',
     authUrl: 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize',
     tokenUrl: 'https://login.microsoftonline.com/common/oauth2/v2.0/token',
     scopes: ['Mail.ReadWrite', 'Mail.Send', 'offline_access'],
     provider: 'microsoft'
   },
   slack: {
-    clientId: process.env.SLACK_CLIENT_ID || '',
-    clientSecret: process.env.SLACK_CLIENT_SECRET || '',
+    clientId: process.env.SLACK_CLIENT_ID || 'REDACTED_SLACK_CLIENT_ID',
+    clientSecret: process.env.SLACK_CLIENT_SECRET || 'REDACTED_SLACK_CLIENT_SECRET',
     authUrl: 'https://slack.com/oauth/v2/authorize',
     tokenUrl: 'https://slack.com/api/oauth.v2.access',
     scopes: ['chat:write', 'channels:read', 'channels:history'],
     provider: 'slack'
   },
   clickup: {
-    clientId: process.env.CLICKUP_CLIENT_ID || '',
-    clientSecret: process.env.CLICKUP_CLIENT_SECRET || '',
+    clientId: process.env.CLICKUP_CLIENT_ID || 'REDACTED_CLICKUP_CLIENT_ID',
+    clientSecret: process.env.CLICKUP_CLIENT_SECRET || 'REDACTED_CLICKUP_CLIENT_SECRET',
     authUrl: 'https://app.clickup.com/api',
     tokenUrl: 'https://api.clickup.com/api/v2/oauth/token',
     scopes: [],

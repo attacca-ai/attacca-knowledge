@@ -19,6 +19,7 @@ extraResources:
 win:
   executableName: Attacca
   icon: resources/icon.ico
+  signAndEditExecutable: false
   target:
     - target: nsis
       arch:

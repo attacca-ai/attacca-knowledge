@@ -1,11 +1,8 @@
 import { registerProvider } from '../providers'
 
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || ''
-const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || ''
-
-if (!GOOGLE_CLIENT_ID) {
-  console.warn('[Gmail] GOOGLE_CLIENT_ID not set — integration disabled')
-}
+const GOOGLE_CLIENT_ID =
+  process.env.GOOGLE_CLIENT_ID || 'REDACTED_GOOGLE_CLIENT_ID'
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || 'REDACTED_GOOGLE_CLIENT_SECRET'
 
 registerProvider({
   provider: 'google',

@@ -69,7 +69,7 @@ export function LicenseGate({ onActivated }: { onActivated: () => void }): React
 
           <div className="flex flex-col gap-2 pt-2 text-center">
             <button
-              onClick={() => window.api.app.openExternal('https://attacca.gumroad.com')}
+              onClick={() => window.api.app.openExternal('https://duquelight0.gumroad.com/l/attaccawin')}
               className="inline-flex items-center justify-center gap-1 text-sm text-muted-foreground hover:text-foreground"
             >
               <ExternalLink className="h-3 w-3" />
