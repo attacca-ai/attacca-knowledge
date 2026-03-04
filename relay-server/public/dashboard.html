@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Attacca Research Dashboard</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0a0a0a; color: #e5e5e5; padding: 2rem; }
+    h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
+    .subtitle { color: #737373; margin-bottom: 2rem; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; }
+    .card { background: #171717; border: 1px solid #262626; border-radius: 0.5rem; padding: 1.5rem; }
+    .card h2 { font-size: 0.875rem; color: #a3a3a3; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 1rem; }
+    .stat { font-size: 2rem; font-weight: 700; margin-bottom: 0.25rem; }
+    .stat-label { color: #737373; font-size: 0.875rem; }
+    .stat-sub { margin-top: 1rem; }
+    table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; }
+    th, td { text-align: left; padding: 0.5rem; font-size: 0.875rem; }
+    th { color: #737373; border-bottom: 1px solid #262626; }
+    td { border-bottom: 1px solid #1a1a1a; }
+    .bar { height: 8px; background: #262626; border-radius: 4px; overflow: hidden; }
+    .bar-fill { height: 100%; border-radius: 4px; }
+    .bar-green { background: #22c55e; }
+    .bar-orange { background: #f97316; }
+    .bar-red { background: #ef4444; }
+    .bar-blue { background: #3b82f6; }
+    .error { color: #ef4444; padding: 1rem; text-align: center; }
+    .loading { color: #737373; padding: 2rem; text-align: center; }
+    #secret-form { margin-bottom: 2rem; display: flex; gap: 0.5rem; align-items: center; }
+    #secret-form input { background: #171717; border: 1px solid #262626; color: #e5e5e5; padding: 0.5rem; border-radius: 0.25rem; font-size: 0.875rem; }
+    #secret-form button { background: #3b82f6; color: white; border: none; padding: 0.5rem 1rem; border-radius: 0.25rem; cursor: pointer; font-size: 0.875rem; }
+  </style>
+</head>
+<body>
+  <h1>Attacca Research Dashboard</h1>
+  <p class="subtitle">Internal telemetry analytics (last 30 days)</p>
+
+  <div id="secret-form">
+    <input type="password" id="secret" placeholder="Dashboard secret" />
+    <button id="load-btn">Load</button>
+  </div>
+
+  <div id="content" class="loading">Enter secret and click Load</div>
+
+  <script src="dashboard.js"></script>
+</body>
+</html>
