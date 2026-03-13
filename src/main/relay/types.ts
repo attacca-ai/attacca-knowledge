@@ -52,3 +52,10 @@ export interface RelayErrorResponse {
   message?: string
   limitUsd?: number
 }
+
+export interface RelayComposioApp {
+  slug: string
+  name: string
+  categories: string[]
+  description: string
+}

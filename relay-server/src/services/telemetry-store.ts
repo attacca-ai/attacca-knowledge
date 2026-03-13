@@ -144,3 +144,57 @@ export async function getTaskCompletionStats(days = 30): Promise<TaskCompletionS
     fallbackRate: total > 0 ? totalFallbacks / total : 0
   }
 }
+
+export interface ToolCallStats {
+  totalCalls: number
+  succeeded: number
+  failed: number
+  successRate: number
+  avgDurationMs: number
+  topFailingTools: Array<{ actionName: string; count: number; lastError: string }>
+}
+
+export async function getToolCallStats(days = 30): Promise<ToolCallStats> {
+  const [successRes, failRes, topRes] = await Promise.all([
+    query<{ count: string; avg_duration: string }>(
+      `SELECT COUNT(*) as count,
+              AVG((payload->>'durationMs')::numeric) as avg_duration
+       FROM telemetry_events
+       WHERE event_type = 'agent.tool.succeeded'
+         AND server_timestamp > NOW() - INTERVAL '${days} days'`
+    ),
+    query<{ count: string }>(
+      `SELECT COUNT(*) as count FROM telemetry_events
+       WHERE event_type = 'agent.tool.failed'
+         AND server_timestamp > NOW() - INTERVAL '${days} days'`
+    ),
+    query<{ action_name: string; count: string; last_error: string }>(
+      `SELECT payload->>'actionName' as action_name,
+              COUNT(*) as count,
+              MAX(payload->>'errorMessage') as last_error
+       FROM telemetry_events
+       WHERE event_type = 'agent.tool.failed'
+         AND server_timestamp > NOW() - INTERVAL '${days} days'
+       GROUP BY payload->>'actionName'
+       ORDER BY count DESC
+       LIMIT 10`
+    )
+  ])
+
+  const succeeded = parseInt(successRes.rows[0]?.count ?? '0')
+  const failed    = parseInt(failRes.rows[0]?.count ?? '0')
+  const total     = succeeded + failed
+
+  return {
+    totalCalls:      total,
+    succeeded,
+    failed,
+    successRate:     total > 0 ? succeeded / total : 0,
+    avgDurationMs:   parseFloat(successRes.rows[0]?.avg_duration ?? '0'),
+    topFailingTools: topRes.rows.map((r) => ({
+      actionName: r.action_name ?? '?',
+      count:      parseInt(r.count),
+      lastError:  r.last_error ?? ''
+    }))
+  }
+}

@@ -14,7 +14,9 @@ import {
   relayGetOAuthStatus,
   relayGetUsage,
   relayGetConnectedApps,
-  relayProxyToolAction
+  relayProxyToolAction,
+  relayLLMCompletion,
+  relayListApps
 } from '../relay/client'
 import { getTelemetryCollector } from '../telemetry/collector'
 
@@ -327,6 +329,22 @@ export function registerIpcHandlers(): void {
     }
   })
 
+  ipcMain.handle(IPC.RELAY_LLM_COMPLETION, async (_event, messages: Array<{ role: string; content: string }>, opts?: { model?: string; max_tokens?: number }) => {
+    try {
+      return await relayLLMCompletion({ messages, ...opts })
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : 'LLM completion failed' }
+    }
+  })
+
+  ipcMain.handle(IPC.RELAY_LIST_APPS, async () => {
+    try {
+      return await relayListApps()
+    } catch {
+      return []
+    }
+  })
+
   // ── Agent state persistence ──
   ipcMain.handle(IPC.AGENT_GET_STATE, () => {
     const filePath = join(app.getPath('userData'), 'agent-state.json')
@@ -343,6 +361,157 @@ export function registerIpcHandlers(): void {
     const dir = dirname(filePath)
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
     writeFileSync(filePath, JSON.stringify(state, null, 2), 'utf-8')
+  })
+
+  // ── Knowledge Base ──
+  ipcMain.handle(IPC.KB_SAVE_CAPTURE, (_event, data: {
+    id: string
+    sourceType: string
+    title: string
+    content: string
+    result: {
+      summary: string
+      actionItems: Array<{ text: string; owner?: string }>
+      decisions: string[]
+      openQuestions: string[]
+      keyPoints: string[]
+      entities?: { people?: string[]; projects?: string[]; dates?: string[] }
+    }
+    timestamp: number
+  }) => {
+    const kbDir = join(app.getPath('userData'), 'attacca-kb')
+    const date = new Date(data.timestamp)
+    const dateStr = date.toISOString().slice(0, 10)
+    const timeStr = date.toTimeString().slice(0, 5)
+
+    // Write inbox capture file
+    const inboxDir = join(kbDir, 'inbox', dateStr)
+    mkdirSync(inboxDir, { recursive: true })
+
+    const actionItemsMd = data.result.actionItems.length
+      ? data.result.actionItems.map(i => `- [ ] ${i.text}${i.owner ? ` (${i.owner})` : ''}`).join('\n')
+      : '_None_'
+    const decisionsMd = data.result.decisions.length
+      ? data.result.decisions.map(d => `- ${d}`).join('\n')
+      : '_None_'
+    const questionsMd = data.result.openQuestions.length
+      ? data.result.openQuestions.map(q => `- ${q}`).join('\n')
+      : '_None_'
+    const entities = data.result.entities ?? {}
+    const entitiesMd = [
+      entities.people?.length ? `People: ${entities.people.join(', ')}` : '',
+      entities.projects?.length ? `Projects: ${entities.projects.join(', ')}` : '',
+      entities.dates?.length ? `Dates: ${entities.dates.join(', ')}` : ''
+    ].filter(Boolean).join('\n') || '_None_'
+
+    const captureContent = `---
+id: ${data.id}
+date: ${dateStr}
+source: ${data.sourceType}
+title: ${data.title}
+---
+
+## Summary
+${data.result.summary}
+
+## Action Items
+${actionItemsMd}
+
+## Decisions
+${decisionsMd}
+
+## Open Questions
+${questionsMd}
+
+## Entities
+${entitiesMd}
+`
+    writeFileSync(join(inboxDir, `${data.id}-${data.sourceType}.md`), captureContent, 'utf-8')
+
+    // Update CONTEXT.md
+    const memoryDir = join(kbDir, 'memory')
+    mkdirSync(memoryDir, { recursive: true })
+    const ctxPath = join(memoryDir, 'CONTEXT.md')
+
+    let ctxContent = existsSync(ctxPath)
+      ? readFileSync(ctxPath, 'utf-8')
+      : `# Attacca User Context\n\n## Recent Captures (last 5)\n<!-- agent-managed: do not edit manually -->\n\n## Active Projects\n<!-- agent-managed: do not edit manually -->\n\n## Key People\n<!-- agent-managed: do not edit manually -->\n`
+
+    // Update Recent Captures section
+    const newCaptureEntry = `- [${data.sourceType}] "${data.title}" — ${dateStr} ${timeStr}`
+    const recentMatch = ctxContent.match(/(## Recent Captures[^\n]*\n<!-- agent-managed[^\n]*\n)([\s\S]*?)(## Active Projects)/)
+    if (recentMatch) {
+      const existing = recentMatch[2].trim().split('\n').filter(l => l.startsWith('-')).slice(0, 4)
+      const updated = [newCaptureEntry, ...existing].join('\n')
+      ctxContent = ctxContent.replace(
+        /(## Recent Captures[^\n]*\n<!-- agent-managed[^\n]*\n)[\s\S]*?(## Active Projects)/,
+        `$1${updated}\n\n$2`
+      )
+    }
+
+    // Update Active Projects section
+    if (entities.projects?.length) {
+      for (const project of entities.projects) {
+        if (!ctxContent.includes(project)) {
+          ctxContent = ctxContent.replace(
+            /(## Active Projects\n<!-- agent-managed[^\n]*\n)([\s\S]*?)(## Key People)/,
+            (_m, header, body, next) => {
+              const trimmed = body.trim()
+              const newBody = trimmed ? `${trimmed}\n- ${project}` : `- ${project}`
+              return `${header}${newBody}\n\n${next}`
+            }
+          )
+        }
+      }
+    }
+
+    // Update Key People section
+    if (entities.people?.length) {
+      for (const person of entities.people) {
+        if (!ctxContent.includes(person)) {
+          ctxContent = ctxContent.replace(
+            /(## Key People\n<!-- agent-managed[^\n]*\n)([\s\S]*?)$/,
+            (_m, header, body) => {
+              const trimmed = body.trim()
+              return `${header}${trimmed ? `${trimmed}\n- ${person}` : `- ${person}`}\n`
+            }
+          )
+        }
+      }
+    }
+
+    writeFileSync(ctxPath, ctxContent, 'utf-8')
+
+    // Append to daily log
+    const dailyDir = join(kbDir, 'daily')
+    mkdirSync(dailyDir, { recursive: true })
+    const dailyPath = join(dailyDir, `${dateStr}.md`)
+    const dailyHeader = existsSync(dailyPath) ? '' : `# Daily Log — ${dateStr}\n\n`
+    const logEntry = `${dailyHeader}## ${timeStr} — Capture saved\nSource: ${data.sourceType}\nTitle: ${data.title}\nAction items: ${data.result.actionItems.length} | Decisions: ${data.result.decisions.length} | Open questions: ${data.result.openQuestions.length}\n\n`
+    writeFileSync(dailyPath, existsSync(dailyPath) ? readFileSync(dailyPath, 'utf-8') + logEntry : logEntry, 'utf-8')
+
+    return { success: true }
+  })
+
+  ipcMain.handle(IPC.KB_READ_CONTEXT, () => {
+    const ctxPath = join(app.getPath('userData'), 'attacca-kb', 'memory', 'CONTEXT.md')
+    if (!existsSync(ctxPath)) return ''
+    try {
+      return readFileSync(ctxPath, 'utf-8')
+    } catch {
+      return ''
+    }
+  })
+
+  ipcMain.handle(IPC.KB_APPEND_DAILY_LOG, (_event, entry: string) => {
+    const kbDir = join(app.getPath('userData'), 'attacca-kb')
+    const dailyDir = join(kbDir, 'daily')
+    mkdirSync(dailyDir, { recursive: true })
+    const dateStr = new Date().toISOString().slice(0, 10)
+    const dailyPath = join(dailyDir, `${dateStr}.md`)
+    const header = existsSync(dailyPath) ? '' : `# Daily Log — ${dateStr}\n\n`
+    writeFileSync(dailyPath, (existsSync(dailyPath) ? readFileSync(dailyPath, 'utf-8') : '') + header + entry + '\n', 'utf-8')
+    return { success: true }
   })
 
   // ── Telemetry ──

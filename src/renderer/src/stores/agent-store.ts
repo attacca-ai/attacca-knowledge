@@ -43,6 +43,7 @@ export interface AgentThread {
   holdingNote: string
   createdAt: number
   relatedThemeId?: string
+  pendingAction?: { actionType: string; params: unknown }
 }
 
 export interface CaptureEntry {
@@ -90,7 +91,9 @@ interface AgentStore {
   setScheduleChatHistory: (history: ScheduleChatMessage[]) => void
   setMorningLandscape: (data: MorningLandscape) => void
   setThemes: (themes: LandscapeTheme[]) => void
-  addThread: (t: Omit<AgentThread, 'id' | 'createdAt'>) => void
+  addThread: (t: Omit<AgentThread, 'id' | 'createdAt'>) => string
+  closeThread: (id: string) => void
+  updateThreadNote: (id: string, holdingNote: string) => void
   addRawCapture: (e: Omit<CaptureEntry, 'id' | 'timestamp'>) => void
   updateCaptureNote: (id: string, agentNote: string) => void
 }
@@ -98,261 +101,287 @@ interface AgentStore {
 const MAX_ACTIVITY_ENTRIES = 100
 const MAX_SCHEDULE_CHAT_ENTRIES = 100
 
-function persistState(state: {
-  morningBriefing: string | null
-  briefingDate: string | null
-  taskQueue: AgentTask[]
-  activityFeed: ActivityEntry[]
-  scheduleChatHistory: ScheduleChatMessage[]
-}): void {
-  window.api.agent.setState({
-    morningBriefing: state.morningBriefing,
-    briefingDate: state.briefingDate,
-    taskQueue: state.taskQueue,
-    activityFeed: state.activityFeed.slice(-MAX_ACTIVITY_ENTRIES),
-    scheduleChatHistory: state.scheduleChatHistory.slice(-MAX_SCHEDULE_CHAT_ENTRIES)
-  })
-}
-
 let taskIdCounter = 0
 let activityIdCounter = 0
 let captureIdCounter = 0
 let threadIdCounter = 0
 
-export const useAgentStore = create<AgentStore>((set, get) => ({
-  currentTask: null,
-  taskQueue: [],
-  activityFeed: [],
-  scheduleChatHistory: [],
-  morningLandscape: null,
-  themes: [],
-  threads: [],
-  rawCaptures: [],
-  rawCapturesCount: 0,
-  isProcessing: false,
-  usageLimitReached: false,
-  morningBriefing: null,
-  briefingDate: null,
-  emergencyStoppedAt: null,
-
-  hydrate: async () => {
-    try {
-      const saved = await window.api.agent.getState()
-      if (saved) {
-        set({
-          morningBriefing: saved.morningBriefing ?? null,
-          briefingDate: saved.briefingDate ?? null,
-          taskQueue: saved.taskQueue ?? [],
-          activityFeed: saved.activityFeed ?? [],
-          scheduleChatHistory: saved.scheduleChatHistory ?? []
-        })
-      }
-    } catch {
-      // Use defaults if file is missing or corrupt
-    }
-  },
-
-  setUsageLimitReached: (reached) => {
-    set({ usageLimitReached: reached })
-    if (reached) {
-      get().addActivity({
-        type: 'error',
-        description: 'Usage limit reached — agent paused. Enable BYOK in Settings to continue.'
-      })
-      set({ isProcessing: false })
-    }
-  },
-
-  addTask: (description) => {
-    const { usageLimitReached, emergencyStoppedAt } = get()
-    if (usageLimitReached) {
-      get().addActivity({
-        type: 'error',
-        description: `Cannot start task: usage limit reached`
-      })
-      return
-    }
-
-    // Emit resumed event if resuming after emergency stop
-    if (emergencyStoppedAt !== null) {
-      window.api.telemetry.emit('trust.kill_switch.resumed', {
-        timeSinceActivationMs: Date.now() - emergencyStoppedAt
-      })
-      set({ emergencyStoppedAt: null })
-    }
-
-    const task: AgentTask = {
-      id: `task_${++taskIdCounter}`,
-      description,
-      status: 'pending',
-      createdAt: Date.now()
-    }
-
-    const { currentTask } = get()
-    if (!currentTask) {
-      set({
-        currentTask: { ...task, status: 'in_progress', startedAt: Date.now() },
-        isProcessing: true
-      })
-    } else {
-      set({ taskQueue: [...get().taskQueue, task] })
-    }
-
-    get().addActivity({ type: 'info', description: `Task added: ${description}` })
-
+export const useAgentStore = create<AgentStore>((set, get) => {
+  function persist(): void {
     const s = get()
-    persistState({ morningBriefing: s.morningBriefing, briefingDate: s.briefingDate, taskQueue: s.taskQueue, activityFeed: s.activityFeed, scheduleChatHistory: s.scheduleChatHistory })
-  },
-
-  completeTask: (taskId, result) => {
-    const { currentTask, taskQueue } = get()
-
-    if (currentTask?.id === taskId) {
-      const completedTask = { ...currentTask, status: 'completed' as const, completedAt: Date.now(), result }
-      const durationMs = completedTask.startedAt ? Date.now() - completedTask.startedAt : 0
-
-      get().addActivity({
-        type: 'info',
-        description: `Task completed: ${completedTask.description}`,
-        details: result
-      })
-
-      window.api.telemetry.emit('agent.task.completed', {
-        durationMs,
-        hadFallback: false
-      })
-
-      if (taskQueue.length > 0) {
-        const [nextTask, ...remaining] = taskQueue
-        set({
-          currentTask: { ...nextTask, status: 'in_progress', startedAt: Date.now() },
-          taskQueue: remaining,
-          isProcessing: true
-        })
-      } else {
-        set({ currentTask: null, isProcessing: false })
-      }
-
-      const s = get()
-      persistState({ morningBriefing: s.morningBriefing, briefingDate: s.briefingDate, taskQueue: s.taskQueue, activityFeed: s.activityFeed, scheduleChatHistory: s.scheduleChatHistory })
-    }
-  },
-
-  failTask: (taskId, error) => {
-    const { currentTask, taskQueue } = get()
-
-    if (currentTask?.id === taskId) {
-      const durationMs = currentTask.startedAt ? Date.now() - currentTask.startedAt : 0
-
-      get().addActivity({
-        type: 'error',
-        description: `Task failed: ${currentTask.description}`,
-        details: error
-      })
-
-      window.api.telemetry.emit('agent.task.failed', {
-        durationMs,
-        errorCategory: 'unknown'
-      })
-
-      if (taskQueue.length > 0) {
-        window.api.telemetry.emit('agent.task.fallback_created', {
-          failedTaskId: taskId,
-          nextTaskDescription: taskQueue[0].description
-        })
-        const [nextTask, ...remaining] = taskQueue
-        set({
-          currentTask: { ...nextTask, status: 'in_progress', startedAt: Date.now() },
-          taskQueue: remaining,
-          isProcessing: true
-        })
-      } else {
-        set({ currentTask: null, isProcessing: false })
-      }
-
-      const s = get()
-      persistState({ morningBriefing: s.morningBriefing, briefingDate: s.briefingDate, taskQueue: s.taskQueue, activityFeed: s.activityFeed, scheduleChatHistory: s.scheduleChatHistory })
-    }
-  },
-
-  addActivity: (entry) => {
-    const fullEntry: ActivityEntry = {
-      ...entry,
-      id: `act_${++activityIdCounter}`,
-      timestamp: Date.now()
-    }
-    set({ activityFeed: [...get().activityFeed, fullEntry] })
-  },
-
-  clearActivity: () => {
-    set({ activityFeed: [] })
-    const s = get()
-    persistState({ morningBriefing: s.morningBriefing, briefingDate: s.briefingDate, taskQueue: s.taskQueue, activityFeed: [], scheduleChatHistory: s.scheduleChatHistory })
-  },
-
-  setMorningBriefing: (content) => {
-    const briefingDate = new Date().toISOString().split('T')[0]
-    set({ morningBriefing: content, briefingDate })
-    const s = get()
-    persistState({ morningBriefing: content, briefingDate, taskQueue: s.taskQueue, activityFeed: s.activityFeed, scheduleChatHistory: s.scheduleChatHistory })
-  },
-
-  emergencyStop: () => {
-    get().addActivity({
-      type: 'error',
-      description: 'Emergency stop activated — all agent activity halted'
+    window.api.agent.setState({
+      morningBriefing: s.morningBriefing,
+      briefingDate: s.briefingDate,
+      morningLandscape: s.morningLandscape,
+      themes: s.themes,
+      taskQueue: s.taskQueue,
+      activityFeed: s.activityFeed.slice(-MAX_ACTIVITY_ENTRIES),
+      scheduleChatHistory: s.scheduleChatHistory.slice(-MAX_SCHEDULE_CHAT_ENTRIES),
+      rawCaptures: s.rawCaptures.slice(0, 100),
+      threads: s.threads.slice(0, 100),
     })
-
-    set({
-      currentTask: null,
-      taskQueue: [],
-      isProcessing: false,
-      emergencyStoppedAt: Date.now()
-    })
-
-    const s = get()
-    persistState({ morningBriefing: s.morningBriefing, briefingDate: s.briefingDate, taskQueue: [], activityFeed: s.activityFeed, scheduleChatHistory: s.scheduleChatHistory })
-  },
-
-  setScheduleChatHistory: (history) => {
-    set({ scheduleChatHistory: history })
-    const s = get()
-    persistState({ morningBriefing: s.morningBriefing, briefingDate: s.briefingDate, taskQueue: s.taskQueue, activityFeed: s.activityFeed, scheduleChatHistory: history })
-  },
-
-  setMorningLandscape: (data) => {
-    set({ morningLandscape: data })
-  },
-
-  setThemes: (themes) => {
-    set({ themes })
-  },
-
-  addThread: (t) => {
-    const thread: AgentThread = {
-      ...t,
-      id: `thread_${++threadIdCounter}`,
-      createdAt: Date.now()
-    }
-    set((s) => ({ threads: [...s.threads, thread] }))
-  },
-
-  addRawCapture: (e) => {
-    const entry: CaptureEntry = {
-      ...e,
-      id: `cap_${++captureIdCounter}`,
-      timestamp: Date.now()
-    }
-    set((s) => ({
-      rawCaptures: [entry, ...s.rawCaptures].slice(0, 200),
-      rawCapturesCount: s.rawCapturesCount + (e.agentNote === null ? 1 : 0)
-    }))
-  },
-
-  updateCaptureNote: (id, agentNote) => {
-    set((s) => ({
-      rawCaptures: s.rawCaptures.map((c) => (c.id === id ? { ...c, agentNote } : c)),
-      rawCapturesCount: Math.max(0, s.rawCapturesCount - 1)
-    }))
   }
-}))
+
+  return {
+    currentTask: null,
+    taskQueue: [],
+    activityFeed: [],
+    scheduleChatHistory: [],
+    morningLandscape: null,
+    themes: [],
+    threads: [],
+    rawCaptures: [],
+    rawCapturesCount: 0,
+    isProcessing: false,
+    usageLimitReached: false,
+    morningBriefing: null,
+    briefingDate: null,
+    emergencyStoppedAt: null,
+
+    hydrate: async () => {
+      try {
+        const saved = await window.api.agent.getState()
+        if (saved) {
+          // Re-seed ID counters to avoid collisions after hydration
+          const savedCaptures: CaptureEntry[] = saved.rawCaptures ?? []
+          const savedThreads: AgentThread[] = saved.threads ?? []
+          for (const c of savedCaptures) {
+            const n = parseInt(c.id.replace('cap_', ''))
+            if (!isNaN(n) && n > captureIdCounter) captureIdCounter = n
+          }
+          for (const t of savedThreads) {
+            const n = parseInt(t.id.replace('thread_', ''))
+            if (!isNaN(n) && n > threadIdCounter) threadIdCounter = n
+          }
+          set({
+            morningBriefing: saved.morningBriefing ?? null,
+            briefingDate: saved.briefingDate ?? null,
+            morningLandscape: saved.morningLandscape ?? null,
+            themes: saved.themes ?? [],
+            taskQueue: saved.taskQueue ?? [],
+            activityFeed: saved.activityFeed ?? [],
+            scheduleChatHistory: saved.scheduleChatHistory ?? [],
+            rawCaptures: savedCaptures,
+            threads: savedThreads,
+          })
+        }
+      } catch {
+        // Use defaults if file is missing or corrupt
+      }
+    },
+
+    setUsageLimitReached: (reached) => {
+      set({ usageLimitReached: reached })
+      if (reached) {
+        get().addActivity({
+          type: 'error',
+          description: 'Usage limit reached — agent paused. Enable BYOK in Settings to continue.'
+        })
+        set({ isProcessing: false })
+      }
+    },
+
+    addTask: (description) => {
+      const { usageLimitReached, emergencyStoppedAt } = get()
+      if (usageLimitReached) {
+        get().addActivity({
+          type: 'error',
+          description: `Cannot start task: usage limit reached`
+        })
+        return
+      }
+
+      // Emit resumed event if resuming after emergency stop
+      if (emergencyStoppedAt !== null) {
+        window.api.telemetry.emit('trust.kill_switch.resumed', {
+          timeSinceActivationMs: Date.now() - emergencyStoppedAt
+        })
+        set({ emergencyStoppedAt: null })
+      }
+
+      const task: AgentTask = {
+        id: `task_${++taskIdCounter}`,
+        description,
+        status: 'pending',
+        createdAt: Date.now()
+      }
+
+      const { currentTask } = get()
+      if (!currentTask) {
+        set({
+          currentTask: { ...task, status: 'in_progress', startedAt: Date.now() },
+          isProcessing: true
+        })
+      } else {
+        set({ taskQueue: [...get().taskQueue, task] })
+      }
+
+      get().addActivity({ type: 'info', description: `Task added: ${description}` })
+      persist()
+    },
+
+    completeTask: (taskId, result) => {
+      const { currentTask, taskQueue } = get()
+
+      if (currentTask?.id === taskId) {
+        const completedTask = { ...currentTask, status: 'completed' as const, completedAt: Date.now(), result }
+        const durationMs = completedTask.startedAt ? Date.now() - completedTask.startedAt : 0
+
+        get().addActivity({
+          type: 'info',
+          description: `Task completed: ${completedTask.description}`,
+          details: result
+        })
+
+        window.api.telemetry.emit('agent.task.completed', {
+          durationMs,
+          hadFallback: false
+        })
+
+        if (taskQueue.length > 0) {
+          const [nextTask, ...remaining] = taskQueue
+          set({
+            currentTask: { ...nextTask, status: 'in_progress', startedAt: Date.now() },
+            taskQueue: remaining,
+            isProcessing: true
+          })
+        } else {
+          set({ currentTask: null, isProcessing: false })
+        }
+
+        persist()
+      }
+    },
+
+    failTask: (taskId, error) => {
+      const { currentTask, taskQueue } = get()
+
+      if (currentTask?.id === taskId) {
+        const durationMs = currentTask.startedAt ? Date.now() - currentTask.startedAt : 0
+
+        get().addActivity({
+          type: 'error',
+          description: `Task failed: ${currentTask.description}`,
+          details: error
+        })
+
+        window.api.telemetry.emit('agent.task.failed', {
+          durationMs,
+          errorCategory: 'unknown'
+        })
+
+        if (taskQueue.length > 0) {
+          window.api.telemetry.emit('agent.task.fallback_created', {
+            failedTaskId: taskId,
+            nextTaskDescription: taskQueue[0].description
+          })
+          const [nextTask, ...remaining] = taskQueue
+          set({
+            currentTask: { ...nextTask, status: 'in_progress', startedAt: Date.now() },
+            taskQueue: remaining,
+            isProcessing: true
+          })
+        } else {
+          set({ currentTask: null, isProcessing: false })
+        }
+
+        persist()
+      }
+    },
+
+    addActivity: (entry) => {
+      const fullEntry: ActivityEntry = {
+        ...entry,
+        id: `act_${++activityIdCounter}`,
+        timestamp: Date.now()
+      }
+      set({ activityFeed: [...get().activityFeed, fullEntry] })
+    },
+
+    clearActivity: () => {
+      set({ activityFeed: [] })
+      persist()
+    },
+
+    setMorningBriefing: (content) => {
+      const briefingDate = new Date().toISOString().split('T')[0]
+      set({ morningBriefing: content, briefingDate })
+      persist()
+    },
+
+    emergencyStop: () => {
+      get().addActivity({
+        type: 'error',
+        description: 'Emergency stop activated — all agent activity halted'
+      })
+
+      set({
+        currentTask: null,
+        taskQueue: [],
+        isProcessing: false,
+        emergencyStoppedAt: Date.now()
+      })
+
+      persist()
+    },
+
+    setScheduleChatHistory: (history) => {
+      set({ scheduleChatHistory: history })
+      persist()
+    },
+
+    setMorningLandscape: (data) => {
+      set({ morningLandscape: data })
+      persist()
+    },
+
+    setThemes: (themes) => {
+      set({ themes })
+      persist()
+    },
+
+    addThread: (t) => {
+      const thread: AgentThread = {
+        ...t,
+        id: `thread_${++threadIdCounter}`,
+        createdAt: Date.now()
+      }
+      set((s) => ({ threads: [...s.threads, thread] }))
+      persist()
+      return thread.id
+    },
+
+    closeThread: (id) => {
+      set((s) => ({ threads: s.threads.filter((t) => t.id !== id) }))
+      persist()
+    },
+
+    updateThreadNote: (id, holdingNote) => {
+      set((s) => ({
+        threads: s.threads.map((t) => t.id === id ? { ...t, holdingNote } : t)
+      }))
+      persist()
+    },
+
+    addRawCapture: (e) => {
+      const entry: CaptureEntry = {
+        ...e,
+        id: `cap_${++captureIdCounter}`,
+        timestamp: Date.now()
+      }
+      set((s) => ({
+        rawCaptures: [entry, ...s.rawCaptures].slice(0, 200),
+        rawCapturesCount: s.rawCapturesCount + (e.agentNote === null ? 1 : 0)
+      }))
+      persist()
+    },
+
+    updateCaptureNote: (id, agentNote) => {
+      set((s) => ({
+        rawCaptures: s.rawCaptures.map((c) => (c.id === id ? { ...c, agentNote } : c)),
+        rawCapturesCount: Math.max(0, s.rawCapturesCount - 1)
+      }))
+      persist()
+    }
+  }
+})

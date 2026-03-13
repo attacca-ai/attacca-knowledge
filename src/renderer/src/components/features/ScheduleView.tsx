@@ -1,369 +1,959 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { gatewayClient } from '@/lib/gateway-client'
 import { useGatewayStore } from '@/stores/gateway-store'
 import { useAgentStore } from '@/stores/agent-store'
-import type { ScheduleChatMessage } from '@/stores/agent-store'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Calendar, Clock, Loader2, Send } from 'lucide-react'
-import type { JsonRpcEvent } from '@/types/gateway'
+import { useSettingsStore } from '@/stores/settings-store'
+import { cn } from '@/lib/utils'
+import { ChevronLeft, ChevronRight, ArrowUp, Square } from 'lucide-react'
+import type { OcEvent } from '@/types/gateway'
 
-interface CalendarEvent {
+// ── Local types ──────────────────────────────────────────────────────────────
+
+type EventType = 'meeting' | 'focus' | 'personal' | 'flagged'
+
+interface CalEvent {
   id: string
   title: string
-  start: string
+  start: string // ISO datetime
   end: string
+  type: EventType
   attendees?: string[]
+  flagNote?: string
+  source?: 'google' | 'outlook'
+  hasConflict?: boolean
+  priority?: 'critical' | 'flexible'
 }
 
-interface MonthGroup {
-  label: string
-  events: CalendarEvent[]
+interface ScheduleRead {
+  message: string
+  question: string | null
+  suggestedActions: Array<{
+    label: string
+    icon: 'warn' | 'plus' | 'move' | 'send'
+    risk: 'low' | 'mid' | 'high'
+    prompt: string
+  }>
 }
 
-function groupByMonth(events: CalendarEvent[]): MonthGroup[] {
-  const map = new Map<string, MonthGroup>()
-  for (const event of events) {
-    const d = new Date(event.start)
-    const key = `${d.getFullYear()}-${d.getMonth()}`
-    if (!map.has(key)) {
-      map.set(key, {
-        label: d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
-        events: []
-      })
-    }
-    map.get(key)!.events.push(event)
-  }
-  return Array.from(map.values())
+interface ProposedChange {
+  id: string
+  title: string
+  from: string
+  to: string
+  risk: 'low' | 'mid' | 'high'
+  confirmationPrompt: string
 }
 
-function isToday(dateStr: string): boolean {
-  const d = new Date(dateStr)
-  const now = new Date()
+// ── Constants ────────────────────────────────────────────────────────────────
+
+const HOUR_HEIGHT = 60
+const DAY_START_HOUR = 0
+const DAY_END_HOUR = 24
+const HOURS = Array.from({ length: DAY_END_HOUR - DAY_START_HOUR }, (_, i) => DAY_START_HOUR + i)
+
+const EVENT_TYPE_CLASSES: Record<EventType, string> = {
+  meeting: 'bg-[rgba(91,124,246,.12)] border-l-2 border-[#5b7cf6]',
+  focus: 'bg-[rgba(76,175,130,.1)] border-l-2 border-[#4caf82]',
+  personal: 'bg-[rgba(155,114,245,.12)] border-l-2 border-[#9b72f5]',
+  flagged: 'bg-[rgba(212,168,67,.1)] border-l-2 border-[#d4a843]'
+}
+
+const CHIP_ICON_CLASSES: Record<string, string> = {
+  warn: 'bg-[rgba(212,168,67,.1)] text-[#d4a843]',
+  plus: 'bg-[rgba(76,175,130,.1)] text-[#4caf82]',
+  move: 'bg-[rgba(91,124,246,.12)] text-[#5b7cf6]',
+  send: 'bg-[rgba(155,114,245,.12)] text-[#9b72f5]'
+}
+
+const RISK_CLASSES: Record<string, string> = {
+  low: '',
+  mid: 'bg-[rgba(212,168,67,.1)] text-[#d4a843]',
+  high: 'bg-[rgba(224,92,92,.1)] text-[#e05c5c]'
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function startOfDay(d: Date): Date {
+  const r = new Date(d)
+  r.setHours(0, 0, 0, 0)
+  return r
+}
+
+function isSameDay(a: Date, b: Date): boolean {
   return (
-    d.getFullYear() === now.getFullYear() &&
-    d.getMonth() === now.getMonth() &&
-    d.getDate() === now.getDate()
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
   )
 }
 
+function formatTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+}
+
+function formatHour(h: number): string {
+  if (h === 0 || h === 12) return h === 0 ? '12 AM' : '12 PM'
+  return h < 12 ? `${h} AM` : `${h - 12} PM`
+}
+
+function classifyEvent(
+  item: {
+    id: string
+    summary?: string
+    subject?: string // Outlook uses subject instead of summary
+    start?: { dateTime?: string; date?: string }
+    end?: { dateTime?: string; date?: string }
+    attendees?: Array<{ email?: string; emailAddress?: { address?: string } }>
+  },
+  source: 'google' | 'outlook' = 'google'
+): CalEvent {
+  const title = item.summary ?? item.subject ?? '(No title)'
+  const lower = title.toLowerCase()
+  let type: EventType = 'meeting'
+  if (/focus|deep work|bloque|block/i.test(lower)) type = 'focus'
+  else if (/lunch|almuerzo|gym|personal/i.test(lower)) type = 'personal'
+
+  const attendees = item.attendees?.map(
+    (a) => a.email ?? a.emailAddress?.address ?? ''
+  ).filter(Boolean)
+
+  const event: CalEvent = {
+    id: item.id,
+    title,
+    start: item.start?.dateTime ?? item.start?.date ?? '',
+    end: item.end?.dateTime ?? item.end?.date ?? '',
+    type,
+    attendees,
+    source
+  }
+
+  // Classify priority: external attendees or 3+ attendees = critical
+  const isExternal = attendees?.some((a) => !a.includes('@') || a.includes('.')) ?? false
+  const hasManyAttendees = (attendees?.length ?? 0) >= 3
+  const isCriticalKeyword = /client|cliente|board|legal|investor|review|demo|presentation|external|externo/i.test(title)
+  event.priority = (isExternal || hasManyAttendees || isCriticalKeyword) ? 'critical' : 'flexible'
+
+  return event
+}
+
+function detectConflicts(events: CalEvent[]): CalEvent[] {
+  const result = events.map((e) => ({ ...e, hasConflict: false }))
+  // Only check events with specific times (not all-day)
+  for (let i = 0; i < result.length; i++) {
+    if (!result[i].start.includes('T')) continue
+    for (let j = i + 1; j < result.length; j++) {
+      if (!result[j].start.includes('T')) continue
+      if (!isSameDay(new Date(result[i].start), new Date(result[j].start))) continue
+      const aStart = new Date(result[i].start).getTime()
+      const aEnd = new Date(result[i].end).getTime()
+      const bStart = new Date(result[j].start).getTime()
+      const bEnd = new Date(result[j].end).getTime()
+      if (aStart < bEnd && bStart < aEnd) {
+        result[i].hasConflict = true
+        result[j].hasConflict = true
+      }
+    }
+  }
+  return result
+}
+
+function eventStyle(event: CalEvent): React.CSSProperties {
+  const s = new Date(event.start)
+  const e = new Date(event.end)
+  const topPx = (s.getHours() - DAY_START_HOUR) * HOUR_HEIGHT + (s.getMinutes() / 60) * HOUR_HEIGHT
+  const endPx = (e.getHours() - DAY_START_HOUR) * HOUR_HEIGHT + (e.getMinutes() / 60) * HOUR_HEIGHT
+  return {
+    position: 'absolute',
+    top: Math.max(0, topPx),
+    height: Math.max(20, endPx - topPx),
+    left: 4,
+    right: 4,
+    zIndex: 5
+  }
+}
+
+function nowLineTop(): number {
+  const n = new Date()
+  return (n.getHours() - DAY_START_HOUR) * HOUR_HEIGHT + (n.getMinutes() / 60) * HOUR_HEIGHT
+}
+
+function chipIconLabel(icon: string): string {
+  if (icon === 'warn') return '⚠'
+  if (icon === 'plus') return '+'
+  if (icon === 'move') return '→'
+  if (icon === 'send') return '↗'
+  return '·'
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
+
 export function ScheduleView(): React.JSX.Element {
   const connectionState = useGatewayStore((s) => s.connectionState)
-  const addActivity = useAgentStore((s) => s.addActivity)
   const scheduleChatHistory = useAgentStore((s) => s.scheduleChatHistory)
   const setScheduleChatHistory = useAgentStore((s) => s.setScheduleChatHistory)
+  const emergencyStop = useAgentStore((s) => s.emergencyStop)
+  const userTimezone = useSettingsStore((s) => s.userTimezone)
 
-  const [events, setEvents] = useState<CalendarEvent[]>([])
+  // Calendar state
+  const [events, setEvents] = useState<CalEvent[]>([])
   const [loadingEvents, setLoadingEvents] = useState(false)
   const [calendarConnected, setCalendarConnected] = useState<boolean | null>(null)
-  const [input, setInput] = useState('')
-  const [processing, setProcessing] = useState(false)
-  const waitingRef = useRef(false)
-  const chatEndRef = useRef<HTMLDivElement>(null)
+  const [connectedSources, setConnectedSources] = useState<string[]>([])
 
-  // Auto-scroll chat to bottom
+  // 7-day week view — baseDate is Monday of the visible week
+  const [baseDate, setBaseDate] = useState(() => {
+    const d = startOfDay(new Date())
+    const day = d.getDay() // 0=Sun
+    const diff = day === 0 ? -6 : 1 - day // back to Monday
+    return new Date(d.getTime() + diff * 86400000)
+  })
+
+  // Agent read
+  const [scheduleRead, setScheduleRead] = useState<ScheduleRead | null>(null)
+  const [generatingRead, setGeneratingRead] = useState(false)
+
+  // Chat
+  const [chatInput, setChatInput] = useState('')
+  const [sending, setSending] = useState(false)
+
+  // Proposed change
+  const [pendingChange, setPendingChange] = useState<ProposedChange | null>(null)
+  const [executing, setExecuting] = useState(false)
+
+  // Session key refs to filter gateway events
+  const pendingReadSessionRef = useRef<string | null>(null)
+  const pendingChatSessionRef = useRef<string | null>(null)
+  const chatEndRef = useRef<HTMLDivElement>(null)
+  const timelineRef = useRef<HTMLDivElement>(null)
+
+  // Now-line tick
+  const [nowTop, setNowTop] = useState(() => nowLineTop())
+  useEffect(() => {
+    const id = setInterval(() => setNowTop(nowLineTop()), 60000)
+    return () => clearInterval(id)
+  }, [])
+
+  // Scroll to current time on mount (2 hours above now-line)
+  useEffect(() => {
+    if (!timelineRef.current) return
+    const offset = Math.max(0, nowLineTop() - 2 * HOUR_HEIGHT)
+    timelineRef.current.scrollTop = offset
+  }, [])
+
+  // Auto-scroll chat
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [scheduleChatHistory, processing])
+  }, [scheduleChatHistory, sending, executing])
 
-  // Load upcoming events (next 3 months) via Composio when connected
-  useEffect(() => {
-    if (connectionState !== 'connected') return
+  // ── Generate schedule read ──────────────────────────────────────────────────
+  const generateScheduleRead = useCallback(
+    async (loadedEvents: CalEvent[]) => {
+      if (connectionState !== 'connected') return
+      setScheduleRead(null)
+      setGeneratingRead(true)
+      const sessionKey = `agent:main:schedule-read-${crypto.randomUUID()}`
+      pendingReadSessionRef.current = sessionKey
 
-    const fetchEvents = async (): Promise<void> => {
-      setLoadingEvents(true)
+      const todayDate = startOfDay(new Date())
+      const todayEvents = loadedEvents.filter((e) => isSameDay(new Date(e.start), todayDate))
+      const conflicts = todayEvents.filter((e) => e.hasConflict)
+
+      const todayEventsText =
+        todayEvents
+          .map((e) => {
+            const tags = [
+              e.source === 'outlook' ? 'Outlook' : 'Google',
+              e.priority === 'critical' ? 'crítica' : 'flexible',
+              e.hasConflict ? '⚠ conflicto' : null
+            ].filter(Boolean).join(', ')
+            return `  - ${formatTime(e.start)}–${formatTime(e.end)}: ${e.title} [${tags}]`
+          })
+          .join('\n') || '  (sin eventos hoy)'
+
+      const conflictSection = conflicts.length > 0
+        ? `\nCONFLICTOS DETECTADOS (${conflicts.length} eventos se superponen):\n` +
+          conflicts.map((e) => `  - ${formatTime(e.start)}: ${e.title} (${e.priority})`).join('\n') +
+          `\n\nPrincipio de conciliación: haz UNA sola pregunta sobre cuál reunión el usuario considera inamovible antes de proponer cualquier cambio. Nunca encadenes más de un cambio de agenda sin confirmación intermedia.`
+        : ''
+
+      const prompt =
+        `Analiza la agenda del usuario para hoy. Eres un asistente de productividad. Principios: observa antes de actuar, una pregunta a la vez, riesgo = reversibilidad × alcance.\n` +
+        `Zona horaria: ${userTimezone}\n\n` +
+        `Eventos de hoy (fuente, prioridad, conflicto):\n${todayEventsText}` +
+        conflictSection + `\n\n` +
+        `Responde SOLO con JSON válido (sin markdown):\n` +
+        `{"message":"2-3 frases directas sobre el día. Si hay conflictos, menciónalos brevemente.",` +
+        `"question":"Si hay conflictos, pregunta UNA cosa: cuál reunión es inamovible. Si no hay conflictos, null.",` +
+        `"suggestedActions":[{"label":"Texto corto","icon":"warn|plus|move|send","risk":"low|mid|high","prompt":"Texto exacto que se envía al agente al hacer clic"}]}\n` +
+        `Máximo 3 sugerencias enfocadas en productividad. Prioriza resolver conflictos si los hay.`
+
       try {
-        const now = new Date()
-        const timeMin = now.toISOString()
-        const timeMax = new Date(now.getFullYear(), now.getMonth() + 3, 1).toISOString()
+        await gatewayClient.rpc('chat.send', {
+          sessionKey,
+          message: prompt,
+          idempotencyKey: sessionKey
+        })
+      } catch {
+        setGeneratingRead(false)
+        pendingReadSessionRef.current = null
+      }
+    },
+    [connectionState, baseDate, userTimezone]
+  )
 
-        const response = await window.api.relay.callTool('GOOGLECALENDAR_EVENTS_LIST', {
+  // ── Fetch calendar events ──────────────────────────────────────────────────
+  const fetchEvents = useCallback(async () => {
+    if (connectionState !== 'connected') return
+    setLoadingEvents(true)
+    try {
+      const timeMin = baseDate.toISOString()
+      const timeMax = new Date(baseDate.getTime() + 7 * 86400000).toISOString()
+
+      let allEvents: CalEvent[] = []
+      const sources: string[] = []
+
+      // Fetch Google Calendar events
+      try {
+        const googleResp = await window.api.relay.callTool('GOOGLECALENDAR_EVENTS_LIST', {
           calendarId: 'primary',
           timeMin,
           timeMax,
-          maxResults: 100,
+          maxResults: 50,
           singleEvents: true,
           orderBy: 'startTime'
         })
-
-        if (!response.success) {
-          setCalendarConnected(false)
-          return
+        if (googleResp.success) {
+          sources.push('Google')
+          const result = googleResp.result as { data?: { items?: unknown[] }; items?: unknown[] }
+          const items = (result.data?.items ?? result.items ?? []) as Parameters<typeof classifyEvent>[0][]
+          allEvents = [...allEvents, ...items.map((item) => classifyEvent(item, 'google'))]
         }
+      } catch {
+        // Google Calendar not connected or unavailable
+      }
 
-        setCalendarConnected(true)
+      // Fetch Outlook Calendar events (relay tries multiple action names automatically)
+      try {
+        const outlookResp = await window.api.relay.callTool('ATTACCA_OUTLOOK_EVENTS', {
+          timeMin,
+          timeMax,
+          top: 50
+        })
+        if (outlookResp.success) {
+          sources.push('Outlook')
+          const result = outlookResp.result as {
+            data?: { value?: unknown[]; items?: unknown[] }
+            value?: unknown[]
+            items?: unknown[]
+          }
+          const items = (
+            result.data?.value ??
+            result.data?.items ??
+            result.value ??
+            result.items ??
+            []
+          ) as Parameters<typeof classifyEvent>[0][]
+          allEvents = [...allEvents, ...items.map((item) => classifyEvent(item, 'outlook'))]
+        }
+      } catch {
+        // Outlook not connected or unavailable — skip silently
+      }
 
-        const result = response.result as {
-          data?: {
-            items?: Array<{
-              id: string
-              summary?: string
-              start?: { dateTime?: string; date?: string }
-              end?: { dateTime?: string; date?: string }
-              attendees?: Array<{ email: string }>
-            }>
+      setConnectedSources(sources)
+      setCalendarConnected(sources.length > 0)
+
+      // Sort by start time and detect conflicts
+      const sorted = allEvents.sort(
+        (a, b) => new Date(a.start).getTime() - new Date(b.start).getTime()
+      )
+      const withConflicts = detectConflicts(sorted)
+      setEvents(withConflicts)
+      void generateScheduleRead(withConflicts)
+    } catch {
+      // silent
+    } finally {
+      setLoadingEvents(false)
+    }
+  }, [connectionState, baseDate, generateScheduleRead])
+
+  useEffect(() => {
+    void fetchEvents()
+  }, [fetchEvents])
+
+  // ── Gateway event listener ─────────────────────────────────────────────────
+  useEffect(() => {
+    const handler = (ev: OcEvent): void => {
+      if (ev.event !== 'chat') return
+      const payload = (ev.payload ?? {}) as Record<string, unknown>
+      if (payload.state !== 'final') return
+      const sk = payload.sessionKey as string
+      const rawText =
+        (payload.message as { content?: Array<{ text?: string }> } | undefined)?.content?.[0]
+          ?.text ?? ''
+      const jsonMatch = rawText.match(/\{[\s\S]*\}/)
+
+      // Schedule read response
+      if (sk === pendingReadSessionRef.current) {
+        pendingReadSessionRef.current = null
+        setGeneratingRead(false)
+        if (jsonMatch) {
+          try {
+            setScheduleRead(JSON.parse(jsonMatch[0]) as ScheduleRead)
+          } catch {
+            // ignore parse error
           }
         }
-
-        const items = result.data?.items ?? []
-        setEvents(
-          items.map((item) => ({
-            id: item.id,
-            title: item.summary ?? '(No title)',
-            start: item.start?.dateTime ?? item.start?.date ?? '',
-            end: item.end?.dateTime ?? item.end?.date ?? '',
-            attendees: item.attendees?.map((a) => a.email)
-          }))
-        )
-      } catch {
-        // Silently fail
-      } finally {
-        setLoadingEvents(false)
+        return
       }
-    }
 
-    fetchEvents()
-  }, [connectionState])
-
-  // Subscribe to gateway events to capture chat responses
-  useEffect(() => {
-    if (connectionState !== 'connected') return
-
-    const handler = (event: JsonRpcEvent): void => {
-      if (event.event !== 'chat') return
-      const payload = (event.payload ?? {}) as Record<string, unknown>
-      const state = payload.state as string
-
-      if (state === 'final' && waitingRef.current) {
-        const message = payload.message as
-          | { content?: Array<{ type: string; text?: string }> }
-          | undefined
-        const text = message?.content?.[0]?.text ?? ''
-        if (text) {
-          const current = useAgentStore.getState().scheduleChatHistory
-          setScheduleChatHistory([
-            ...current,
-            { id: crypto.randomUUID(), role: 'assistant', text }
-          ])
-          waitingRef.current = false
-          setProcessing(false)
+      // Chat / confirm response
+      if (sk === pendingChatSessionRef.current) {
+        pendingChatSessionRef.current = null
+        setSending(false)
+        setExecuting(false)
+        let text = rawText
+        if (jsonMatch) {
+          try {
+            const p = JSON.parse(jsonMatch[0]) as {
+              text?: string
+              proposedChange?: Omit<ProposedChange, 'id'> | null
+            }
+            if (p.text) text = p.text
+            if (p.proposedChange) {
+              setPendingChange({ ...p.proposedChange, id: crypto.randomUUID() })
+            }
+          } catch {
+            // use rawText
+          }
         }
-      } else if (state === 'error' && waitingRef.current) {
-        waitingRef.current = false
-        setProcessing(false)
+        const msg = { id: crypto.randomUUID(), role: 'assistant' as const, text }
+        setScheduleChatHistory([...useAgentStore.getState().scheduleChatHistory, msg])
+        void fetchEvents()
       }
     }
 
     gatewayClient.on('*', handler)
     return () => gatewayClient.off('*', handler)
-  }, [connectionState, setScheduleChatHistory])
+  }, [fetchEvents, setScheduleChatHistory])
 
-  const handleSend = async (): Promise<void> => {
-    if (!input.trim() || processing) return
+  // ── Chat send ──────────────────────────────────────────────────────────────
+  const handleSend = useCallback(
+    async (text?: string) => {
+      const userText = (text ?? chatInput).trim()
+      if (!userText || sending || executing || connectionState !== 'connected') return
+      setChatInput('')
 
-    const prompt = input.trim()
-    setInput('')
+      const userMsg = { id: crypto.randomUUID(), role: 'user' as const, text: userText }
+      setScheduleChatHistory([...useAgentStore.getState().scheduleChatHistory, userMsg])
+      setSending(true)
 
-    const userMsg: ScheduleChatMessage = { id: crypto.randomUUID(), role: 'user', text: prompt }
-    const current = useAgentStore.getState().scheduleChatHistory
-    setScheduleChatHistory([...current, userMsg])
-    addActivity({ type: 'info', description: `Calendar: ${prompt}` })
+      const sessionKey = `agent:main:schedule-chat-${crypto.randomUUID()}`
+      pendingChatSessionRef.current = sessionKey
 
-    if (connectionState !== 'connected') {
-      setScheduleChatHistory([
-        ...current,
-        userMsg,
-        { id: crypto.randomUUID(), role: 'assistant', text: 'Not connected to agent. Please wait for the gateway to connect.' }
-      ])
-      return
-    }
+      const weekContext = Array.from({ length: 7 }, (_, i) => {
+        const day = new Date(baseDate.getTime() + i * 86400000)
+        const label = day.toLocaleDateString('es', { weekday: 'long', day: 'numeric', month: 'long' })
+        const dayEvts = events
+          .filter((e) => isSameDay(new Date(e.start), day))
+          .map((e) => `  - ${formatTime(e.start)}–${formatTime(e.end)}: ${e.title}`)
+          .join('\n') || '  (sin eventos)'
+        return `${label}:\n${dayEvts}`
+      }).join('\n\n')
 
-    setProcessing(true)
-    waitingRef.current = true
+      const conflictsThisWeek = events.filter((e) => e.hasConflict)
+      const conflictContext = conflictsThisWeek.length > 0
+        ? `\nConflictos activos esta semana:\n` +
+          conflictsThisWeek.map((e) => `  - ${formatTime(e.start)}: ${e.title} (${e.source ?? 'google'}, ${e.priority ?? 'flexible'})`).join('\n') + '\n'
+        : ''
 
-    setTimeout(() => {
-      if (waitingRef.current) {
-        waitingRef.current = false
-        setProcessing(false)
+      const prompt =
+        `Eres el asistente de agenda del usuario. Principios: una pregunta a la vez, nunca encadenes más de un cambio sin confirmación, confirma siempre antes de modificar el calendario.\n` +
+        `Zona horaria: ${userTimezone}\n\n` +
+        `Agenda de la semana (Google Calendar + Outlook combinados):\n${weekContext}` +
+        conflictContext + `\n` +
+        `El usuario dice: "${userText}"\n\n` +
+        `Responde SOLO con JSON válido (sin markdown):\n` +
+        `{"text":"Tu respuesta en lenguaje claro. Si propones mover una reunión y hay conflicto, menciona el impacto.",` +
+        `"proposedChange":{"title":"...","from":"hora actual legible","to":"nueva hora legible","risk":"low|mid|high","confirmationPrompt":"Texto exacto para ejecutar"}}\n` +
+        `proposedChange SOLO si propones UN cambio concreto al calendario. Si no, usa null. Nunca propongas más de un cambio a la vez.`
+
+      try {
+        await gatewayClient.rpc('chat.send', {
+          sessionKey,
+          message: prompt,
+          idempotencyKey: sessionKey
+        })
+      } catch {
+        setSending(false)
+        pendingChatSessionRef.current = null
       }
-    }, 60000)
+    },
+    [chatInput, sending, executing, connectionState, events, baseDate, userTimezone, setScheduleChatHistory]
+  )
+
+  // ── Proposed change: confirm/cancel ────────────────────────────────────────
+  const handleConfirm = useCallback(async () => {
+    if (!pendingChange || executing) return
+    setExecuting(true)
+    const change = pendingChange
+    setPendingChange(null)
+
+    const sessionKey = `agent:main:schedule-confirm-${crypto.randomUUID()}`
+    pendingChatSessionRef.current = sessionKey
+
+    const prompt =
+      `El usuario confirmó el cambio propuesto. Ejecuta ahora:\n` +
+      `"${change.confirmationPrompt}"\n\n` +
+      `Llama las herramientas de Google Calendar necesarias.\n` +
+      `Responde SOLO con JSON válido: {"text":"Confirmación breve de lo que ejecutaste."}`
 
     try {
       await gatewayClient.rpc('chat.send', {
-        sessionKey: 'agent:main:main',
+        sessionKey,
         message: prompt,
-        idempotencyKey: crypto.randomUUID()
+        idempotencyKey: sessionKey
       })
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      waitingRef.current = false
-      setProcessing(false)
-      const latest = useAgentStore.getState().scheduleChatHistory
-      setScheduleChatHistory([
-        ...latest,
-        { id: crypto.randomUUID(), role: 'assistant', text: `Error: ${msg}` }
-      ])
+    } catch {
+      setExecuting(false)
+      pendingChatSessionRef.current = null
     }
+  }, [pendingChange, executing])
+
+  // ── Navigation ─────────────────────────────────────────────────────────────
+  const visibleDays = Array.from({ length: 7 }, (_, i) => new Date(baseDate.getTime() + i * 86400000))
+  const today = startOfDay(new Date())
+
+  function goToThisWeek(): void {
+    const d = startOfDay(new Date())
+    const day = d.getDay()
+    const diff = day === 0 ? -6 : 1 - day
+    setBaseDate(new Date(d.getTime() + diff * 86400000))
   }
 
-  const today = new Date()
-  const formattedDate = today.toLocaleDateString('en-US', {
-    weekday: 'long',
-    month: 'long',
-    day: 'numeric',
-    year: 'numeric'
-  })
+  const DAY_NAMES = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']
+  const MONTH_NAMES = [
+    'Ene',
+    'Feb',
+    'Mar',
+    'Abr',
+    'May',
+    'Jun',
+    'Jul',
+    'Ago',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dic'
+  ]
 
-  const monthGroups = groupByMonth(events)
+  function dayLabel(d: Date): string {
+    return `${DAY_NAMES[d.getDay()]} ${d.getDate()} ${MONTH_NAMES[d.getMonth()]}`
+  }
 
+  const totalHeight = HOURS.length * HOUR_HEIGHT
+
+  // ── Render ──────────────────────────────────────────────────────────────────
   return (
-    <div className="flex flex-1 flex-col overflow-hidden p-6">
-      {/* Header */}
-      <div className="mb-4 flex shrink-0 items-center justify-between">
-        <div>
-          <h2 className="text-xl font-semibold text-foreground">Schedule</h2>
-          <p className="text-sm text-muted-foreground">{formattedDate}</p>
-        </div>
-        <Calendar className="h-5 w-5 text-muted-foreground" />
-      </div>
-
-      {/* Upcoming meetings agenda */}
-      <div className="mb-4 shrink-0">
-        <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          Upcoming
-        </p>
-
-        {loadingEvents ? (
-          <div className="flex items-center gap-2 text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            <span className="text-xs">Loading calendar…</span>
-          </div>
-        ) : events.length === 0 ? (
-          <div className="flex items-center gap-2 rounded-md border border-dashed border-border px-3 py-2">
-            <Clock className="h-4 w-4 shrink-0 text-muted-foreground" />
-            <p className="text-xs text-muted-foreground">
-              {connectionState !== 'connected'
-                ? 'Connect to gateway to load calendar.'
+    <div className="flex flex-1 overflow-hidden">
+      {/* ══════════════════════════════ LEFT: TIMELINE ══════════════════════════════ */}
+      <div className="flex flex-1 flex-col overflow-hidden border-r border-[#1f2024]">
+        {/* Header */}
+        <div className="flex shrink-0 items-start justify-between border-b border-[#1f2024] px-6 py-[18px]">
+          <div>
+            <p className="mb-1 font-mono text-[9px] uppercase tracking-[.12em] text-muted-foreground/40">
+              {`${visibleDays[0].getDate()} ${MONTH_NAMES[visibleDays[0].getMonth()]} – ${visibleDays[6].getDate()} ${MONTH_NAMES[visibleDays[6].getMonth()]} ${visibleDays[6].getFullYear()}`}
+              {' · '}
+              {userTimezone}
+            </p>
+            <h2 className="text-[20px] font-light tracking-[-0.01em] text-foreground">
+              {visibleDays.some((d) => isSameDay(d, today)) ? 'Esta semana' : dayLabel(visibleDays[0])}
+            </h2>
+            <p className="mt-[3px] text-[12px] text-muted-foreground">
+              {loadingEvents
+                ? 'Cargando eventos…'
                 : calendarConnected === false
-                  ? 'Connect Google Calendar in Settings → Connections.'
-                  : 'No upcoming events in the next 3 months.'}
+                  ? 'Conecta Google Calendar u Outlook en Conexiones'
+                  : (() => {
+                      const todayEvts = events.filter((e) => isSameDay(new Date(e.start), today))
+                      const conflictCount = todayEvts.filter((e) => e.hasConflict).length
+                      const evtLabel = todayEvts.length > 0
+                        ? `${todayEvts.length} evento(s) hoy`
+                        : `${events.length} evento(s) esta semana`
+                      const sourceLabel = connectedSources.length > 0 ? ` · ${connectedSources.join(' + ')}` : ''
+                      return conflictCount > 0
+                        ? `${evtLabel} · ${conflictCount} conflicto(s)${sourceLabel}`
+                        : `${evtLabel}${sourceLabel}`
+                    })()}
             </p>
           </div>
-        ) : (
-          <div className="max-h-56 overflow-auto">
-            {monthGroups.map((group) => (
-              <div key={group.label} className="mb-3">
-                {/* Month header */}
-                <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                  {group.label}
+          <div className="flex items-center gap-[10px]">
+            <button
+              onClick={goToThisWeek}
+              className="rounded border border-[#2a2b2f] px-[10px] py-[5px] font-mono text-[9px] uppercase tracking-[.06em] text-muted-foreground transition-colors hover:border-[#5b7cf6] hover:bg-[rgba(91,124,246,.12)] hover:text-[#5b7cf6]"
+            >
+              hoy
+            </button>
+            <button
+              onClick={() => setBaseDate(new Date(baseDate.getTime() - 7 * 86400000))}
+              className="flex h-7 w-7 items-center justify-center rounded border border-[#2a2b2f] text-muted-foreground transition-colors hover:border-muted-foreground hover:text-foreground"
+            >
+              <ChevronLeft className="h-3 w-3" />
+            </button>
+            <button
+              onClick={() => setBaseDate(new Date(baseDate.getTime() + 7 * 86400000))}
+              className="flex h-7 w-7 items-center justify-center rounded border border-[#2a2b2f] text-muted-foreground transition-colors hover:border-muted-foreground hover:text-foreground"
+            >
+              <ChevronRight className="h-3 w-3" />
+            </button>
+          </div>
+        </div>
+
+        {/* Day column headers */}
+        <div
+          className="grid shrink-0 border-b border-[#1f2024]"
+          style={{ gridTemplateColumns: '48px repeat(7, 1fr)' }}
+        >
+          <div className="py-2" />
+          {visibleDays.map((day) => {
+            const isToday = isSameDay(day, today)
+            return (
+              <div key={day.toISOString()} className="border-l border-[#1f2024] px-4 py-2">
+                <p
+                  className={cn(
+                    'font-mono text-[9px] uppercase tracking-[.1em]',
+                    isToday ? 'text-[#5b7cf6]' : 'text-muted-foreground/40'
+                  )}
+                >
+                  {DAY_NAMES[day.getDay()]}
+                  {isToday ? ' · hoy' : ''}
                 </p>
-                <div className="flex flex-col gap-px">
-                  {group.events.map((event) => {
-                    const start = new Date(event.start)
-                    const end = new Date(event.end)
-                    const todayEvent = isToday(event.start)
-                    return (
-                      <div
-                        key={event.id}
-                        className={`flex items-start gap-3 rounded-md px-2 py-1.5 ${todayEvent ? 'bg-primary/5 ring-1 ring-primary/20' : 'hover:bg-muted/50'}`}
-                      >
-                        {/* Date column */}
-                        <div className="w-9 shrink-0 text-center">
-                          <p className="text-[10px] font-medium uppercase leading-none text-muted-foreground">
-                            {start.toLocaleDateString('en-US', { weekday: 'short' })}
-                          </p>
-                          <p className={`text-base font-semibold leading-tight ${todayEvent ? 'text-primary' : 'text-foreground'}`}>
-                            {start.getDate()}
-                          </p>
-                        </div>
-                        {/* Event details */}
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-medium text-foreground">
-                            {event.title}
-                          </p>
-                          <p className="text-[11px] text-muted-foreground">
-                            {start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                            {' – '}
-                            {end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                            {event.attendees && event.attendees.length > 0 && (
-                              <span> · {event.attendees.length} attendee{event.attendees.length > 1 ? 's' : ''}</span>
-                            )}
-                          </p>
-                        </div>
-                        {todayEvent && (
-                          <span className="shrink-0 rounded bg-primary px-1 py-0.5 text-[9px] font-semibold uppercase text-primary-foreground">
-                            Today
-                          </span>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
+                <p
+                  className={cn(
+                    'text-[18px] font-light leading-[1.2]',
+                    isToday ? 'text-[#5b7cf6]' : 'text-muted-foreground'
+                  )}
+                >
+                  {day.getDate()}
+                </p>
               </div>
+            )
+          })}
+        </div>
+
+        {/* Timeline body */}
+        <div ref={timelineRef} className="flex-1 overflow-y-auto">
+          <div
+            className="grid"
+            style={{ gridTemplateColumns: '48px repeat(7, 1fr)', minHeight: totalHeight }}
+          >
+            {HOURS.map((hour) => (
+              <>
+                {/* Time label */}
+                <div
+                  key={`label-${hour}`}
+                  className="flex items-start px-2 pt-1"
+                  style={{ height: HOUR_HEIGHT }}
+                >
+                  <span className="mt-[-1px] whitespace-nowrap font-mono text-[9px] text-muted-foreground/40">
+                    {formatHour(hour)}
+                  </span>
+                </div>
+
+                {/* Day grid cells */}
+                {visibleDays.map((day) => {
+                  const isToday = isSameDay(day, today)
+                  const dayEvents = events.filter((e) => {
+                    if (!e.start) return false
+                    const s = new Date(e.start)
+                    return isSameDay(s, day) && s.getHours() === hour
+                  })
+
+                  return (
+                    <div
+                      key={`${day.toISOString()}-${hour}`}
+                      className={cn(
+                        'relative border-l border-t border-[#1f2024]',
+                        hour === DAY_START_HOUR && 'border-t-0'
+                      )}
+                      style={{ height: HOUR_HEIGHT }}
+                    >
+                      {/* Events in this hour */}
+                      {dayEvents.map((event) => (
+                        <div
+                          key={event.id}
+                          className={cn(
+                            'absolute overflow-hidden rounded-[5px] px-2 py-[6px] transition-all hover:brightness-110',
+                            EVENT_TYPE_CLASSES[event.type],
+                            event.hasConflict && 'ring-1 ring-[#e05c5c]/40'
+                          )}
+                          style={eventStyle(event)}
+                        >
+                          <div className="flex items-start gap-[4px]">
+                            <p className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[11px] font-medium leading-[1.3] text-foreground">
+                              {event.title}
+                            </p>
+                            {event.hasConflict && (
+                              <span className="mt-[1px] shrink-0 font-mono text-[8px] text-[#e05c5c]">⚠</span>
+                            )}
+                            {event.source === 'outlook' && (
+                              <span className="mt-[1px] shrink-0 h-[6px] w-[6px] rounded-full bg-[#d4a843]" title="Outlook" />
+                            )}
+                          </div>
+                          <p className="mt-[2px] font-mono text-[9px] text-muted-foreground/50">
+                            {formatTime(event.start)}–{formatTime(event.end)}
+                          </p>
+                          {event.flagNote && (
+                            <p className="mt-[3px] font-mono text-[8px] text-[#d4a843]">
+                              {event.flagNote}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+
+                      {/* Now line — only in today's column */}
+                      {isToday &&
+                        nowTop >= (hour - DAY_START_HOUR) * HOUR_HEIGHT &&
+                        nowTop < (hour - DAY_START_HOUR + 1) * HOUR_HEIGHT && (
+                          <div
+                            className="pointer-events-none absolute left-0 right-0 z-10"
+                            style={{ top: nowTop - (hour - DAY_START_HOUR) * HOUR_HEIGHT }}
+                          >
+                            <div className="relative h-px bg-[#5b7cf6]">
+                              <div className="absolute -left-[4px] -top-[3px] h-[7px] w-[7px] rounded-full bg-[#5b7cf6]" />
+                            </div>
+                          </div>
+                        )}
+                    </div>
+                  )
+                })}
+              </>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* ══════════════════════════════ RIGHT: AGENT PANEL ══════════════════════════════ */}
+      <div className="flex w-80 shrink-0 flex-col bg-background">
+        {/* Lectura del día */}
+        <div className="shrink-0 border-b border-[#1f2024] px-[18px] py-[18px]">
+          <p className="mb-2 font-mono text-[9px] uppercase tracking-[.1em] text-muted-foreground/40">
+            Lectura del día
+          </p>
+          {generatingRead ? (
+            <p className="text-[13px] font-light leading-[1.6] text-muted-foreground/50 animate-pulse">
+              Analizando agenda…
+            </p>
+          ) : scheduleRead ? (
+            <>
+              <p className="text-[13.5px] font-light leading-[1.6] text-foreground">
+                {scheduleRead.message}
+              </p>
+              {scheduleRead.question && (
+                <p className="mt-[10px] border-l-2 border-[#2a2b2f] pl-[10px] text-[12px] italic leading-[1.5] text-muted-foreground">
+                  {scheduleRead.question}
+                </p>
+              )}
+            </>
+          ) : connectionState !== 'connected' ? (
+            <p className="text-[13px] font-light leading-[1.6] text-muted-foreground/50">
+              Conectando al agente…
+            </p>
+          ) : (
+            <p className="text-[13px] font-light leading-[1.6] text-muted-foreground/50">
+              Sin lectura disponible.
+            </p>
+          )}
+        </div>
+
+        {/* Suggested actions */}
+        {scheduleRead && scheduleRead.suggestedActions.length > 0 && (
+          <div className="flex shrink-0 flex-col gap-[6px] border-b border-[#1f2024] px-[18px] py-3">
+            {scheduleRead.suggestedActions.map((action, i) => (
+              <button
+                key={i}
+                onClick={() => void handleSend(action.prompt)}
+                disabled={sending || executing || connectionState !== 'connected'}
+                className="flex items-center gap-2 rounded border border-[#2a2b2f] bg-[#151618] px-[10px] py-2 text-left text-[11.5px] text-muted-foreground transition-all hover:border-[#5b7cf6] hover:bg-[rgba(91,124,246,.12)] hover:text-foreground disabled:opacity-40"
+              >
+                <span
+                  className={cn(
+                    'flex h-[14px] w-[14px] shrink-0 items-center justify-center rounded-[3px] text-[10px]',
+                    CHIP_ICON_CLASSES[action.icon] ?? ''
+                  )}
+                >
+                  {chipIconLabel(action.icon)}
+                </span>
+                <span className="flex-1 leading-[1.3]">{action.label}</span>
+                {action.risk !== 'low' && (
+                  <span
+                    className={cn(
+                      'shrink-0 rounded-[2px] px-[5px] py-[1px] font-mono text-[8px]',
+                      RISK_CLASSES[action.risk]
+                    )}
+                  >
+                    {action.risk}
+                  </span>
+                )}
+              </button>
             ))}
           </div>
         )}
-      </div>
 
-      {/* Chat panel */}
-      <div className="flex flex-1 flex-col overflow-hidden border-t border-border pt-4">
-        <p className="mb-2 shrink-0 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          Assistant
-        </p>
-        <div className="flex flex-1 flex-col gap-3 overflow-auto">
-          {scheduleChatHistory.length === 0 && !processing && (
-            <div className="flex flex-1 items-center justify-center">
-              <p className="text-center text-xs text-muted-foreground">
-                Ask about your schedule, meetings, or request rescheduling.
-              </p>
-            </div>
+        {/* Conversation */}
+        <div className="flex flex-1 flex-col gap-[10px] overflow-y-auto px-[18px] py-[14px]">
+          {scheduleChatHistory.length === 0 && !sending && !executing && (
+            <p className="text-center text-[11px] text-muted-foreground/40">
+              Pregunta sobre tu agenda o pide un cambio.
+            </p>
           )}
 
           {scheduleChatHistory.map((msg) => (
             <div
               key={msg.id}
-              className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+              className={cn(
+                'flex flex-col gap-[3px]',
+                msg.role === 'user' ? 'items-end' : 'items-start'
+              )}
             >
-              <div
-                className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
-                  msg.role === 'user'
-                    ? 'bg-primary text-primary-foreground'
-                    : 'bg-muted text-foreground'
-                }`}
-              >
-                {msg.text}
-              </div>
+              {/* Proposed change card rendered inline for assistant messages that precede a pending change */}
+              {msg.role === 'assistant' &&
+              pendingChange &&
+              msg === scheduleChatHistory[scheduleChatHistory.length - 1] ? (
+                <>
+                  <div className="max-w-[240px] rounded-[10px_10px_10px_3px] border border-[#1f2024] bg-[#1c1d20] px-3 py-2 text-[12px] leading-[1.5] text-muted-foreground">
+                    {msg.text}
+                  </div>
+                  <ProposedCard
+                    change={pendingChange}
+                    executing={executing}
+                    onConfirm={() => void handleConfirm()}
+                    onCancel={() => setPendingChange(null)}
+                  />
+                </>
+              ) : (
+                <div
+                  className={cn(
+                    'max-w-[240px] rounded-[10px] px-3 py-2 text-[12px] leading-[1.5]',
+                    msg.role === 'user'
+                      ? 'rounded-[10px_10px_3px_10px] bg-[#232428] text-foreground'
+                      : 'rounded-[10px_10px_10px_3px] border border-[#1f2024] bg-[#1c1d20] text-muted-foreground'
+                  )}
+                >
+                  {msg.text}
+                </div>
+              )}
             </div>
           ))}
 
-          {processing && (
+          {/* Pending proposed card (no preceding message) */}
+          {pendingChange && scheduleChatHistory.length === 0 && (
+            <div className="flex flex-col items-start gap-[3px]">
+              <ProposedCard
+                change={pendingChange}
+                executing={executing}
+                onConfirm={() => void handleConfirm()}
+                onCancel={() => setPendingChange(null)}
+              />
+            </div>
+          )}
+
+          {(sending || executing) && (
             <div className="flex justify-start">
-              <div className="flex items-center gap-1.5 rounded-lg bg-muted px-3 py-2">
-                <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
-                <span className="text-xs text-muted-foreground">Thinking…</span>
+              <div className="rounded-[10px_10px_10px_3px] border border-[#1f2024] bg-[#1c1d20] px-3 py-2">
+                <span className="animate-pulse text-[11px] text-muted-foreground/50">
+                  {executing ? 'ejecutando…' : 'pensando…'}
+                </span>
               </div>
             </div>
           )}
 
           <div ref={chatEndRef} />
         </div>
-      </div>
 
-      {/* Input */}
-      <div className="mt-3 shrink-0">
-        <div className="flex gap-2">
-          <Input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-            placeholder='e.g., "Do I have meetings tomorrow?" or "Move my 2 PM to 4 PM"'
-            className="text-sm"
-            disabled={processing}
-          />
-          <Button onClick={handleSend} disabled={processing || !input.trim()}>
-            {processing ? <Loader2 className="animate-spin" /> : <Send className="h-4 w-4" />}
-          </Button>
+        {/* Input */}
+        <div className="shrink-0 border-t border-[#1f2024] px-4 py-3">
+          <div className="flex items-center gap-2 rounded-lg border border-[#2a2b2f] bg-[#151618] px-3 py-2 transition-colors focus-within:border-[#5b7cf6]/50">
+            <input
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault()
+                  void handleSend()
+                }
+              }}
+              placeholder='ej. "Mueve mi 2 PM al lunes"'
+              disabled={sending || executing || connectionState !== 'connected'}
+              className="flex-1 bg-transparent text-[12.5px] text-foreground outline-none placeholder:text-muted-foreground/40 disabled:opacity-50"
+            />
+            <button
+              onClick={() => void handleSend()}
+              disabled={
+                !chatInput.trim() || sending || executing || connectionState !== 'connected'
+              }
+              className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded bg-[#5b7cf6] transition-opacity hover:opacity-85 disabled:opacity-40"
+            >
+              <ArrowUp className="h-3 w-3 text-white" />
+            </button>
+          </div>
         </div>
+
+        {/* Emergency */}
+        <div className="flex shrink-0 items-center justify-between border-t border-[#1f2024] px-4 py-2">
+          <button
+            onClick={emergencyStop}
+            className="flex items-center gap-[6px] rounded border border-[rgba(224,92,92,.3)] px-[10px] py-[5px] font-mono text-[9px] tracking-[.06em] text-[#e05c5c] transition-all hover:border-[#e05c5c] hover:bg-[rgba(224,92,92,.1)]"
+          >
+            <Square className="h-[9px] w-[9px] fill-current" />
+            Parar agente
+          </button>
+          <span className="font-mono text-[9px] text-muted-foreground/30">OpenClaw · local</span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Proposed change card ──────────────────────────────────────────────────────
+
+interface ProposedCardProps {
+  change: ProposedChange
+  executing: boolean
+  onConfirm: () => void
+  onCancel: () => void
+}
+
+function ProposedCard({
+  change,
+  executing,
+  onConfirm,
+  onCancel
+}: ProposedCardProps): React.JSX.Element {
+  return (
+    <div className="max-w-[260px] rounded-lg border border-[#2a2b2f] bg-[#151618] px-3 py-[10px]">
+      <p className="mb-[6px] font-mono text-[8px] uppercase tracking-[.08em] text-[#5b7cf6]">
+        Cambio propuesto · {change.risk}-risk
+      </p>
+      <p className="mb-2 text-[11.5px] leading-[1.5] text-muted-foreground">
+        Actualizar <strong className="font-medium text-foreground">{change.title}</strong>
+      </p>
+      <p className="font-mono text-[10px] text-muted-foreground/50 line-through">{change.from}</p>
+      <p className="font-mono text-[10px] text-[#4caf82]">{change.to}</p>
+      <div className="mt-[10px] flex gap-[6px]">
+        <button
+          onClick={onConfirm}
+          disabled={executing}
+          className="flex-1 rounded bg-[#5b7cf6] py-[5px] text-[11px] font-medium text-white disabled:opacity-50"
+        >
+          {executing ? 'Ejecutando…' : 'Confirmar'}
+        </button>
+        <button
+          onClick={onCancel}
+          disabled={executing}
+          className="rounded border border-[#2a2b2f] px-[10px] py-[5px] text-[11px] text-muted-foreground/50 transition-colors hover:border-[#e05c5c] hover:text-[#e05c5c] disabled:opacity-40"
+        >
+          Cancelar
+        </button>
       </div>
     </div>
   )

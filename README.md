@@ -211,16 +211,18 @@ npm run start          # Start compiled server
    └─ Telemetry consent (opt-in, anonymous)
    └─ Use case selection
 
-3. DASHBOARD (side-by-side panels)
-   ├─ LEFT PANEL — Daily Landscape
-   │   ├─ Landscape Briefing  — AI-generated summary of today's context
-   │   ├─ Themes              — Key topics detected across connected tools
-   │   └─ Open Threads        — Ongoing topics being tracked
-   └─ RIGHT PANEL — Agent Workspace
-       ├─ Notification Box    — alerts from connected tools
-       ├─ Activity Feed       — live agent actions and tool calls
-       ├─ Task Queue          — pending and in-progress tasks
-       └─ Chat                — direct conversation with the agent
+3. SIDEBAR NAVIGATION (9 views)
+   ├── WORKSPACE
+   │   ├─ Landscape     — AI morning briefing, themes grid, open threads, thread chat
+   │   ├─ Capture       — thought/action/question input; agent processes & responds
+   │   ├─ Schedule      — calendar events with AI-suggested actions per event
+   │   └─ Transcripts   — upload meeting transcripts → agent extracts action items
+   └── AGENT
+       ├─ Workflows     — build automations via LLM conversation; run from library
+       ├─ Take Over     — 3-phase: briefing (scope config) → active → return (review)
+       ├─ Connections   — OAuth tool catalog (Composio) + curated tool grid
+       ├─ Custom Tools  — LLM-powered investigation of any tool's API & auth
+       └─ Settings      — LLM provider (BYOK), trust profile, telemetry, folder watch
 
 4. AGENT INTERACTION
    └─ Add task → agent reasons with LLM → executes tool actions via Composio
@@ -322,8 +324,18 @@ attaccaclaw-main/
 │   │   └── index.ts              # contextBridge — exposes window.api
 │   └── renderer/src/
 │       ├── App.tsx               # Root router (license → onboarding → dashboard)
-│       ├── components/           # React components
-│       │   └── dashboard/        # Dashboard, LandscapeView, TaskQueue, etc.
+│       ├── components/
+│       │   ├── dashboard/        # LandscapeView, CapturePanel, TaskQueue, etc.
+│       │   ├── features/         # ScheduleView, TranscriptUpload, WorkflowAdder,
+│       │   │                     #   TakeOverMode, MetaAgent
+│       │   ├── settings/
+│       │   │   ├── ConnectionsPage.tsx
+│       │   │   └── connections/  # CatalogPanel, ToolCard, EscapeHatch
+│       │   ├── custom-tools/     # CustomToolsPage, ExplorationFeed, ToolResultView
+│       │   ├── layout/           # AppShell (9 views), Sidebar, TitleBar
+│       │   ├── onboarding/       # OnboardingWizard
+│       │   ├── license/          # LicenseGate
+│       │   └── ui/               # shadcn/ui primitives
 │       ├── stores/               # Zustand stores (10 domains)
 │       ├── lib/                  # gateway-client, rpc, permission-engine
 │       └── types/                # gateway.ts — OpenClaw protocol types

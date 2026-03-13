@@ -146,6 +146,31 @@ export interface AttaccaAPI {
       actionName: string,
       params: Record<string, unknown>
     ) => Promise<{ success: boolean; result?: unknown; error?: string }>
+    llmCompletion: (
+      messages: Array<{ role: string; content: string }>,
+      opts?: { model?: string; max_tokens?: number }
+    ) => Promise<{ id: string; model: string; content: string; usage: { input_tokens: number; output_tokens: number }; provider: string } | { success: false; error: string }>
+    listApps: () => Promise<Array<{ slug: string; name: string; categories: string[]; description: string }>>
+  }
+
+  kb: {
+    saveCapture: (data: {
+      id: string
+      sourceType: string
+      title: string
+      content: string
+      result: {
+        summary: string
+        actionItems: Array<{ text: string; owner?: string }>
+        decisions: string[]
+        openQuestions: string[]
+        keyPoints: string[]
+        entities?: { people?: string[]; projects?: string[]; dates?: string[] }
+      }
+      timestamp: number
+    }) => Promise<{ success: boolean }>
+    readContext: () => Promise<string>
+    appendDailyLog: (entry: string) => Promise<{ success: boolean }>
   }
 
   telemetry: {
@@ -159,6 +184,21 @@ export interface AttaccaAPI {
 interface PersistedAgentState {
   morningBriefing: string | null
   briefingDate: string | null
+  morningLandscape?: {
+    message: string
+    question: string | null
+    suggestedActions: Array<{ label: string; actionType: string; payload: unknown }>
+    generatedAt: number
+  } | null
+  themes?: Array<{
+    id: string
+    title: string
+    description: string
+    weight: 'high' | 'mid' | 'low' | 'neutral'
+    tags: string[]
+    mentionCount: number
+    deadline?: string
+  }>
   taskQueue: Array<{
     id: string
     description: string
@@ -181,6 +221,22 @@ interface PersistedAgentState {
     id: string
     role: 'user' | 'assistant'
     text: string
+  }>
+  rawCaptures?: Array<{
+    id: string
+    text: string
+    type: 'thought' | 'action' | 'question'
+    timestamp: number
+    agentNote: string | null
+    linkedThemeId?: string
+    linkedThreadId?: string
+  }>
+  threads?: Array<{
+    id: string
+    title: string
+    holdingNote: string
+    createdAt: number
+    relatedThemeId?: string
   }>
 }
 

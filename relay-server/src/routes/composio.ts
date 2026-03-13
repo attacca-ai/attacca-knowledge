@@ -3,8 +3,11 @@ import {
   initiateOAuth,
   getConnectionStatus,
   proxyToolAction,
+  proxyToolActionV3,
   getConnectedApps,
-  listAppActions
+  listAppActions,
+  listApps,
+  listOutlookEvents
 } from '../services/composio.js'
 
 const router = Router()
@@ -24,6 +27,65 @@ router.post('/proxy', async (req, res) => {
 
   if (!actionName) {
     res.status(400).json({ error: 'actionName is required' })
+    return
+  }
+
+  // Special aggregate: list Outlook calendar events (two-step strategy).
+  // Step 1: OUTLOOK_LIST_CALENDARS (confirmed working) → extract primary calendar ID.
+  // Step 2: Try event-listing actions with the calendar ID.
+  if (actionName === 'ATTACCA_OUTLOOK_EVENTS') {
+    const timeMin = (params.timeMin ?? params.startDateTime) as string | undefined
+    const timeMax = (params.timeMax ?? params.endDateTime) as string | undefined
+    const top = (params.top as number | undefined) ?? 50
+
+    // Composio OUTLOOK_LIST_EVENTS param names (from docs): calendar_id, top, filter, select[], orderby[]
+    const composioParams: Record<string, unknown> = {
+      top,
+      select: ['subject', 'start', 'end', 'attendees', 'id', 'isAllDay'],
+      orderby: ['start/dateTime']
+    }
+    if (timeMin && timeMax) {
+      composioParams.filter = `start/dateTime ge '${timeMin.replace('Z', '')}' and end/dateTime le '${timeMax.replace('Z', '')}'`
+    }
+
+    // Step 1: get calendar list (works reliably) to obtain primary calendar ID
+    let primaryCalendarId: string | undefined
+    try {
+      const calResult = await proxyToolAction(license.keyHash, 'OUTLOOK_LIST_CALENDARS', { $top: 5 })
+      const calData = (calResult as any)?.data ?? calResult
+      const calItems: any[] = Array.isArray(calData?.value) ? calData.value : []
+      const primary = calItems.find((c: any) => c.isDefaultCalendar) ?? calItems[0]
+      primaryCalendarId = primary?.id
+      console.log(`[composio] ATTACCA_OUTLOOK_EVENTS primary calendar: "${primary?.name}" id=${primaryCalendarId?.slice(0, 20)}...`)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      console.log(`[composio] ATTACCA_OUTLOOK_EVENTS OUTLOOK_LIST_CALENDARS failed: ${msg}`)
+    }
+
+    // Step 2: OUTLOOK_LIST_EVENTS via SDK using correct param names (calendar_id, not calendarId; top not $top)
+    try {
+      const eventParams = primaryCalendarId
+        ? { ...composioParams, calendar_id: primaryCalendarId }
+        : composioParams
+      const result = await proxyToolAction(license.keyHash, 'OUTLOOK_LIST_EVENTS', eventParams)
+      console.log(`[composio] ATTACCA_OUTLOOK_EVENTS resolved via OUTLOOK_LIST_EVENTS`)
+      res.json({ success: true, result })
+      return
+    } catch (e) {
+      console.log(`[composio] ATTACCA_OUTLOOK_EVENTS OUTLOOK_LIST_EVENTS failed: ${(e instanceof Error ? e.message : String(e)).slice(0, 100)}`)
+    }
+
+    // Final fallback: use Composio entity.execute() — different SDK path than client.tools.execute()
+    try {
+      const result = await listOutlookEvents(license.keyHash, primaryCalendarId, composioParams)
+      console.log(`[composio] ATTACCA_OUTLOOK_EVENTS resolved via entity.execute()`)
+      res.json({ success: true, result })
+      return
+    } catch (e) {
+      console.log(`[composio] ATTACCA_OUTLOOK_EVENTS entity.execute() failed: ${e instanceof Error ? e.message : e}`)
+    }
+
+    res.json({ success: false, error: 'No Outlook calendar action matched. Ensure Outlook is connected in Connections.' })
     return
   }
 
@@ -118,6 +180,17 @@ router.get('/connected', async (req, res) => {
   } catch (err) {
     console.error('[composio] Connected apps error:', err)
     res.json({ apps: [] })
+  }
+})
+
+// List all available Composio apps/toolkits
+router.get('/apps', async (req, res) => {
+  try {
+    const apps = await listApps()
+    res.json({ apps })
+  } catch (err) {
+    console.error('[composio] List apps error:', err)
+    res.status(502).json({ error: err instanceof Error ? err.message : 'Unknown error' })
   }
 })
 

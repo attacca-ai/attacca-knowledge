@@ -117,8 +117,25 @@ export async function relayLLMCompletion(
 ): Promise<RelayLLMResponse> {
   return relayFetch<RelayLLMResponse>('/llm/completions', {
     method: 'POST',
-    body: request
+    body: request,
+    retries: 1
   })
+}
+
+export interface RelayComposioApp {
+  slug: string
+  name: string
+  categories: string[]
+  description: string
+}
+
+export async function relayListApps(): Promise<RelayComposioApp[]> {
+  try {
+    const result = await relayFetch<{ apps: RelayComposioApp[] }>('/composio/apps', { retries: 1 })
+    return result.apps ?? []
+  } catch {
+    return []
+  }
 }
 
 // ── Usage ──

@@ -97,7 +97,17 @@ const api = {
     getUsage: () => ipcRenderer.invoke('relay:get-usage'),
     getConnected: () => ipcRenderer.invoke('relay:get-connected'),
     callTool: (actionName: string, params: Record<string, unknown>) =>
-      ipcRenderer.invoke('relay:call-tool', actionName, params)
+      ipcRenderer.invoke('relay:call-tool', actionName, params),
+    llmCompletion: (messages: Array<{ role: string; content: string }>, opts?: { model?: string; max_tokens?: number }) =>
+      ipcRenderer.invoke('relay:llm-completion', messages, opts),
+    listApps: () => ipcRenderer.invoke('relay:list-apps')
+  },
+
+  // Knowledge Base
+  kb: {
+    saveCapture: (data: unknown) => ipcRenderer.invoke('kb:save-capture', data),
+    readContext: () => ipcRenderer.invoke('kb:read-context'),
+    appendDailyLog: (entry: string) => ipcRenderer.invoke('kb:append-daily-log', entry)
   },
 
   // Telemetry

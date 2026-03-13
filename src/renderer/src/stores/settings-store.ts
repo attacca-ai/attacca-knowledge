@@ -3,6 +3,7 @@ import { create } from 'zustand'
 interface SettingsStore {
   morningBriefingTime: string
   eodSummaryTime: string
+  userTimezone: string
   telegramConnected: boolean
   folderWatchEnabled: boolean
   folderWatchPath: string | null
@@ -20,6 +21,7 @@ interface SettingsStore {
 export const useSettingsStore = create<SettingsStore>((set, get) => ({
   morningBriefingTime: '07:00',
   eodSummaryTime: '18:00',
+  userTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   telegramConnected: false,
   folderWatchEnabled: false,
   folderWatchPath: null,
@@ -59,6 +61,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     const {
       morningBriefingTime,
       eodSummaryTime,
+      userTimezone,
       telegramConnected,
       folderWatchEnabled,
       folderWatchPath,
@@ -72,6 +75,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     await window.api.settings.set('attacca', {
       morningBriefingTime,
       eodSummaryTime,
+      userTimezone,
       telegramConnected,
       folderWatchEnabled,
       folderWatchPath,

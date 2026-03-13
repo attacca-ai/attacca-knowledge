@@ -2,7 +2,8 @@ import { Router } from 'express'
 import {
   getPermissionApprovalRates,
   getTrustProfileDistribution,
-  getTaskCompletionStats
+  getTaskCompletionStats,
+  getToolCallStats
 } from '../services/telemetry-store.js'
 import { getAggregateUsageStats } from '../services/usage.js'
 
@@ -22,11 +23,12 @@ router.use(dashboardAuth)
 
 router.get('/stats', async (_req, res) => {
   try {
-    const [permissionRates, trustDistribution, taskStats, usageStats] = await Promise.all([
+    const [permissionRates, trustDistribution, taskStats, usageStats, toolCallStats] = await Promise.all([
       getPermissionApprovalRates(30),
       getTrustProfileDistribution(30),
       getTaskCompletionStats(30),
-      getAggregateUsageStats()
+      getAggregateUsageStats(),
+      getToolCallStats(30)
     ])
 
     res.json({
@@ -34,7 +36,8 @@ router.get('/stats', async (_req, res) => {
       permissions: permissionRates,
       trustProfiles: trustDistribution,
       tasks: taskStats,
-      usage: usageStats
+      usage: usageStats,
+      toolCalls: toolCallStats
     })
   } catch (err) {
     console.error('[dashboard] Stats error:', err)

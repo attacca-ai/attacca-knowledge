@@ -1,19 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger
-} from '@/components/ui/alert-dialog'
 import {
   Dialog,
   DialogContent,
@@ -23,35 +10,56 @@ import {
   DialogTitle
 } from '@/components/ui/dialog'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Button } from '@/components/ui/button'
+import { Loader2 } from 'lucide-react'
 import { useOnboardingStore } from '@/stores/onboarding-store'
 import { TOOL_CATEGORIES } from '@/lib/constants'
-import { Loader2 } from 'lucide-react'
+import { ToolCard } from './connections/ToolCard'
+import { CatalogPanel } from './connections/CatalogPanel'
+import { EscapeHatch } from './connections/EscapeHatch'
 
-const TOOL_NAMES: Record<string, string> = {
-  'google-calendar': 'Google Calendar',
-  'outlook-calendar': 'Outlook Calendar',
-  gmail: 'Gmail',
-  'outlook-email': 'Outlook Email',
-  clickup: 'ClickUp',
-  asana: 'Asana',
-  trello: 'Trello',
-  notion: 'Notion',
-  activecollab: 'ActiveCollab',
-  'google-drive': 'Google Drive',
-  onedrive: 'OneDrive',
-  dropbox: 'Dropbox',
-  slack: 'Slack',
-  teams: 'Microsoft Teams',
-  telegram: 'Telegram'
+interface ConnectionsPageProps {
+  onNavigateToCustomTools: (toolName: string) => void
 }
 
 // Tools that use credential-based auth instead of Composio OAuth
 const CREDENTIAL_BASED_TOOLS = ['activecollab', 'telegram']
 
-// All tools from categories
-const ALL_TOOLS = Object.values(TOOL_CATEGORIES).flatMap((c) => c.tools)
+// All tools from curated categories
+const ALL_CURATED_TOOLS = Object.values(TOOL_CATEGORIES).flatMap((c) => c.tools)
 
-export function ConnectionsPage(): React.JSX.Element {
+// Curated metadata: emoji + short description
+const TOOL_META: Record<string, { emoji: string; label: string; description: string }> = {
+  'google-calendar': { emoji: '📅', label: 'Google Calendar', description: 'Calendario y recordatorios' },
+  'outlook-calendar': { emoji: '📆', label: 'Outlook Calendar', description: 'Calendario de Microsoft' },
+  gmail: { emoji: '📧', label: 'Gmail', description: 'Correo de Google' },
+  'outlook-email': { emoji: '📨', label: 'Outlook Mail', description: 'Correo de Microsoft' },
+  clickup: { emoji: '✔️', label: 'ClickUp', description: 'Gestión de proyectos todo-en-uno' },
+  asana: { emoji: '🔔', label: 'Asana', description: 'Proyectos y seguimiento de tareas' },
+  trello: { emoji: '🧩', label: 'Trello', description: 'Tableros Kanban' },
+  notion: { emoji: '📊', label: 'Notion', description: 'Docs y bases de datos' },
+  activecollab: { emoji: '🟠', label: 'ActiveCollab', description: 'Gestión de proyectos' },
+  'google-drive': { emoji: '📁', label: 'Google Drive', description: 'Almacenamiento en la nube' },
+  onedrive: { emoji: '☁️', label: 'OneDrive', description: 'Almacenamiento de Microsoft' },
+  dropbox: { emoji: '📦', label: 'Dropbox', description: 'Sincronización de archivos' },
+  slack: { emoji: '💬', label: 'Slack', description: 'Mensajería de equipo' },
+  teams: { emoji: '🤝', label: 'Microsoft Teams', description: 'Colaboración de equipo' },
+  telegram: { emoji: '✈️', label: 'Telegram', description: 'Notificaciones del agente' }
+}
+
+function getToolMeta(toolId: string): { emoji: string; label: string; description: string } {
+  return (
+    TOOL_META[toolId] ?? {
+      emoji: toolId.charAt(0).toUpperCase(),
+      label: toolId,
+      description: 'Herramienta externa'
+    }
+  )
+}
+
+export function ConnectionsPage({
+  onNavigateToCustomTools
+}: ConnectionsPageProps): React.JSX.Element {
   const { connectedTools, addConnectedTool, removeConnectedTool } = useOnboardingStore()
   const [connecting, setConnecting] = useState<string | null>(null)
   const [disconnecting, setDisconnecting] = useState<string | null>(null)
@@ -71,18 +79,13 @@ export function ConnectionsPage(): React.JSX.Element {
     async function loadConnections(): Promise<void> {
       try {
         const relayApps = await window.api.relay.getConnected()
-        for (const app of relayApps) {
-          addConnectedTool(app)
-        }
+        for (const app of relayApps) addConnectedTool(app)
       } catch {
         // Relay may not be available
       }
-
       try {
         const localTools = await window.api.oauth.getConnected()
-        for (const tool of localTools) {
-          addConnectedTool(tool)
-        }
+        for (const tool of localTools) addConnectedTool(tool)
       } catch {
         // ignore
       }
@@ -99,25 +102,22 @@ export function ConnectionsPage(): React.JSX.Element {
 
   // Listen for local OAuth callbacks (Telegram)
   useEffect(() => {
-    const unsub = window.api.oauth.onCallback((result: { success: boolean; provider: string; error?: string }) => {
-      if (result.success) {
-        addConnectedTool(result.provider)
-      } else {
-        setError(result.error || 'Connection failed')
+    const unsub = window.api.oauth.onCallback(
+      (result: { success: boolean; provider: string; error?: string }) => {
+        if (result.success) addConnectedTool(result.provider)
+        else setError(result.error || 'Connection failed')
+        setConnecting(null)
       }
-      setConnecting(null)
-    })
+    )
     return unsub
   }, [addConnectedTool])
 
   const handleConnect = async (tool: string): Promise<void> => {
-    // ActiveCollab uses credential-based auth — open dialog
     if (tool === 'activecollab') {
       setAcDialogOpen(true)
       return
     }
 
-    // Telegram uses bot token flow — handled locally
     if (tool === 'telegram') {
       setConnecting(tool)
       setError(null)
@@ -129,10 +129,8 @@ export function ConnectionsPage(): React.JSX.Element {
       return
     }
 
-    // All other tools use Composio via relay
     setConnecting(tool)
     setError(null)
-
     try {
       const result = await window.api.relay.initiateOAuth(tool)
       if (!result.success) {
@@ -140,14 +138,12 @@ export function ConnectionsPage(): React.JSX.Element {
         setConnecting(null)
         return
       }
-
       if (!result.redirectUrl || !result.connectionId) {
         setError('Missing redirect URL or connection ID')
         setConnecting(null)
         return
       }
       await window.api.app.openExternal(result.redirectUrl)
-
       const connectionId = result.connectionId
       pollRef.current = setInterval(async () => {
         try {
@@ -160,7 +156,7 @@ export function ConnectionsPage(): React.JSX.Element {
           } else if (status.status === 'failed' || status.status === 'expired') {
             if (pollRef.current) clearInterval(pollRef.current)
             pollRef.current = null
-            setError(`Connection ${status.status}. Please try again.`)
+            setError(`Conexión ${status.status}. Inténtalo de nuevo.`)
             setConnecting(null)
           }
         } catch {
@@ -176,13 +172,11 @@ export function ConnectionsPage(): React.JSX.Element {
   const handleActiveCollabConnect = async (): Promise<void> => {
     setAcConnecting(true)
     setError(null)
-
     try {
       const result =
         acTab === 'cloud'
           ? await window.api.activecollab.connectCloud(acEmail, acPassword)
           : await window.api.activecollab.connectSelfHosted(acInstanceUrl, acEmail, acPassword)
-
       if (result.success) {
         addConnectedTool('activecollab')
         setAcDialogOpen(false)
@@ -201,120 +195,128 @@ export function ConnectionsPage(): React.JSX.Element {
   const handleDisconnect = async (tool: string): Promise<void> => {
     setDisconnecting(tool)
     setError(null)
-
     if (CREDENTIAL_BASED_TOOLS.includes(tool)) {
-      // Local credential-based disconnect
       const result = await window.api.oauth.disconnect(tool)
-      if (result.success) {
-        removeConnectedTool(tool)
-      } else {
-        setError(result.error || 'Disconnect failed')
-      }
+      if (result.success) removeConnectedTool(tool)
+      else setError(result.error || 'Disconnect failed')
     } else {
-      // Composio tools — disconnect via relay
       const result = await window.api.relay.disconnectOAuth(tool)
-      if (result.success) {
-        removeConnectedTool(tool)
-      } else {
-        setError('Disconnect failed')
-      }
+      if (result.success) removeConnectedTool(tool)
+      else setError('Disconnect failed')
     }
-
     setDisconnecting(null)
   }
 
+  // Build display sets
+  const connectedCurated = ALL_CURATED_TOOLS.filter((t) => connectedTools.includes(t))
+  const connectedExtras = connectedTools.filter((t) => !(ALL_CURATED_TOOLS as readonly string[]).includes(t))
+  const allConnectedForDisplay = [...connectedCurated, ...connectedExtras]
+  const availableCurated = ALL_CURATED_TOOLS.filter((t) => !connectedTools.includes(t))
+
   return (
-    <div className="flex flex-1 flex-col p-6">
-      <h2 className="mb-4 text-xl font-semibold text-foreground">Connections</h2>
-
-      {error && (
-        <div className="mb-4 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
-          {error}
+    <div className="flex flex-1 overflow-hidden bg-[#0e0f11]">
+      {/* ── Main panel ── */}
+      <div className="flex flex-1 flex-col overflow-hidden border-r border-[#1f2024]">
+        {/* Header */}
+        <div className="shrink-0 border-b border-[#1f2024] px-8 py-6">
+          <div className="mb-[5px] font-mono text-[9px] uppercase tracking-[.12em] text-[#4a4d55]">
+            Connections
+          </div>
+          <h1 className="mb-1 text-[20px] font-light tracking-[-0.01em] text-[#e8e9eb]">
+            Herramientas conectadas
+          </h1>
+          <p className="max-w-[480px] text-[12.5px] leading-[1.5] text-[#7a7d85]">
+            Las herramientas que el agente puede usar. Conecta lo que necesites y el agente se adapta.
+          </p>
         </div>
-      )}
 
-      <div className="flex flex-col gap-2">
-        {ALL_TOOLS.map((tool) => {
-          const isConnected = connectedTools.includes(tool)
-          const isConnecting = connecting === tool
-          const isDisconnecting = disconnecting === tool
-
-          return (
-            <div
-              key={tool}
-              className="flex items-center justify-between rounded-md border border-border p-3"
-            >
-              <span className="text-sm text-foreground">{TOOL_NAMES[tool] || tool}</span>
-              <div className="flex items-center gap-2">
-                {isConnected ? (
-                  <>
-                    <Badge
-                      variant="outline"
-                      className="text-green-600 dark:text-green-400"
-                    >
-                      Connected
-                    </Badge>
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
-                        <Button variant="ghost" size="sm" disabled={isDisconnecting}>
-                          {isDisconnecting ? (
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                          ) : (
-                            'Disconnect'
-                          )}
-                        </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>
-                            Disconnect {TOOL_NAMES[tool] || tool}?
-                          </AlertDialogTitle>
-                          <AlertDialogDescription>
-                            This will remove the stored credentials. You can reconnect at
-                            any time.
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>Cancel</AlertDialogCancel>
-                          <AlertDialogAction
-                            variant="destructive"
-                            onClick={() => handleDisconnect(tool)}
-                          >
-                            Disconnect
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
-                  </>
-                ) : (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={isConnecting}
-                    onClick={() => handleConnect(tool)}
-                  >
-                    {isConnecting ? (
-                      <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-                    ) : null}
-                    Connect
-                  </Button>
-                )}
-              </div>
+        {/* Body */}
+        <div
+          className="flex-1 overflow-y-auto px-8 py-5"
+          style={{ scrollbarWidth: 'thin', scrollbarColor: '#2a2b2f transparent' }}
+        >
+          {error && (
+            <div className="mb-4 max-w-[600px] rounded-md border border-[rgba(224,92,92,.3)] bg-[rgba(224,92,92,.1)] px-3 py-2 text-sm text-[#e05c5c]">
+              {error}
             </div>
-          )
-        })}
+          )}
+
+          {/* Connected tools */}
+          {allConnectedForDisplay.length > 0 && (
+            <section className="mb-6">
+              <SectionLabel>Conectadas</SectionLabel>
+              <div className="grid max-w-[600px] grid-cols-2 gap-2">
+                {allConnectedForDisplay.map((tool) => {
+                  const meta = getToolMeta(tool)
+                  return (
+                    <ToolCard
+                      key={tool}
+                      toolId={tool}
+                      label={meta.label}
+                      description={meta.description}
+                      emoji={meta.emoji}
+                      isConnected={true}
+                      isConnecting={connecting === tool}
+                      isDisconnecting={disconnecting === tool}
+                      onConnect={() => handleConnect(tool)}
+                      onDisconnect={() => handleDisconnect(tool)}
+                    />
+                  )
+                })}
+              </div>
+            </section>
+          )}
+
+          {/* Available curated tools */}
+          {availableCurated.length > 0 && (
+            <section className="mb-6">
+              <SectionLabel>Agregar del catálogo</SectionLabel>
+              <div className="grid max-w-[600px] grid-cols-2 gap-2">
+                {availableCurated.map((tool) => {
+                  const meta = getToolMeta(tool)
+                  return (
+                    <ToolCard
+                      key={tool}
+                      toolId={tool}
+                      label={meta.label}
+                      description={meta.description}
+                      emoji={meta.emoji}
+                      isConnected={false}
+                      isConnecting={connecting === tool}
+                      isDisconnecting={false}
+                      onConnect={() => handleConnect(tool)}
+                      onDisconnect={() => handleDisconnect(tool)}
+                    />
+                  )
+                })}
+              </div>
+            </section>
+          )}
+
+          {/* Escape hatch */}
+          <section>
+            <SectionLabel>¿No encuentras lo que necesitas?</SectionLabel>
+            <EscapeHatch onClick={() => onNavigateToCustomTools('')} />
+          </section>
+        </div>
       </div>
 
-      {/* ActiveCollab Connection Dialog */}
+      {/* ── Catalog panel (right) ── */}
+      <CatalogPanel
+        connectedTools={connectedTools}
+        onConnectTool={handleConnect}
+        onNavigateToCustomTools={onNavigateToCustomTools}
+      />
+
+      {/* ActiveCollab dialog */}
       <Dialog open={acDialogOpen} onOpenChange={setAcDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Connect ActiveCollab</DialogTitle>
+            <DialogTitle>Conectar ActiveCollab</DialogTitle>
             <DialogDescription>
-              Your password is sent directly to ActiveCollab and is not stored by Attacca.
+              Tu contraseña se envía directamente a ActiveCollab y no es almacenada por Attacca.
             </DialogDescription>
           </DialogHeader>
-
           <Tabs value={acTab} onValueChange={setAcTab}>
             <TabsList className="w-full">
               <TabsTrigger value="cloud" className="flex-1">
@@ -324,7 +326,6 @@ export function ConnectionsPage(): React.JSX.Element {
                 Self-Hosted
               </TabsTrigger>
             </TabsList>
-
             <TabsContent value="cloud" className="mt-4 flex flex-col gap-3">
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="ac-cloud-email">Email</Label>
@@ -333,11 +334,11 @@ export function ConnectionsPage(): React.JSX.Element {
                   type="email"
                   value={acEmail}
                   onChange={(e) => setAcEmail(e.target.value)}
-                  placeholder="you@company.com"
+                  placeholder="tu@empresa.com"
                 />
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="ac-cloud-password">Password</Label>
+                <Label htmlFor="ac-cloud-password">Contraseña</Label>
                 <Input
                   id="ac-cloud-password"
                   type="password"
@@ -346,16 +347,15 @@ export function ConnectionsPage(): React.JSX.Element {
                 />
               </div>
             </TabsContent>
-
             <TabsContent value="selfhosted" className="mt-4 flex flex-col gap-3">
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="ac-sh-url">Instance URL</Label>
+                <Label htmlFor="ac-sh-url">URL de instancia</Label>
                 <Input
                   id="ac-sh-url"
                   type="url"
                   value={acInstanceUrl}
                   onChange={(e) => setAcInstanceUrl(e.target.value)}
-                  placeholder="https://projects.mycompany.com"
+                  placeholder="https://projects.miempresa.com"
                 />
               </div>
               <div className="flex flex-col gap-1.5">
@@ -365,11 +365,11 @@ export function ConnectionsPage(): React.JSX.Element {
                   type="email"
                   value={acEmail}
                   onChange={(e) => setAcEmail(e.target.value)}
-                  placeholder="you@company.com"
+                  placeholder="tu@empresa.com"
                 />
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="ac-sh-password">Password</Label>
+                <Label htmlFor="ac-sh-password">Contraseña</Label>
                 <Input
                   id="ac-sh-password"
                   type="password"
@@ -379,18 +379,31 @@ export function ConnectionsPage(): React.JSX.Element {
               </div>
             </TabsContent>
           </Tabs>
-
           <DialogFooter>
             <Button
               onClick={handleActiveCollabConnect}
-              disabled={acConnecting || !acEmail || !acPassword || (acTab === 'selfhosted' && !acInstanceUrl)}
+              disabled={
+                acConnecting ||
+                !acEmail ||
+                !acPassword ||
+                (acTab === 'selfhosted' && !acInstanceUrl)
+              }
             >
               {acConnecting ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
-              Connect
+              Conectar
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  )
+}
+
+function SectionLabel({ children }: { children: React.ReactNode }): React.JSX.Element {
+  return (
+    <div className="mb-[10px] flex items-center gap-2 font-mono text-[9px] uppercase tracking-[.12em] text-[#4a4d55]">
+      {children}
+      <span className="h-px flex-1 bg-[#1f2024]" />
     </div>
   )
 }

@@ -51,6 +51,8 @@ export const IPC = {
   RELAY_GET_USAGE: 'relay:get-usage',
   RELAY_GET_CONNECTED: 'relay:get-connected',
   RELAY_CALL_TOOL: 'relay:call-tool',
+  RELAY_LLM_COMPLETION: 'relay:llm-completion',
+  RELAY_LIST_APPS: 'relay:list-apps',
 
   // Agent state persistence
   AGENT_GET_STATE: 'agent:get-state',
@@ -61,6 +63,11 @@ export const IPC = {
   TELEMETRY_GET_OPT_IN: 'telemetry:get-opt-in',
   TELEMETRY_DELETE_DATA: 'telemetry:delete-data',
   TELEMETRY_EMIT: 'telemetry:emit',
+
+  // Knowledge Base
+  KB_SAVE_CAPTURE: 'kb:save-capture',
+  KB_READ_CONTEXT: 'kb:read-context',
+  KB_APPEND_DAILY_LOG: 'kb:append-daily-log',
 
   // Events (main → renderer)
   EVENT_GATEWAY_STATE_CHANGED: 'event:gateway-state-changed',

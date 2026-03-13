@@ -1,60 +1,103 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { gatewayClient } from '@/lib/gateway-client'
-import { useAgentStore, type LandscapeTheme, type MorningLandscape } from '@/stores/agent-store'
+import { useAgentStore, type AgentThread, type LandscapeTheme, type MorningLandscape } from '@/stores/agent-store'
 import { useGatewayStore } from '@/stores/gateway-store'
 import { useOnboardingStore } from '@/stores/onboarding-store'
-import { Loader2, RefreshCw } from 'lucide-react'
+import { useSettingsStore } from '@/stores/settings-store'
+import { ArrowLeft, ArrowUp, Loader2, RefreshCw, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type { OcEvent } from '@/types/gateway'
 
 const LANDSCAPE_TIMEOUT_MS = 120_000
+const LANDSCAPE_REFRESH_MS = 6 * 60 * 60 * 1000 // 6 hours
 
 /** Maps connection tool IDs to the Composio actions the agent should call */
 const TOOL_ACTIONS: Record<string, string> = {
   'gmail':           'GMAIL_FETCH_EMAILS with query "is:unread newer_than:3d" and max_results 20',
-  'google-calendar': 'GOOGLECALENDAR_EVENTS_LIST for calendarId "primary" with maxResults 10',
+  'google-calendar': 'call ATTACCA_CALENDAR_EVENTS via the attacca-tools skill (no parameters needed) — returns upcoming calendar events',
   'slack':           'SLACK_LIST_ALL_CHANNELS_IN_THE_SLACK_WORKSPACE then read recent activity',
-  'trello':          'call ATTACCA_TRELLO_BOARDS_AND_CARDS (attacca-tools skill, no parameters needed) — returns all boards with their cards',
+  'trello':          'call ATTACCA_TRELLO_BOARDS_AND_CARDS via the attacca-tools skill (no parameters needed) — returns all boards with their cards',
   'clickup':         'CLICKUP_GET_FILTERED_TEAM_TASKS with statuses open and in-progress',
   'asana':           'ASANA_GET_TASKS_LIST with assignee "me" and completed_since "now"',
   'notion':          'NOTION_SEARCH for recent pages and databases',
   'google-drive':    'check recent Google Drive files using available Drive actions',
 }
 
-function buildLandscapePrompt(connectedTools: string[]): string {
+/**
+ * Composio returns its own internal slugs (e.g. "googlecalendar", "googledrive")
+ * which differ from the tool IDs stored in onboarding-store and TOOL_ACTIONS.
+ * Normalize relay-returned slugs to match TOOL_ACTIONS keys.
+ */
+const COMPOSIO_SLUG_TO_TOOL_KEY: Record<string, string> = {
+  'googlecalendar': 'google-calendar',
+  'googledrive':    'google-drive',
+}
+
+function normalizeAppSlug(slug: string): string {
+  const lower = slug.toLowerCase()
+  return COMPOSIO_SLUG_TO_TOOL_KEY[lower] ?? lower
+}
+
+function buildLandscapePrompt(
+  connectedTools: string[],
+  recentCaptureLines: string[],
+  openThreadLines: string[]
+): string {
   const toolLines = connectedTools
     .filter((t) => TOOL_ACTIONS[t])
     .map((t) => `- ${TOOL_ACTIONS[t]}`)
 
-  const toolsSection = toolLines.length > 0
-    ? `Check the following connected tools:\n${toolLines.join('\n')}`
-    : 'No external tools are connected. Base the landscape on general context and today\'s date.'
+  // Inject context from the store so the LLM has local knowledge even before tool calls
+  const contextParts: string[] = []
+  if (recentCaptureLines.length > 0) {
+    contextParts.push(`Recent captures from the user:\n${recentCaptureLines.join('\n')}`)
+  }
+  if (openThreadLines.length > 0) {
+    contextParts.push(`Open threads (unresolved questions the agent is holding):\n${openThreadLines.join('\n')}`)
+  }
+  const contextSection = contextParts.length > 0
+    ? `\n\nCONTEXT from recent activity:\n${contextParts.join('\n\n')}\n`
+    : ''
 
-  return `Generate my daily work landscape. ${toolsSection}
+  // Step 1: gather live data (tool-calling is mandatory before responding)
+  const step1 = toolLines.length > 0
+    ? `\nSTEP 1 — GATHER LIVE DATA (you MUST do this before generating your response):\nCall each of the following tools now to collect fresh information:\n${toolLines.join('\n')}\n`
+    : '\n(No external tools are connected — base the landscape on the context above and today\'s date.)\n'
 
-Return ONLY valid JSON (no markdown fences, no other text):
+  const step2Label = toolLines.length > 0 ? '\nSTEP 2 — ' : '\n'
+
+  return `You are generating a daily work landscape for a knowledge worker.${contextSection}${step1}${step2Label}After gathering data, return ONLY valid JSON (no markdown fences, no other text):
 {
-  "message": "Exactly 3 sentences about what stands out today based on available data. Use [entity]key topic[/entity] to highlight important items.",
-  "question": "One short focusing question to orient the day, or null.",
+  "message": "Exactly 3 sentences about what stands out today based on the data you gathered. Speak like a knowledgeable colleague giving a terrain reading, not a bullet list. Use [entity]key topic[/entity] to highlight important named items.",
+  "question": "One short open question based on the theme with the highest mentionCount from recent captures, or null if there are no captures or nothing needs orienting. Omit if not genuinely relevant.",
   "themes": [
     { "title": "Two words max", "description": "Why this matters right now", "weight": "high|mid|low|neutral", "tags": ["tag1"], "mentionCount": 1 }
+  ],
+  "threads": [
+    { "title": "3-5 word topic", "holdingNote": "First-person max 2 sentences about what needs clarification before acting." }
   ],
   "suggestedActions": [
     { "label": "Action label", "actionType": "capture", "payload": {} }
   ]
 }
-Weights: high=urgent deadline, mid=needs attention, low=ongoing, neutral=informational. Max 4 themes, max 2 suggestedActions.`
+Weights: high=urgent deadline, mid=needs attention, low=ongoing, neutral=informational. Max 4 themes, max 2 threads (only if genuine ambiguity exists in the data), max 2 suggestedActions.`
+}
+
+/** Truncates text to at most N sentences */
+function truncateToSentences(text: string, max: number): string {
+  const sentences = text.split(/(?<=[.!?])\s+/).filter(Boolean)
+  return sentences.length > max ? sentences.slice(0, max).join(' ') : text
 }
 
 const WEIGHT_STYLES: Record<
   LandscapeTheme['weight'],
-  { border: string; label: string; labelBg: string }
+  { strip: string; label: string }
 > = {
-  high:    { border: 'border-l-red-500',    label: 'text-red-500',    labelBg: 'bg-red-500/10'    },
-  mid:     { border: 'border-l-yellow-500', label: 'text-yellow-500', labelBg: 'bg-yellow-500/10' },
-  low:     { border: 'border-l-green-500',  label: 'text-green-500',  labelBg: 'bg-green-500/10'  },
-  neutral: { border: 'border-l-blue-500',   label: 'text-blue-500',   labelBg: 'bg-blue-500/10'   },
+  high:    { strip: 'bg-[#e05c5c]', label: 'text-[#e05c5c]' },
+  mid:     { strip: 'bg-[#d4a843]', label: 'text-[#d4a843]' },
+  low:     { strip: 'bg-[#4caf82]', label: 'text-[#4caf82]' },
+  neutral: { strip: 'bg-[#5b7cf6]', label: 'text-[#5b7cf6]' },
 }
 
 const WEIGHT_LABELS: Record<LandscapeTheme['weight'], string> = {
@@ -80,16 +123,16 @@ function parseAgentMessage(text: string): React.ReactNode[] {
   })
 }
 
-function formatThreadAge(createdAt: number): string {
+function formatThreadAge(createdAt: number): { label: string; colorClass: string } {
   const diffMs = Date.now() - createdAt
   const diffDays = Math.floor(diffMs / 86_400_000)
   const diffHours = Math.floor(diffMs / 3_600_000)
-  if (diffDays >= 1) return `${diffDays}d open`
-  if (diffHours >= 1) return `${diffHours}h open`
-  return 'just opened'
+  const label = diffDays >= 1 ? `${diffDays}d open` : diffHours >= 1 ? `${diffHours}h open` : 'just opened'
+  const colorClass = diffDays >= 7 ? 'text-red-500' : diffDays >= 3 ? 'text-yellow-500' : 'text-muted-foreground/50'
+  return { label, colorClass }
 }
 
-function formatTimestamp(): string {
+function formatTimestamp(timeZone?: string): string {
   const opts: Intl.DateTimeFormatOptions = {
     weekday: 'short',
     month: 'short',
@@ -97,22 +140,187 @@ function formatTimestamp(): string {
     hour: '2-digit',
     minute: '2-digit',
     hour12: false,
+    ...(timeZone ? { timeZone } : {}),
   }
-  return new Intl.DateTimeFormat('en-US', opts).format(new Date()).toUpperCase()
+  const base = new Intl.DateTimeFormat('en-US', opts).format(new Date()).toUpperCase()
+  if (!timeZone) return base
+  // Extract city name from IANA string: "America/Bogota" → "Bogota", "America/New_York" → "New York"
+  const city = timeZone.split('/').pop()?.replace(/_/g, ' ') ?? timeZone
+  return `${base} · ${city.toUpperCase()}`
+}
+
+interface ThreadMessage {
+  role: 'agent' | 'user'
+  text: string
+  ts: number
+}
+
+function ThreadChatPanel({ thread, onBack }: { thread: AgentThread; onBack: () => void }): React.JSX.Element {
+  const [messages, setMessages] = useState<ThreadMessage[]>([
+    { role: 'agent', text: thread.holdingNote || 'Procesando…', ts: thread.createdAt }
+  ])
+  const [input, setInput] = useState('')
+  const [sending, setSending] = useState(false)
+  const pendingSessionKeyRef = useRef<string | null>(null)
+  const { updateThreadNote, closeThread } = useAgentStore()
+  const connectionState = useGatewayStore((s) => s.connectionState)
+
+  useEffect(() => {
+    const handler = (ev: OcEvent): void => {
+      if (ev.event !== 'chat') return
+      const payload = (ev.payload ?? {}) as Record<string, unknown>
+      if (payload.state !== 'final') return
+      if (!pendingSessionKeyRef.current || payload.sessionKey !== pendingSessionKeyRef.current) return
+      const message = payload.message as { content?: Array<{ text?: string }> } | undefined
+      const rawText = message?.content?.[0]?.text ?? ''
+      pendingSessionKeyRef.current = null
+      setSending(false)
+      let note = rawText
+      let newHoldingNote: string | null | undefined = undefined
+      let resolvedIds: string[] = []
+      const jsonMatch = rawText.match(/\{[\s\S]*\}/)
+      if (jsonMatch) {
+        try {
+          const parsed = JSON.parse(jsonMatch[0]) as {
+            note?: string
+            holdingNote?: string | null
+            resolvedThreadIds?: string[]
+          }
+          if (parsed.note) note = parsed.note
+          if ('holdingNote' in parsed) newHoldingNote = parsed.holdingNote
+          if (Array.isArray(parsed.resolvedThreadIds)) resolvedIds = parsed.resolvedThreadIds
+        } catch { /* use raw */ }
+      }
+      setMessages((prev) => [...prev, { role: 'agent', text: note, ts: Date.now() }])
+      if (typeof newHoldingNote === 'string') {
+        updateThreadNote(thread.id, newHoldingNote)
+      }
+      if (resolvedIds.includes(thread.id)) {
+        closeThread(thread.id)
+        onBack()
+      }
+    }
+    gatewayClient.on('*', handler)
+    return () => gatewayClient.off('*', handler)
+  }, [thread.id, thread.holdingNote, updateThreadNote, closeThread, onBack])
+
+  const handleSend = async (): Promise<void> => {
+    if (!input.trim() || sending || connectionState !== 'connected') return
+    const userText = input.trim()
+    setInput('')
+    setMessages((prev) => [...prev, { role: 'user', text: userText, ts: Date.now() }])
+    setSending(true)
+    const sessionKey = `agent:main:thread-${thread.id}-${crypto.randomUUID()}`
+    pendingSessionKeyRef.current = sessionKey
+    const prompt =
+      `Retomas un hilo abierto. Hilo: "${thread.title}". Estabas esperando: "${thread.holdingNote}".\n` +
+      `El usuario responde: "${userText}"\n\n` +
+      `Ayúdale a pensar y ejecuta si corresponde. Llama herramientas si necesitas datos.\n` +
+      `Responde SOLO con JSON válido (sin markdown):\n` +
+      `{"note":"Tu respuesta conversacional.","holdingNote":"Qué sigues esperando (null si resuelto).","resolvedThreadIds":[]}\n` +
+      `- Incluye "${thread.id}" en resolvedThreadIds si este hilo queda completamente resuelto.`
+    try {
+      await gatewayClient.rpc('chat.send', { sessionKey, message: prompt, idempotencyKey: sessionKey })
+    } catch {
+      setSending(false)
+      pendingSessionKeyRef.current = null
+    }
+  }
+
+  return (
+    <div className="flex flex-1 flex-col overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center gap-3 border-b border-[#1f2024] px-6 py-4">
+        <button
+          onClick={onBack}
+          className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <ArrowLeft className="h-4 w-4" />
+        </button>
+        <span className="flex-1 text-[13px] font-medium text-foreground">{thread.title}</span>
+        <span className="font-mono text-[9px] uppercase tracking-widest text-muted-foreground/50">hilo abierto</span>
+      </div>
+
+      {/* Messages */}
+      <div className="flex flex-1 flex-col gap-3 overflow-y-auto px-6 py-4">
+        {messages.map((m, i) => (
+          <div key={i} className={cn('flex', m.role === 'user' ? 'justify-end' : 'justify-start')}>
+            <div className={cn(
+              'max-w-[80%] rounded-lg px-3 py-2 text-[12.5px] leading-[1.5]',
+              m.role === 'user'
+                ? 'bg-[rgba(91,124,246,.15)] text-foreground'
+                : 'bg-[#232428] italic text-muted-foreground'
+            )}>
+              {m.text}
+            </div>
+          </div>
+        ))}
+        {sending && (
+          <div className="flex justify-start">
+            <div className="rounded-lg bg-[#232428] px-3 py-2">
+              <span className="animate-pulse text-[11px] text-muted-foreground/50">pensando…</span>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Input */}
+      <div className="shrink-0 border-t border-[#1f2024] px-6 py-4">
+        <div className="flex gap-2">
+          <input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void handleSend() } }}
+            placeholder="Responde al agente…"
+            className="flex-1 rounded-md border border-[#1f2024] bg-[#151618] px-3 py-2 text-[12.5px] text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-[#5b7cf6]/50"
+          />
+          <button
+            onClick={() => void handleSend()}
+            disabled={!input.trim() || sending || connectionState !== 'connected'}
+            className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-md bg-[#5b7cf6] text-white transition-opacity disabled:opacity-40"
+          >
+            <ArrowUp className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 export function LandscapeView(): React.JSX.Element {
-  const { morningLandscape, themes, threads, setMorningLandscape, setThemes } = useAgentStore()
+  const { morningLandscape, themes, threads, setMorningLandscape, setThemes, addThread, closeThread } = useAgentStore()
   const connectionState = useGatewayStore((s) => s.connectionState)
   const connectedTools = useOnboardingStore((s) => s.connectedTools)
+  const userTimezone = useSettingsStore((s) => s.userTimezone)
   const [loading, setLoading] = useState(false)
-  const [timestamp, setTimestamp] = useState(() => formatTimestamp())
+  const [timestamp, setTimestamp] = useState(() => formatTimestamp(userTimezone))
+  const [activeThread, setActiveThread] = useState<AgentThread | null>(null)
+  // Ensures auto-trigger fires at most once per app session
+  const hasAutoTriggeredRef = useRef(false)
 
   // Update timestamp every minute
   useEffect(() => {
-    const interval = setInterval(() => setTimestamp(formatTimestamp()), 60_000)
+    const interval = setInterval(() => setTimestamp(formatTimestamp(userTimezone)), 60_000)
     return () => clearInterval(interval)
   }, [])
+
+  const focusCapture = (context: string): void => {
+    window.dispatchEvent(new CustomEvent('attacca:focus-capture', { detail: { context } }))
+  }
+
+  const handleSuggestedAction = (action: { actionType: string; payload: unknown }): void => {
+    if (action.actionType === 'capture') {
+      const payload = (action.payload ?? {}) as Record<string, unknown>
+      focusCapture((payload.text as string) || '')
+      return
+    }
+    if (connectionState !== 'connected') return
+    gatewayClient.rpc('chat.send', {
+      sessionKey: 'agent:main:main',
+      message: JSON.stringify({ type: action.actionType, payload: action.payload }),
+      idempotencyKey: crypto.randomUUID()
+    }).catch(() => undefined)
+  }
 
   const generateLandscape = useCallback(async (): Promise<void> => {
     if (connectionState !== 'connected' || loading) return
@@ -123,10 +331,20 @@ export function LandscapeView(): React.JSX.Element {
     let liveTools = connectedTools
     try {
       const relayApps = await window.api.relay.getConnected()
-      if (relayApps.length > 0) liveTools = relayApps
+      // Normalize Composio slugs (e.g. "googlecalendar" → "google-calendar")
+      if (relayApps.length > 0) liveTools = relayApps.map(normalizeAppSlug)
     } catch {
       // Relay unavailable — fall back to store
     }
+
+    // Build context from store state at call time (avoids stale closure issues)
+    const storeState = useAgentStore.getState()
+    const recentCaptureLines = storeState.rawCaptures
+      .slice(0, 5)
+      .map((c) => `  [${c.type}] "${c.text}"`)
+    const openThreadLines = storeState.threads
+      .slice(0, 3)
+      .map((t) => `  "${t.title}": ${t.holdingNote}`)
 
     // Use a unique session per generation so the agent starts with clean context
     // and won't carry over stale "tool disconnected" memory from previous turns.
@@ -136,7 +354,7 @@ export function LandscapeView(): React.JSX.Element {
     try {
       await gatewayClient.rpc('chat.send', {
         sessionKey,
-        message: buildLandscapePrompt(liveTools),
+        message: buildLandscapePrompt(liveTools, recentCaptureLines, openThreadLines),
         idempotencyKey
       })
 
@@ -177,11 +395,15 @@ export function LandscapeView(): React.JSX.Element {
               message?: string
               question?: string | null
               themes?: LandscapeTheme[]
+              threads?: Array<{ title: string; holdingNote: string }>
               suggestedActions?: MorningLandscape['suggestedActions']
             }
 
+            // Hard limit: truncate message to max 3 sentences in renderer
+            const msg = truncateToSentences(parsed.message ?? '', 3)
+
             const landscape: MorningLandscape = {
-              message: parsed.message ?? '',
+              message: msg,
               question: parsed.question ?? null,
               suggestedActions: parsed.suggestedActions ?? [],
               generatedAt: Date.now()
@@ -196,6 +418,12 @@ export function LandscapeView(): React.JSX.Element {
                 mentionCount: t.mentionCount ?? 1,
               }))
             )
+            // Landscape-generated threads represent agent uncertainty about priorities
+            for (const t of parsed.threads ?? []) {
+              if (t.title && t.holdingNote) {
+                addThread({ title: t.title, holdingNote: t.holdingNote })
+              }
+            }
           } catch {
             // JSON parse failed — silently ignore, user can retry
           }
@@ -211,7 +439,20 @@ export function LandscapeView(): React.JSX.Element {
     } catch {
       setLoading(false)
     }
-  }, [connectionState, loading, connectedTools, setMorningLandscape, setThemes])
+  }, [connectionState, loading, connectedTools, setMorningLandscape, setThemes, addThread])
+
+  // Auto-trigger landscape when connected if missing or stale (>6h since last generation)
+  useEffect(() => {
+    if (connectionState !== 'connected') return
+    if (hasAutoTriggeredRef.current) return
+
+    const landscape = useAgentStore.getState().morningLandscape
+    const isStale = !landscape || Date.now() - landscape.generatedAt > LANDSCAPE_REFRESH_MS
+    if (isStale) {
+      hasAutoTriggeredRef.current = true
+      generateLandscape()
+    }
+  }, [connectionState]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
@@ -240,12 +481,23 @@ export function LandscapeView(): React.JSX.Element {
 
             {/* Action buttons */}
             <div className="mt-3 flex flex-wrap gap-2">
-              {morningLandscape.suggestedActions.map((action, i) => (
+              {/* "Responder" — always first */}
+              <Button
+                size="sm"
+                variant="default"
+                className="text-xs"
+                onClick={() => focusCapture(morningLandscape.message)}
+              >
+                Responder
+              </Button>
+              {/* Up to 2 contextual actions from suggestedActions */}
+              {morningLandscape.suggestedActions.slice(0, 2).map((action, i) => (
                 <Button
                   key={i}
                   size="sm"
-                  variant={i === 0 ? 'default' : 'outline'}
+                  variant="outline"
                   className="text-xs"
+                  onClick={() => handleSuggestedAction(action)}
                 >
                   {action.label}
                 </Button>
@@ -286,7 +538,10 @@ export function LandscapeView(): React.JSX.Element {
       </div>
 
       {/* ── Body ── */}
-      <div className="flex-1 overflow-y-auto px-6 py-5">
+      {activeThread ? (
+        <ThreadChatPanel thread={activeThread} onBack={() => setActiveThread(null)} />
+      ) : null}
+      <div className={cn('flex-1 overflow-y-auto px-6 py-5', activeThread ? 'hidden' : '')}>
 
         {/* Themes */}
         <div className="mb-6">
@@ -295,35 +550,34 @@ export function LandscapeView(): React.JSX.Element {
           </p>
 
           {themes.length > 0 ? (
-            <div className="grid grid-cols-2 gap-2.5">
+            <div className="grid grid-cols-2 gap-[10px]">
               {themes.slice(0, 4).map((theme) => {
                 const styles = WEIGHT_STYLES[theme.weight]
                 return (
                   <div
                     key={theme.id}
-                    className={cn(
-                      'relative cursor-pointer rounded-lg border border-border/60 bg-card p-3.5',
-                      'border-l-[3px] transition-colors hover:bg-muted/30',
-                      styles.border
-                    )}
+                    className="relative cursor-pointer overflow-hidden rounded-lg border border-[#1f2024] bg-[#151618] px-4 py-[14px] transition-colors hover:bg-[#1c1d20]"
                   >
-                    <p className={cn('mb-1 font-mono text-[9px] uppercase tracking-widest', styles.label)}>
+                    {/* Left accent strip */}
+                    <div className={cn('absolute bottom-0 left-0 top-0 w-[3px]', styles.strip)} />
+
+                    <p className={cn('mb-[5px] font-mono text-[9px] uppercase tracking-[.1em]', styles.label)}>
                       {WEIGHT_LABELS[theme.weight]}
                     </p>
-                    <p className="mb-1.5 text-[13px] font-medium text-foreground">{theme.title}</p>
-                    <p className="text-[11.5px] leading-snug text-muted-foreground">{theme.description}</p>
-                    <div className="mt-2.5 flex items-center gap-1.5">
+                    <p className="mb-1 text-[13px] font-medium text-foreground">{theme.title}</p>
+                    <p className="text-[11.5px] leading-[1.45] text-muted-foreground">{theme.description}</p>
+                    <div className="mt-[10px] flex items-center gap-1.5">
                       {theme.tags.map((tag) => (
                         <span
                           key={tag}
-                          className="rounded bg-muted px-1.5 py-0.5 font-mono text-[9px] text-muted-foreground/70"
+                          className="rounded-[3px] bg-[#232428] px-[6px] py-[2px] font-mono text-[9px] text-muted-foreground/60"
                         >
                           {tag}
                         </span>
                       ))}
                       {theme.mentionCount > 1 && (
                         <span className="ml-auto font-mono text-[9px] text-muted-foreground/50">
-                          ×{theme.mentionCount} this week
+                          ×{theme.mentionCount} esta semana
                         </span>
                       )}
                     </div>
@@ -348,25 +602,35 @@ export function LandscapeView(): React.JSX.Element {
             <p className="mb-3 font-mono text-[9px] uppercase tracking-widest text-muted-foreground/60">
               Open threads · what I&apos;m holding
             </p>
-            <div className="flex flex-col gap-2">
-              {threads.map((thread) => (
+            <div className="flex flex-col gap-[8px]">
+              {threads.map((thread) => {
+                const { label: ageLabel, colorClass: ageColor } = formatThreadAge(thread.createdAt)
+                return (
                 <div
                   key={thread.id}
-                  className="cursor-pointer rounded-lg border border-border/60 bg-card p-3 transition-colors hover:bg-muted/30"
+                  onClick={() => setActiveThread(thread)}
+                  className="cursor-pointer rounded-lg border border-[#1f2024] bg-[#151618] px-[15px] py-[13px] transition-colors hover:bg-[#1c1d20]"
                 >
-                  <div className="mb-1.5 flex items-center gap-2">
+                  <div className="mb-[6px] flex items-center gap-[10px]">
                     <span className="flex-1 text-[12.5px] font-medium text-foreground">{thread.title}</span>
-                    <span className="font-mono text-[9px] text-muted-foreground/50">
-                      {formatThreadAge(thread.createdAt)}
+                    <span className={cn('font-mono text-[9px]', ageColor)}>
+                      {ageLabel}
                     </span>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); closeThread(thread.id) }}
+                      className="rounded p-0.5 text-muted-foreground/40 transition-colors hover:text-muted-foreground"
+                      title="Close thread"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
                   </div>
                   {thread.holdingNote && (
-                    <p className="rounded bg-muted/50 px-2 py-1.5 text-[11.5px] italic text-muted-foreground before:mr-1 before:font-mono before:text-[9px] before:not-italic before:uppercase before:tracking-wider before:text-muted-foreground/50 before:content-['waiting_→']">
+                    <p className="rounded-[4px] border-l-2 border-border bg-[#232428] px-[10px] py-[6px] text-[11.5px] italic text-muted-foreground before:mr-1 before:font-mono before:text-[9px] before:not-italic before:uppercase before:tracking-[.06em] before:text-muted-foreground/50 before:content-['esperando_→']">
                       {thread.holdingNote}
                     </p>
                   )}
                 </div>
-              ))}
+              )})}
             </div>
           </div>
         )}
