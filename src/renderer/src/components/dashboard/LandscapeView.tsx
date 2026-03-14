@@ -14,13 +14,20 @@ const LANDSCAPE_REFRESH_MS = 6 * 60 * 60 * 1000 // 6 hours
 
 /** Maps connection tool IDs to the Composio actions the agent should call */
 const TOOL_ACTIONS: Record<string, string> = {
+  // Email
   'gmail':           'GMAIL_FETCH_EMAILS with query "is:unread newer_than:3d" and max_results 20',
+  'outlook':         'fetch unread Outlook emails using ATTACCA_OUTLOOK_MESSAGES with {"folder":"inbox","top":20,"is_read":false}',
+  // Calendar
   'google-calendar': 'call ATTACCA_CALENDAR_EVENTS via the attacca-tools skill (no parameters needed) — returns upcoming calendar events',
+  'outlook-calendar':'use bash to call the Composio OUTLOOK_GET_CALENDAR_EVENTS action to fetch upcoming meetings and events',
+  // Messaging
   'slack':           'SLACK_LIST_ALL_CHANNELS_IN_THE_SLACK_WORKSPACE then read recent activity',
+  // Project management
   'trello':          'call ATTACCA_TRELLO_BOARDS_AND_CARDS via the attacca-tools skill (no parameters needed) — returns all boards with their cards',
   'clickup':         'CLICKUP_GET_FILTERED_TEAM_TASKS with statuses open and in-progress',
   'asana':           'ASANA_GET_TASKS_LIST with assignee "me" and completed_since "now"',
   'notion':          'NOTION_SEARCH for recent pages and databases',
+  // Storage
   'google-drive':    'check recent Google Drive files using available Drive actions',
 }
 
@@ -30,8 +37,11 @@ const TOOL_ACTIONS: Record<string, string> = {
  * Normalize relay-returned slugs to match TOOL_ACTIONS keys.
  */
 const COMPOSIO_SLUG_TO_TOOL_KEY: Record<string, string> = {
-  'googlecalendar': 'google-calendar',
-  'googledrive':    'google-drive',
+  'googlecalendar':    'google-calendar',
+  'googledrive':       'google-drive',
+  'microsoftoutlook':  'outlook',
+  'outlook':           'outlook',
+  'outlookcalendar':   'outlook-calendar',
 }
 
 function normalizeAppSlug(slug: string): string {
@@ -60,10 +70,14 @@ function buildLandscapePrompt(
     ? `\n\nCONTEXT from recent activity:\n${contextParts.join('\n\n')}\n`
     : ''
 
-  // Step 1: gather live data (tool-calling is mandatory before responding)
+  const connectedList = connectedTools.length > 0
+    ? `The user has these tools connected: ${connectedTools.join(', ')}.`
+    : 'The user has no tools connected yet.'
+
+  // Step 1: gather live data — only act on tools the user actually has connected
   const step1 = toolLines.length > 0
-    ? `\nSTEP 1 — GATHER LIVE DATA (you MUST do this before generating your response):\nCall each of the following tools now to collect fresh information:\n${toolLines.join('\n')}\n`
-    : '\n(No external tools are connected — base the landscape on the context above and today\'s date.)\n'
+    ? `\n${connectedList}\n\nSTEP 1 — GATHER LIVE DATA (you MUST do this before generating your response):\nOnly call tools the user has connected. Call each of the following now:\n${toolLines.join('\n')}\n`
+    : `\n${connectedList}\n\n(No supported tools are connected — base the landscape on the context above and today's date.)\n`
 
   const step2Label = toolLines.length > 0 ? '\nSTEP 2 — ' : '\n'
 
@@ -288,7 +302,7 @@ function ThreadChatPanel({ thread, onBack }: { thread: AgentThread; onBack: () =
 }
 
 export function LandscapeView(): React.JSX.Element {
-  const { morningLandscape, themes, threads, setMorningLandscape, setThemes, addThread, closeThread } = useAgentStore()
+  const { morningLandscape, themes, threads, setMorningLandscape, setThemes, setThreads, closeThread } = useAgentStore()
   const connectionState = useGatewayStore((s) => s.connectionState)
   const connectedTools = useOnboardingStore((s) => s.connectedTools)
   const userTimezone = useSettingsStore((s) => s.userTimezone)
@@ -418,12 +432,25 @@ export function LandscapeView(): React.JSX.Element {
                 mentionCount: t.mentionCount ?? 1,
               }))
             )
-            // Landscape-generated threads represent agent uncertainty about priorities
-            for (const t of parsed.threads ?? []) {
-              if (t.title && t.holdingNote) {
-                addThread({ title: t.title, holdingNote: t.holdingNote })
-              }
-            }
+            // Replace threads from previous briefing runs — deduplicate by title
+            // to avoid accumulating duplicates across refreshes. Existing threads
+            // not present in the new response are dropped; user-closed ones are
+            // already gone from the store.
+            const freshThreads = (parsed.threads ?? [])
+              .filter((t) => t.title && t.holdingNote)
+              .map((t, i) => ({
+                id: `thread_briefing_${i}_${Date.now()}`,
+                title: t.title as string,
+                holdingNote: t.holdingNote as string,
+                createdAt: Date.now(),
+              }))
+            // Merge: keep manually-added threads (id not starting with "thread_briefing_")
+            // and replace all briefing-generated ones with the fresh set.
+            const storeState = useAgentStore.getState()
+            const manualThreads = storeState.threads.filter(
+              (t) => !t.id.startsWith('thread_briefing_')
+            )
+            setThreads([...manualThreads, ...freshThreads])
           } catch {
             // JSON parse failed — silently ignore, user can retry
           }
@@ -439,7 +466,7 @@ export function LandscapeView(): React.JSX.Element {
     } catch {
       setLoading(false)
     }
-  }, [connectionState, loading, connectedTools, setMorningLandscape, setThemes, addThread])
+  }, [connectionState, loading, connectedTools, setMorningLandscape, setThemes, setThreads])
 
   // Auto-trigger landscape when connected if missing or stale (>6h since last generation)
   useEffect(() => {

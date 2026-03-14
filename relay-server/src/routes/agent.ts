@@ -269,43 +269,64 @@ router.post('/tools', async (req: Request, res: Response) => {
       }
     }
 
-    // Send an Outlook email via OUTLOOK_SEND_EMAIL.
-    // Params: subject, body, to_recipients (array of {emailAddress:{address,name?}} or strings),
-    //         cc_recipients?, bcc_recipients?, is_html?
+    // Send an Outlook email via OUTLOOK_CREATE_DRAFT + OUTLOOK_SEND_DRAFT.
+    // (OUTLOOK_SEND_EMAIL rejects array 'to'; the draft flow is the reliable path.)
+    // Params: subject, body, to / to_recipients (strings or {emailAddress:{address}} objects),
+    //         cc?, bcc?, is_html?
     if (actionName === 'ATTACCA_OUTLOOK_SEND_EMAIL') {
       const subject = params?.subject as string | undefined
-      const body = params?.body as string | undefined
-      const toRaw = params?.to_recipients ?? params?.to
-      // Normalize recipients to Composio format: [{emailAddress:{address,name?}}]
-      const normalizeRecipients = (raw: unknown): Array<{ emailAddress: { address: string; name?: string } }> => {
+      const rawBody = (params?.body ?? '') as string
+
+      // Flatten recipients from any format (plain string, array, nested MS Graph object) → string[]
+      const flatEmails = (raw: unknown): string[] => {
         if (!raw) return []
         const arr = Array.isArray(raw) ? raw : [raw]
         return arr.map((r) => {
-          if (typeof r === 'string') return { emailAddress: { address: r } }
+          if (typeof r === 'string') return r
           if (r && typeof r === 'object') {
             const ro = r as Record<string, unknown>
-            if (ro.emailAddress) return ro as { emailAddress: { address: string } }
-            if (ro.address) return { emailAddress: { address: ro.address as string, name: ro.name as string | undefined } }
+            if (ro.emailAddress && typeof ro.emailAddress === 'object')
+              return (ro.emailAddress as Record<string, unknown>).address as string
+            if (typeof ro.address === 'string') return ro.address
           }
-          return { emailAddress: { address: String(r) } }
-        })
+          return String(r)
+        }).filter(Boolean)
       }
-      const sendArgs: Record<string, unknown> = {
+
+      const toAddresses = flatEmails(params?.to ?? params?.to_recipients)
+
+      // Encode body as HTML so special characters (ñ, é, á…) survive the API call
+      const safeBody = rawBody
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/\n/g, '<br>')
+        .replace(/[^\x00-\x7F]/g, (c) => `&#${c.charCodeAt(0)};`)
+      const htmlBody = `<html><head><meta charset="UTF-8"></head><body>${safeBody}</body></html>`
+
+      const draftArgs: Record<string, unknown> = {
         subject: subject ?? '(no subject)',
-        body: body ?? '',
-        to_recipients: normalizeRecipients(toRaw)
+        body: htmlBody,
+        to_recipients: toAddresses,
       }
-      const cc = params?.cc_recipients ?? params?.cc
-      const bcc = params?.bcc_recipients ?? params?.bcc
-      if (cc) sendArgs.cc_recipients = normalizeRecipients(cc)
-      if (bcc) sendArgs.bcc_recipients = normalizeRecipients(bcc)
-      if (params?.is_html !== undefined) sendArgs.is_html = params.is_html
+      const cc = flatEmails(params?.cc_recipients ?? params?.cc)
+      const bcc = flatEmails(params?.bcc_recipients ?? params?.bcc)
+      if (cc.length) draftArgs.cc_recipients = cc
+      if (bcc.length) draftArgs.bcc_recipients = bcc
 
       try {
-        const r = await executeActionDirect(entityId, 'OUTLOOK_SEND_EMAIL', sendArgs)
-        console.log(`[agent-tools] ATTACCA_OUTLOOK_SEND_EMAIL to=${JSON.stringify(sendArgs.to_recipients)} subject="${subject}" → ${JSON.stringify(r ?? {}).slice(0, 200)}`)
+        // Step 1: create draft
+        const draft = await executeActionDirect(entityId, 'OUTLOOK_CREATE_DRAFT', draftArgs)
+        const draftId = (draft as Record<string, unknown>)?.data
+          ? ((draft as Record<string, unknown>).data as Record<string, unknown>)?.id
+          : (draft as Record<string, unknown>)?.id
+        if (!draftId) throw new Error(`OUTLOOK_CREATE_DRAFT did not return a message id: ${JSON.stringify(draft).slice(0, 200)}`)
+
+        // Step 2: send draft
+        const send = await executeActionDirect(entityId, 'OUTLOOK_SEND_DRAFT', { message_id: draftId })
+        console.log(`[agent-tools] ATTACCA_OUTLOOK_SEND_EMAIL to=${JSON.stringify(toAddresses)} subject="${subject}" → sent (draftId=${draftId}) ${JSON.stringify(send ?? {}).slice(0, 100)}`)
         emitTool('agent.tool.succeeded', actionName, entityId, startMs)
-        res.json({ success: true, result: r })
+        res.json({ success: true, result: send })
         return
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e)
@@ -317,11 +338,21 @@ router.post('/tools', async (req: Request, res: Response) => {
     }
 
     // Reply to an Outlook email via OUTLOOK_REPLY_EMAIL.
-    // Params: message_id (required), reply_body (required), reply_all? (boolean)
+    // Params: message_id (required), comment (required), reply_all? (boolean)
     if (actionName === 'ATTACCA_OUTLOOK_REPLY_EMAIL') {
+      const rawComment = (params?.comment ?? params?.reply_body ?? params?.body ?? '') as string
+      // Escape entities FIRST, then newlines→<br>, then encode non-ASCII as numeric entities.
+      // Order matters: escaping < after <br> would turn it into &lt;br&gt; (shows literally).
+      const safeBody = rawComment
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/\n/g, '<br>')
+        .replace(/[^\x00-\x7F]/g, (c) => `&#${c.charCodeAt(0)};`)
+      const htmlComment = `<html><head><meta charset="UTF-8"></head><body>${safeBody}</body></html>`
       const replyArgs: Record<string, unknown> = {
         message_id: params?.message_id ?? params?.id,
-        reply_body: params?.reply_body ?? params?.body,
+        comment: htmlComment,
         reply_all: params?.reply_all ?? false
       }
       try {
@@ -333,6 +364,35 @@ router.post('/tools', async (req: Request, res: Response) => {
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e)
         console.error(`[agent-tools] ATTACCA_OUTLOOK_REPLY_EMAIL failed: ${msg.slice(0, 200)}`)
+        emitTool('agent.tool.failed', actionName, entityId, startMs, { errorMessage: msg.slice(0, 200) })
+        res.json({ success: false, error: msg })
+        return
+      }
+    }
+
+    // Create an Outlook calendar event — wrapper that auto-injects time_zone.
+    // Params: subject, start (ISO datetime), end (ISO datetime), attendees? (string[]),
+    //         body?, is_online_meeting?, time_zone? (auto-injected if omitted)
+    if (actionName === 'ATTACCA_OUTLOOK_CREATE_EVENT') {
+      const tzName = Intl.DateTimeFormat().resolvedOptions().timeZone
+      const eventArgs: Record<string, unknown> = {
+        subject: params?.subject ?? params?.title ?? '(no title)',
+        start: params?.start,
+        end: params?.end,
+        time_zone: params?.time_zone ?? tzName,
+      }
+      if (params?.body ?? params?.description) eventArgs.body = params?.body ?? params?.description
+      if (params?.attendees) eventArgs.attendees = params.attendees
+      if (params?.is_online_meeting !== undefined) eventArgs.is_online_meeting = params.is_online_meeting
+      try {
+        const r = await executeActionDirect(entityId, 'OUTLOOK_CALENDAR_CREATE_EVENT', eventArgs)
+        console.log(`[agent-tools] ATTACCA_OUTLOOK_CREATE_EVENT subject="${eventArgs.subject}" tz="${eventArgs.time_zone}" → ${JSON.stringify(r ?? {}).slice(0, 200)}`)
+        emitTool('agent.tool.succeeded', actionName, entityId, startMs)
+        res.json({ success: true, result: r })
+        return
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        console.error(`[agent-tools] ATTACCA_OUTLOOK_CREATE_EVENT failed: ${msg.slice(0, 200)}`)
         emitTool('agent.tool.failed', actionName, entityId, startMs, { errorMessage: msg.slice(0, 200) })
         res.json({ success: false, error: msg })
         return

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { gatewayClient } from '@/lib/gateway-client'
 import { useAgentStore, type CaptureEntry } from '@/stores/agent-store'
 import { useGatewayStore } from '@/stores/gateway-store'
+import { useSettingsStore } from '@/stores/settings-store'
 import { Loader2, OctagonX } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { OcEvent } from '@/types/gateway'
@@ -64,9 +65,11 @@ export function CapturePanel({
     closeThread,
     updateThreadNote,
     updateCaptureNote,
+    setCaptureConfirmation,
     emergencyStop,
   } = useAgentStore()
   const connectionState = useGatewayStore((s) => s.connectionState)
+  const userTimezone = useSettingsStore((s) => s.userTimezone)
 
   const [text, setText] = useState('')
   const [type, setType] = useState<CaptureType>('thought')
@@ -130,11 +133,12 @@ export function CapturePanel({
       const rawText = message?.content?.[0]?.text ?? ''
       if (!rawText) return
 
-      // Try to parse structured JSON response {note, holdingNote, thread, resolvedThreadIds}
+      // Try to parse structured JSON response {note, holdingNote, thread, resolvedThreadIds, pendingConfirmation}
       let note = rawText
       let threadData: { title: string; holdingNote: string } | null = null
       let resolvedIds: string[] = []
       let updatedHoldingNote: string | null | undefined = undefined
+      let pendingConfirmation: string | null = null
       const jsonMatch = rawText.match(/\{[\s\S]*\}/)
       if (jsonMatch) {
         try {
@@ -143,6 +147,7 @@ export function CapturePanel({
             holdingNote?: string | null
             thread?: { title: string; holdingNote: string } | null
             resolvedThreadIds?: string[]
+            pendingConfirmation?: string | null
           }
           if (parsed.note) note = parsed.note
           if ('holdingNote' in parsed) updatedHoldingNote = parsed.holdingNote
@@ -154,12 +159,15 @@ export function CapturePanel({
             const currentThreadIds = new Set(useAgentStore.getState().threads.map((t) => t.id))
             resolvedIds = parsed.resolvedThreadIds.filter((id) => currentThreadIds.has(id))
           }
+          if (parsed.pendingConfirmation) pendingConfirmation = parsed.pendingConfirmation
         } catch {
           // Not JSON — use raw text as note
         }
       }
 
       updateCaptureNote(pendingCaptureIdRef.current, note)
+      // Store or clear pendingConfirmation for this capture
+      setCaptureConfirmation(pendingCaptureIdRef.current, pendingConfirmation)
       // For question captures: update the auto-created thread's holdingNote
       if (questionThreadIdRef.current) {
         if (typeof updatedHoldingNote === 'string') {
@@ -188,8 +196,11 @@ export function CapturePanel({
     setSending(true)
     setText('')
 
-    // Add capture entry (agentNote starts null)
-    addRawCapture({ text: trimmed, type, agentNote: null })
+    // Generate session key upfront so it can be stored in the capture entry
+    const sessionKey = `agent:main:capture-${crypto.randomUUID()}`
+
+    // Add capture entry (agentNote starts null, sessionKey stored for confirmation flow)
+    addRawCapture({ text: trimmed, type, agentNote: null, sessionKey })
     const currentCaptures = useAgentStore.getState().rawCaptures
     const captureId = currentCaptures[0]?.id ?? null
     pendingCaptureIdRef.current = captureId
@@ -208,7 +219,6 @@ export function CapturePanel({
 
     // Send to agent with type-appropriate prompt
     if (connectionState === 'connected') {
-      const sessionKey = `agent:main:capture-${crypto.randomUUID()}`
       pendingSessionKeyRef.current = sessionKey
 
       // Include open threads so the agent can close the ones this capture resolves
@@ -233,27 +243,31 @@ export function CapturePanel({
         // Question: agent answers and helps think, tools allowed, updates auto-created thread
         const questionThreadId = questionThreadIdRef.current ?? ''
         structuredMessage =
-          `El usuario tiene una pregunta o solicitud: "${trimmed}"${threadContext}\n\n` +
-          `Antes de responder, llama las herramientas necesarias para ejecutar la solicitud u obtener los datos.\n` +
-          `Usa acciones Composio (GMAIL_SEND_EMAIL, GMAIL_FETCH_EMAILS, GOOGLECALENDAR_CREATE_EVENT, GOOGLECALENDAR_EVENTS_LIST)\n` +
-          `o attacca-tools (ATTACCA_TRELLO_BOARDS_AND_CARDS, ATTACCA_CALENDAR_EVENTS) según corresponda.\n\n` +
+          `El usuario tiene una pregunta o solicitud: "${trimmed}"\n` +
+          `Zona horaria del usuario: ${userTimezone}${threadContext}\n\n` +
+          `Antes de responder, usa las herramientas necesarias siguiendo los principios del skill:\n` +
+          `- Si la pregunta es sobre email: usa la herramienta que corresponde al contexto (Outlook si mencionó Outlook, Gmail si mencionó Gmail). Si no está claro, pregunta antes de actuar.\n` +
+          `- Si la pregunta requiere crear o enviar algo externo (email, evento, mensaje): muestra exactamente qué vas a hacer y espera confirmación del usuario ANTES de ejecutar.\n` +
+          `- Solo usa herramientas de gestión de proyectos (Trello, ClickUp, Asana) si la pregunta es explícitamente sobre tareas o proyectos.\n\n` +
           `Responde SOLO con JSON válido (sin markdown):\n` +
           `{"note":"Qué hiciste o encontraste — resultados, no intenciones.","holdingNote":"Qué sigues esperando del usuario (null si resuelto).","resolvedThreadIds":[]}\n` +
           `Reglas:\n` +
           `- "holdingNote": escribe en primera persona qué necesitas aún del usuario. null si la pregunta quedó completamente resuelta.\n` +
           `- "resolvedThreadIds": incluye el ID "${questionThreadId}" si la pregunta fue completamente resuelta.`
       } else {
-        // Action: agent executes using tools, creates PM task if relevant
+        // Action: agent proposes + confirms before executing high-risk actions
         structuredMessage =
           `El usuario quiere que ejecutes esta acción.\n` +
-          `Contenido: "${trimmed}"${threadContext}\n\n` +
-          `Ejecuta la acción usando las herramientas disponibles:\n` +
-          `- Si involucra tareas/proyectos: crea la tarea en la PM tool conectada (Trello, ClickUp, Asana).\n` +
-          `- Si involucra email/calendario: usa las acciones Composio (GMAIL_SEND_EMAIL, GOOGLECALENDAR_CREATE_EVENT, etc.).\n` +
-          `- Usa attacca-tools (ATTACCA_TRELLO_BOARDS_AND_CARDS, ATTACCA_CALENDAR_EVENTS) para consultar contexto si necesitas.\n\n` +
+          `Contenido: "${trimmed}"\n` +
+          `Zona horaria del usuario: ${userTimezone}${threadContext}\n\n` +
+          `REGLAS DE EJECUCIÓN:\n` +
+          `1. CONFIRMACIÓN OBLIGATORIA — Antes de enviar cualquier email, crear un evento de calendario, publicar en Slack, o cualquier comunicación externa: muestra EXACTAMENTE qué vas a hacer (destinatario, asunto, hora, etc.) y espera que el usuario confirme. Nunca ejecutes acciones externas sin aprobación explícita.\n` +
+          `2. CONTEXTO DE HERRAMIENTA — Si la acción involucra email o calendario: usa la herramienta que corresponde al contexto (Outlook si mencionó Outlook, Gmail si mencionó Gmail). Si ambos están conectados y no está claro, pregunta.\n` +
+          `3. ALCANCE MÍNIMO — Solo llama herramientas directamente relevantes a la acción solicitada. No consultes Trello, ClickUp ni Asana a menos que la acción sea explícitamente sobre tareas o proyectos.\n\n` +
           `Responde SOLO con JSON válido (sin markdown):\n` +
-          `{"note":"Qué ejecutaste y el resultado.","thread":null,"resolvedThreadIds":[]}\n` +
+          `{"note":"Resumen breve de lo propuesto o ejecutado.","pendingConfirmation":"Descripción exacta de la acción que vas a tomar — solo incluye este campo si estás esperando confirmación antes de ejecutar, de lo contrario omítelo o pon null.","thread":null,"resolvedThreadIds":[]}\n` +
           `Reglas:\n` +
+          `- "pendingConfirmation": incluye SOLO cuando hayas propuesto una acción y estés esperando que el usuario confirme antes de ejecutar. Debe describir exactamente qué vas a hacer (destinatario, asunto, hora, etc.). Omite el campo o pon null si ya ejecutaste o no hay nada pendiente.\n` +
           `- "thread": null a menos que la acción revele ambigüedad que requiera input antes de ejecutar.\n` +
           `- "resolvedThreadIds": incluye IDs solo si el contenido resuelve explícitamente un thread abierto.`
       }
@@ -286,6 +300,37 @@ export function CapturePanel({
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       handleSend()
+    }
+  }
+
+  const handleConfirm = async (captureId: string, captureSessionKey: string): Promise<void> => {
+    if (connectionState !== 'connected') return
+    // Re-activate pending state so the event handler updates this capture's note
+    pendingCaptureIdRef.current = captureId
+    pendingSessionKeyRef.current = captureSessionKey
+    // Clear confirmation UI immediately (spinner will show again via agentNote null logic isn't needed — note is already set)
+    setCaptureConfirmation(captureId, null)
+    try {
+      await gatewayClient.rpc('chat.send', {
+        sessionKey: captureSessionKey,
+        message: 'Confirmado, procede con la acción exactamente como la propusiste.',
+        idempotencyKey: crypto.randomUUID()
+      })
+    } catch {
+      pendingCaptureIdRef.current = null
+      pendingSessionKeyRef.current = null
+    }
+  }
+
+  const handleCancel = (captureId: string, captureSessionKey: string): void => {
+    setCaptureConfirmation(captureId, null)
+    updateCaptureNote(captureId, 'Acción cancelada.')
+    if (connectionState === 'connected') {
+      gatewayClient.rpc('chat.send', {
+        sessionKey: captureSessionKey,
+        message: 'Cancelado, no ejecutes la acción.',
+        idempotencyKey: crypto.randomUUID()
+      }).catch(() => { /* best effort */ })
     }
   }
 
@@ -396,10 +441,31 @@ export function CapturePanel({
                 </div>
                 <p className="text-[12px] leading-[1.4] text-muted-foreground">{entry.text}</p>
                 {entry.agentNote !== null ? (
-                  <p className="mt-[5px] flex items-start gap-1 text-[10.5px] italic text-muted-foreground/60">
-                    <span className="shrink-0 text-blue-400 not-italic">↳</span>
-                    {entry.agentNote}
-                  </p>
+                  <>
+                    <p className="mt-[5px] flex items-start gap-1 text-[10.5px] italic text-muted-foreground/60">
+                      <span className="shrink-0 text-blue-400 not-italic">↳</span>
+                      {entry.agentNote}
+                    </p>
+                    {entry.pendingConfirmation && entry.sessionKey && (
+                      <div className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-2.5">
+                        <p className="mb-2 text-[10.5px] text-amber-400/90">{entry.pendingConfirmation}</p>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleConfirm(entry.id, entry.sessionKey!)}
+                            className="flex-1 rounded border border-green-500/40 bg-green-500/10 px-2 py-1 font-mono text-[9px] text-green-400 transition-colors hover:bg-green-500/20"
+                          >
+                            ✓ Confirmar
+                          </button>
+                          <button
+                            onClick={() => handleCancel(entry.id, entry.sessionKey!)}
+                            className="flex-1 rounded border border-border px-2 py-1 font-mono text-[9px] text-muted-foreground/60 transition-colors hover:bg-muted/20"
+                          >
+                            ✗ Cancelar
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </>
                 ) : (
                   <p className="mt-[5px] flex items-center gap-1 text-[10.5px] text-muted-foreground/40">
                     <Loader2 className="h-2.5 w-2.5 animate-spin" />

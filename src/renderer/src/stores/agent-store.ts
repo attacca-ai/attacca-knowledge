@@ -52,6 +52,8 @@ export interface CaptureEntry {
   type: 'thought' | 'action' | 'question'
   timestamp: number
   agentNote: string | null
+  sessionKey?: string          // session key used to send this capture (for confirmation flow)
+  pendingConfirmation?: string // if set, agent is waiting for user to confirm/cancel this action
   linkedThemeId?: string
   linkedThreadId?: string
 }
@@ -91,11 +93,13 @@ interface AgentStore {
   setScheduleChatHistory: (history: ScheduleChatMessage[]) => void
   setMorningLandscape: (data: MorningLandscape) => void
   setThemes: (themes: LandscapeTheme[]) => void
+  setThreads: (threads: AgentThread[]) => void
   addThread: (t: Omit<AgentThread, 'id' | 'createdAt'>) => string
   closeThread: (id: string) => void
   updateThreadNote: (id: string, holdingNote: string) => void
   addRawCapture: (e: Omit<CaptureEntry, 'id' | 'timestamp'>) => void
   updateCaptureNote: (id: string, agentNote: string) => void
+  setCaptureConfirmation: (id: string, pendingConfirmation: string | null) => void
 }
 
 const MAX_ACTIVITY_ENTRIES = 100
@@ -340,6 +344,11 @@ export const useAgentStore = create<AgentStore>((set, get) => {
       persist()
     },
 
+    setThreads: (threads) => {
+      set({ threads })
+      persist()
+    },
+
     addThread: (t) => {
       const thread: AgentThread = {
         ...t,
@@ -380,6 +389,15 @@ export const useAgentStore = create<AgentStore>((set, get) => {
       set((s) => ({
         rawCaptures: s.rawCaptures.map((c) => (c.id === id ? { ...c, agentNote } : c)),
         rawCapturesCount: Math.max(0, s.rawCapturesCount - 1)
+      }))
+      persist()
+    },
+
+    setCaptureConfirmation: (id, pendingConfirmation) => {
+      set((s) => ({
+        rawCaptures: s.rawCaptures.map((c) =>
+          c.id === id ? { ...c, pendingConfirmation: pendingConfirmation ?? undefined } : c
+        )
       }))
       persist()
     }

@@ -331,6 +331,13 @@ function readKbContext(): string {
 
 function buildSkillContent(): string {
   const kbContext = readKbContext()
+  // Compute user's local timezone name and UTC offset for injection into skill
+  const tzName = Intl.DateTimeFormat().resolvedOptions().timeZone
+  const tzOffsetMin = -new Date().getTimezoneOffset()
+  const tzSign = tzOffsetMin >= 0 ? '+' : '-'
+  const tzH = String(Math.floor(Math.abs(tzOffsetMin) / 60)).padStart(2, '0')
+  const tzM = String(Math.abs(tzOffsetMin) % 60).padStart(2, '0')
+  const tzOffset = `${tzSign}${tzH}:${tzM}`
   // Normalize to forward slashes so the path works on Windows cmd.exe too
   const scriptPath = join(SKILL_DIR, 'call-tool.cjs').replace(/\\/g, '/')
   // Use stdin pipe to pass JSON — avoids PowerShell/cmd.exe quote-stripping on Windows
@@ -390,6 +397,22 @@ Never silently fail. If a tool is unavailable, tell the user what happened and w
 Interpret what the user meant, not just what they said. "Clear my afternoon" = reschedule meetings, not delete events. But: if interpretation would trigger medium or high-risk actions, state your interpretation and confirm before executing. Never chain more than one scheduling change without confirmation between each step.
 
 **Cascade Rule**: Each action in a chain gets its own confirmation. Propose the first step and wait. Never autonomously cascade.
+
+**9. Tool Context Loyalty — never switch tools mid-conversation.**
+When both Gmail and Outlook are connected:
+- If the user's message or prior context references Outlook → use ONLY Outlook tools for the entire action chain: \`ATTACCA_OUTLOOK_MESSAGES\`, \`ATTACCA_OUTLOOK_SEND_EMAIL\`, \`ATTACCA_OUTLOOK_REPLY_EMAIL\`
+- If the user's message or prior context references Gmail → use ONLY Gmail tools
+- If ambiguous → ask "¿Quieres que use Gmail o Outlook?" before proceeding
+- NEVER reply to an Outlook email using Gmail. NEVER create an Outlook calendar event using Google Calendar.
+- Tool context carries across the entire task: if you fetched a message from Outlook, the reply MUST go through Outlook.
+
+When both Google Calendar and Outlook Calendar are connected:
+- If context indicates which calendar → use that one
+- If ambiguous → ask which calendar before creating or modifying events
+
+**10. Timezone Awareness.**
+The user's local timezone is: \`${tzName}\` (UTC offset: ${tzOffset})
+Always use this offset when creating calendar events. Never create events in UTC (Z) unless the user explicitly requests it.
 
 ## General pattern
 
@@ -490,28 +513,41 @@ CRITICAL: For ANY question about Outlook email, inbox, messages, or unread mail 
 
 **Send a new Outlook email** (use \`ATTACCA_OUTLOOK_SEND_EMAIL\`):
 \`\`\`bash
-${call('ATTACCA_OUTLOOK_SEND_EMAIL', '{"subject":"Hello","body":"Message body here","to_recipients":[{"emailAddress":{"address":"recipient@example.com","name":"Recipient Name"}}]}')}
+${call('ATTACCA_OUTLOOK_SEND_EMAIL', '{"subject":"Hello","body":"Message body here","to":["recipient@example.com"]}')}
 \`\`\`
-Optional fields: \`cc_recipients\`, \`bcc_recipients\`, \`is_html\` (boolean, default false).
-\`to_recipients\` accepts: \`[{"emailAddress":{"address":"..."}}\`] or plain strings like \`["email@example.com"]\`.
+\`to\` is an array of plain email address strings. Optional: \`cc\`, \`bcc\` (also string arrays).
+The wrapper handles encoding and delivery automatically — do NOT call \`OUTLOOK_SEND_EMAIL\`, \`OUTLOOK_CREATE_DRAFT\`, or \`OUTLOOK_SEND_DRAFT\` directly.
 
 **Reply to an Outlook email** (use \`ATTACCA_OUTLOOK_REPLY_EMAIL\`):
 \`\`\`bash
-${call('ATTACCA_OUTLOOK_REPLY_EMAIL', '{"message_id":"<id from ATTACCA_OUTLOOK_MESSAGES>","reply_body":"Your reply text","reply_all":false}')}
+${call('ATTACCA_OUTLOOK_REPLY_EMAIL', '{"message_id":"<id from ATTACCA_OUTLOOK_MESSAGES>","comment":"Your reply text","reply_all":false}')}
 \`\`\`
 \`message_id\`: the \`id\` field from a message returned by \`ATTACCA_OUTLOOK_MESSAGES\`.
+\`comment\`: the reply text body (IMPORTANT: field is named \`comment\`, NOT \`reply_body\` or \`body\`).
 \`reply_all\`: set to \`true\` to reply to all recipients (default false).
+
+CRITICAL — \`comment\` must contain ONLY the new reply text you are writing. Do NOT include:
+- The original message content or quoted thread
+- "From:", "Sent:", "To:", "Subject:" headers
+- Any separator like "-----Original Message-----"
+Outlook automatically appends the original thread. Including it in \`comment\` causes it to appear TWICE.
 
 CRITICAL: To send new Outlook email → \`ATTACCA_OUTLOOK_SEND_EMAIL\`. To reply → \`ATTACCA_OUTLOOK_REPLY_EMAIL\`. Never invent names like \`ATTACCA_OUTLOOK_SEND\`, \`ATTACCA_OUTLOOK_REPLY_OR_SEND\`, etc.
 
 ## Outlook Calendar
 
-**List upcoming events** (use \`ATTACCA_OUTLOOK_EVENTS\` — tries multiple action names automatically):
+**List upcoming events** (use \`ATTACCA_OUTLOOK_EVENTS\`):
 \`\`\`bash
 ${call('ATTACCA_OUTLOOK_EVENTS', '{"timeMin":"2024-01-15T00:00:00Z","timeMax":"2024-01-22T00:00:00Z"}')}
 \`\`\`
 
-IMPORTANT: Always use \`ATTACCA_OUTLOOK_EVENTS\` — it handles Composio action name variations for Outlook automatically. Do NOT call Outlook actions directly unless troubleshooting.
+**Create an Outlook calendar event** (use \`ATTACCA_OUTLOOK_CREATE_EVENT\` — auto-injects timezone):
+\`\`\`bash
+${call('ATTACCA_OUTLOOK_CREATE_EVENT', '{"subject":"Meeting title","start":"2024-01-15T10:00:00","end":"2024-01-15T11:00:00","attendees":["attendee@example.com"]}')}
+\`\`\`
+\`start\` and \`end\` are ISO datetime strings WITHOUT timezone offset — the wrapper injects the user's local timezone automatically.
+Optional: \`body\` (meeting description), \`is_online_meeting\` (boolean).
+CRITICAL: Always use \`ATTACCA_OUTLOOK_CREATE_EVENT\` for creating Outlook events. NEVER call \`OUTLOOK_CALENDAR_CREATE_EVENT\` directly — it will fail because \`time_zone\` is required and injected by the wrapper.
 
 If you need to discover available Outlook actions for troubleshooting:
 \`\`\`bash
