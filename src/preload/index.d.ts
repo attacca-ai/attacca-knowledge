@@ -181,6 +181,41 @@ export interface AttaccaAPI {
     appendDailyLog: (entry: string) => Promise<{ success: boolean }>
   }
 
+  memory: {
+    search: (query: string) => Promise<{
+      success: boolean
+      results: Array<{
+        id: string
+        type: string
+        summary: string
+        content: string
+        score: number
+        created_at: number
+      }>
+      error?: string
+    }>
+    save: (data: {
+      content: string
+      type?: string
+      summary?: string
+      tags?: string[]
+      importance?: number
+      source_id?: string
+    }) => Promise<{ success: boolean; id?: string; error?: string }>
+    getStats: () => Promise<{
+      success: boolean
+      total?: number
+      byType?: Record<string, number>
+      withEmbeddings?: number
+      error?: string
+    }>
+    getIdentity: () => Promise<{
+      success: boolean
+      traits?: Array<{ key: string; value: string; confidence: number }>
+      error?: string
+    }>
+  }
+
   telemetry: {
     setOptIn: (optIn: boolean) => Promise<{ success: boolean }>
     getOptIn: () => Promise<{ optIn: boolean }>

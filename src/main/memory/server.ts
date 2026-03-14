@@ -1,0 +1,153 @@
+import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'http'
+import { randomUUID } from 'crypto'
+import { searchMemories, searchMemoriesByKeyword } from './search'
+import { insertMemory, getMemoryStats, getIdentityTraits } from './db'
+import { generateEmbedding, float32ToBuffer } from './embeddings'
+
+let server: Server | null = null
+let actualPort = 3101
+
+/** Returns the port the memory server is listening on */
+export function getMemoryServerPort(): number {
+  return actualPort
+}
+
+function readBody(req: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = []
+    req.on('data', (chunk: Buffer) => chunks.push(chunk))
+    req.on('end', () => resolve(Buffer.concat(chunks).toString()))
+    req.on('error', reject)
+  })
+}
+
+function sendJson(res: ServerResponse, status: number, data: unknown): void {
+  res.writeHead(status, { 'Content-Type': 'application/json' })
+  res.end(JSON.stringify(data))
+}
+
+export function startMemoryServer(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    if (server) {
+      resolve(actualPort)
+      return
+    }
+
+    server = createServer(async (req, res) => {
+      // CORS for local access
+      res.setHeader('Access-Control-Allow-Origin', '*')
+      res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204)
+        res.end()
+        return
+      }
+
+      if (req.method !== 'POST') {
+        sendJson(res, 405, { success: false, error: 'Method not allowed' })
+        return
+      }
+
+      try {
+        const body = JSON.parse(await readBody(req)) as Record<string, unknown>
+
+        if (req.url === '/search') {
+          const query = body.query as string
+          if (!query) {
+            sendJson(res, 400, { success: false, error: 'Missing query' })
+            return
+          }
+
+          // Try semantic search first, fall back to keyword
+          const queryEmb = await generateEmbedding(query)
+          const results = queryEmb
+            ? searchMemories(queryEmb)
+            : searchMemoriesByKeyword(query)
+
+          sendJson(res, 200, { success: true, results })
+          return
+        }
+
+        if (req.url === '/save') {
+          const content = body.content as string
+          const type = (body.type as string) || 'preference'
+          const summary = (body.summary as string) || content.slice(0, 200)
+          const tags = (body.tags as string[]) || []
+
+          if (!content) {
+            sendJson(res, 400, { success: false, error: 'Missing content' })
+            return
+          }
+
+          const id = `mem_${randomUUID()}`
+          const embedding = await generateEmbedding(`${summary}\n${content}`)
+
+          insertMemory({
+            id,
+            type: type as 'capture' | 'preference' | 'decision' | 'identity' | 'synthesis',
+            content,
+            summary,
+            embedding: embedding ? float32ToBuffer(embedding) : null,
+            source_id: (body.source_id as string) || null,
+            tags: JSON.stringify(tags),
+            importance: (body.importance as number) ?? 0.5,
+            created_at: Date.now(),
+            superseded_by: null
+          })
+
+          sendJson(res, 200, { success: true, id })
+          return
+        }
+
+        if (req.url === '/stats') {
+          sendJson(res, 200, { success: true, ...getMemoryStats() })
+          return
+        }
+
+        if (req.url === '/identity') {
+          const traits = getIdentityTraits()
+          sendJson(res, 200, {
+            success: true,
+            traits: traits.map(t => ({ key: t.key, value: t.value, confidence: t.confidence }))
+          })
+          return
+        }
+
+        sendJson(res, 404, { success: false, error: 'Not found' })
+      } catch (err) {
+        console.error('[memory-server] Error:', err)
+        sendJson(res, 500, { success: false, error: (err as Error).message })
+      }
+    })
+
+    // Use fixed port 3101 so the agent skill script can find it reliably.
+    // Falls back to OS-assigned port if 3101 is taken.
+    const tryPort = 3101
+    server.listen(tryPort, '127.0.0.1', () => {
+      const addr = server!.address()
+      actualPort = typeof addr === 'object' && addr ? addr.port : tryPort
+      console.log(`[memory] Server listening on http://127.0.0.1:${actualPort}`)
+      resolve(actualPort)
+    })
+
+    server.on('error', (err: NodeJS.ErrnoException) => {
+      if (err.code === 'EADDRINUSE' && tryPort !== 0) {
+        // Port 3101 is taken — retry with OS-assigned port
+        console.warn(`[memory] Port ${tryPort} in use, using random port`)
+        server!.listen(0, '127.0.0.1')
+      } else {
+        console.error('[memory] Server error:', err)
+        reject(err)
+      }
+    })
+  })
+}
+
+export function stopMemoryServer(): void {
+  if (server) {
+    server.close()
+    server = null
+  }
+}

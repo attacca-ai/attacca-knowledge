@@ -111,6 +111,15 @@ const api = {
     appendDailyLog: (entry: string) => ipcRenderer.invoke('kb:append-daily-log', entry)
   },
 
+  // Memory
+  memory: {
+    search: (query: string) => ipcRenderer.invoke('memory:search', query),
+    save: (data: { content: string; type?: string; summary?: string; tags?: string[]; importance?: number; source_id?: string }) =>
+      ipcRenderer.invoke('memory:save', data),
+    getStats: () => ipcRenderer.invoke('memory:get-stats'),
+    getIdentity: () => ipcRenderer.invoke('memory:get-identity')
+  },
+
   // Telemetry
   telemetry: {
     setOptIn: (optIn: boolean) => ipcRenderer.invoke('telemetry:set-opt-in', optIn),

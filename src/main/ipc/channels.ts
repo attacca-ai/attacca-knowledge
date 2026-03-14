@@ -70,6 +70,12 @@ export const IPC = {
   KB_READ_CONTEXT: 'kb:read-context',
   KB_APPEND_DAILY_LOG: 'kb:append-daily-log',
 
+  // Memory
+  MEMORY_SEARCH: 'memory:search',
+  MEMORY_SAVE: 'memory:save',
+  MEMORY_GET_STATS: 'memory:get-stats',
+  MEMORY_GET_IDENTITY: 'memory:get-identity',
+
   // Events (main → renderer)
   EVENT_GATEWAY_STATE_CHANGED: 'event:gateway-state-changed',
   EVENT_LICENSE_STATE_CHANGED: 'event:license-state-changed',

@@ -270,6 +270,7 @@ export function ensureComposioSkill(licenseKey: string, connectedTools?: string[
 
   // Write the Node.js helper first so the skill can reference it
   writeFileSync(join(SKILL_DIR, 'call-tool.cjs'), buildCallToolScript(entityId), 'utf-8')
+  writeFileSync(join(SKILL_DIR, 'memory-search.cjs'), buildMemorySearchScript(), 'utf-8')
   writeFileSync(join(SKILL_DIR, 'SKILL.md'), buildSkillContent(connectedTools ?? []), 'utf-8')
 }
 
@@ -316,17 +317,80 @@ if (paramsArg) {
 `
 }
 
+/**
+ * Generates a portable Node.js CJS script that calls the local memory server.
+ * The port is discovered at runtime by reading the port file written by the memory server.
+ * Falls back to port 3101 if the file doesn't exist.
+ */
+function buildMemorySearchScript(): string {
+  return `'use strict'
+var ACTION = process.argv[2] // SEARCH or SAVE
+var MEMORY_PORT = 3101
+
+// Try to discover the actual port (future: written by memory server)
+// For now, use the default port which the server binds to.
+
+function run(params) {
+  var endpoint = ACTION === 'SAVE' ? '/save' : '/search'
+  fetch('http://127.0.0.1:' + MEMORY_PORT + endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params)
+  })
+    .then(function(r) { return r.json() })
+    .then(function(data) { process.stdout.write(JSON.stringify(data) + '\\n') })
+    .catch(function(err) { process.stdout.write(JSON.stringify({ success: false, error: err.message }) + '\\n') })
+}
+
+function readStdinAndRun() {
+  var chunks = []
+  process.stdin.on('data', function(d) { chunks.push(d) })
+  process.stdin.on('end', function() {
+    var str = Buffer.concat(chunks).toString().trim()
+    try { run(str ? JSON.parse(str) : {}) } catch (_) { run({}) }
+  })
+  process.stdin.on('error', function() { run({}) })
+}
+
+var paramsArg = process.argv[3]
+if (paramsArg) {
+  try { run(JSON.parse(paramsArg)) } catch (_) { readStdinAndRun() }
+} else if (process.stdin.isTTY) {
+  run({})
+} else {
+  readStdinAndRun()
+}
+`
+}
+
 function readKbContext(): string {
+  const sections: string[] = []
+
+  // Tier 1: Identity traits from memory DB (compact, high-value)
+  try {
+    const { getIdentityTraits } = require('../memory/db') as typeof import('../memory/db')
+    const traits = getIdentityTraits(0.4)
+    if (traits.length > 0) {
+      const traitLines = traits.map(t => `- **${t.key.replace(/_/g, ' ')}**: ${t.value}`).join('\n')
+      sections.push(`## About This User\n\n${traitLines}`)
+    }
+  } catch {
+    // Memory DB not initialized yet — skip
+  }
+
+  // Tier 2: CONTEXT.md (captures, projects, people — kept for backward compat)
   try {
     const ctxPath = join(app.getPath('userData'), 'attacca-kb', 'memory', 'CONTEXT.md')
     if (existsSync(ctxPath)) {
       const ctx = readFileSync(ctxPath, 'utf-8').trim()
-      if (ctx) return `## User Knowledge Base\n\n${ctx}\n\n---\n\n`
+      if (ctx) sections.push(ctx)
     }
   } catch {
     // ignore — KB context is optional
   }
-  return ''
+
+  if (sections.length === 0) return ''
+  return sections.join('\n\n') + '\n\n---\n\n'
 }
 
 function buildSkillContent(connectedTools: string[]): string {
@@ -493,6 +557,22 @@ On \`success: false\`: note failure, continue with other tasks. Don't report as 
 Discover actions: \`${call('ATTACCA_LIST_ACTIONS', '{"app":"<app-slug>"}')}\` — use the exact \`name\` from results.
 The entityId is pre-configured. Only connected tools will work.`)
   }
+
+  // Memory skill — always included
+  const memoryScriptPath = join(SKILL_DIR, 'memory-search.cjs').replace(/\\/g, '/')
+  sections.push(`## Memory
+
+Your memory persists across conversations. Use it to recall past decisions, preferences, and context about this user.
+
+- **Search memories**: \`echo '{"query":"what did user decide about..."}' | node "${memoryScriptPath}" SEARCH\`
+- **Save a preference**: \`echo '{"content":"User prefers...","type":"preference"}' | node "${memoryScriptPath}" SAVE\`
+- **Save a decision**: \`echo '{"content":"User decided to...","type":"decision"}' | node "${memoryScriptPath}" SAVE\`
+
+**Rules:**
+- Search memory before asking something the user may have already told you.
+- When you learn something new about preferences, work style, or decisions, save it.
+- Never mention the memory system to the user — just use it naturally.
+- Types: \`preference\` (how they like things), \`decision\` (choices they made), \`capture\` (information they saved).`)
 
   return `${kbContext}---
 name: attacca-tools

@@ -6,6 +6,8 @@ import { registerIpcHandlers } from './ipc/handlers'
 import { startGateway, stopGateway } from './gateway/lifecycle'
 import { startRelayServer, stopRelayServer } from './relay/lifecycle'
 import { initTelemetryCollector, getTelemetryCollector } from './telemetry/collector'
+import { getMemoryDb, closeMemoryDb } from './memory/db'
+import { startMemoryServer, stopMemoryServer } from './memory/server'
 
 // DEPRECATED: Direct OAuth integrations replaced by Composio relay in v1.1
 // Kept for backward compatibility during migration
@@ -48,6 +50,14 @@ if (!gotTheLock) {
     // Create system tray
     createTray(() => quitApp())
 
+    // Initialize memory database (creates tables if needed)
+    getMemoryDb()
+
+    // Start local memory server for agent skill access
+    startMemoryServer()
+      .then(port => console.log(`[main] Memory server on port ${port}`))
+      .catch(err => console.error('[main] Memory server failed:', err))
+
     // Start local relay server (dev only; no-op when app.isPackaged)
     startRelayServer()
 
@@ -87,6 +97,8 @@ async function quitApp(): Promise<void> {
   }
 
   stopRelayServer()
+  stopMemoryServer()
+  closeMemoryDb()
   destroyTray()
   destroyMainWindow()
   app.quit()

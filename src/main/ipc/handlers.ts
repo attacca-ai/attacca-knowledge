@@ -20,6 +20,9 @@ import {
   relayExtractUrl
 } from '../relay/client'
 import { getTelemetryCollector } from '../telemetry/collector'
+import { insertMemory, getMemoryStats, getIdentityTraits } from '../memory/db'
+import { generateEmbedding, float32ToBuffer } from '../memory/embeddings'
+import { searchMemories, searchMemoriesByKeyword } from '../memory/search'
 
 export function registerIpcHandlers(): void {
   // Register non-OAuth integration handlers
@@ -499,6 +502,38 @@ ${entitiesMd}
     const logEntry = `${dailyHeader}## ${timeStr} — Capture saved\nSource: ${data.sourceType}\nTitle: ${data.title}\nAction items: ${data.result.actionItems.length} | Decisions: ${data.result.decisions.length} | Open questions: ${data.result.openQuestions.length}\n\n`
     writeFileSync(dailyPath, existsSync(dailyPath) ? readFileSync(dailyPath, 'utf-8') + logEntry : logEntry, 'utf-8')
 
+    // Persist to memory DB for semantic search (embedding generated async — non-blocking)
+    const memId = `mem_capture_${data.id}`
+    const memContent = `${data.result.summary}\n\nKey points: ${(data.result.keyPoints || []).join('; ')}\nDecisions: ${data.result.decisions.join('; ') || 'none'}`
+    const memTags = [
+      ...(entities.people || []).map(p => `person:${p}`),
+      ...(entities.projects || []).map(p => `project:${p}`),
+      `source:${data.sourceType}`
+    ]
+
+    insertMemory({
+      id: memId,
+      type: 'capture',
+      content: memContent,
+      summary: data.result.summary,
+      embedding: null, // filled async below
+      source_id: data.id,
+      tags: JSON.stringify(memTags),
+      importance: data.result.decisions.length > 0 ? 0.7 : 0.5,
+      created_at: data.timestamp,
+      superseded_by: null
+    })
+
+    // Generate embedding async — don't block the capture save
+    generateEmbedding(`${data.result.summary}\n${memContent}`)
+      .then(emb => {
+        if (emb) {
+          const { updateEmbedding } = require('../memory/db') as typeof import('../memory/db')
+          updateEmbedding(memId, float32ToBuffer(emb))
+        }
+      })
+      .catch(() => { /* embedding backfill will catch this later */ })
+
     return { success: true }
   })
 
@@ -545,5 +580,70 @@ ${entitiesMd}
     const collector = getTelemetryCollector()
     collector.emit(eventType, payload)
     return { success: true }
+  })
+
+  // ── Memory ──
+  ipcMain.handle(IPC.MEMORY_SEARCH, async (_event, query: string) => {
+    try {
+      const queryEmb = await generateEmbedding(query)
+      const results = queryEmb
+        ? searchMemories(queryEmb)
+        : searchMemoriesByKeyword(query)
+      return { success: true, results }
+    } catch (err) {
+      return { success: false, error: (err as Error).message, results: [] }
+    }
+  })
+
+  ipcMain.handle(IPC.MEMORY_SAVE, async (_event, data: {
+    content: string
+    type?: string
+    summary?: string
+    tags?: string[]
+    importance?: number
+    source_id?: string
+  }) => {
+    try {
+      const id = `mem_${crypto.randomUUID()}`
+      const summary = data.summary || data.content.slice(0, 200)
+      const embedding = await generateEmbedding(`${summary}\n${data.content}`)
+
+      insertMemory({
+        id,
+        type: (data.type || 'preference') as 'capture' | 'preference' | 'decision' | 'identity' | 'synthesis',
+        content: data.content,
+        summary,
+        embedding: embedding ? float32ToBuffer(embedding) : null,
+        source_id: data.source_id || null,
+        tags: JSON.stringify(data.tags || []),
+        importance: data.importance ?? 0.5,
+        created_at: Date.now(),
+        superseded_by: null
+      })
+
+      return { success: true, id }
+    } catch (err) {
+      return { success: false, error: (err as Error).message }
+    }
+  })
+
+  ipcMain.handle(IPC.MEMORY_GET_STATS, () => {
+    try {
+      return { success: true, ...getMemoryStats() }
+    } catch (err) {
+      return { success: false, error: (err as Error).message }
+    }
+  })
+
+  ipcMain.handle(IPC.MEMORY_GET_IDENTITY, () => {
+    try {
+      const traits = getIdentityTraits()
+      return {
+        success: true,
+        traits: traits.map(t => ({ key: t.key, value: t.value, confidence: t.confidence }))
+      }
+    } catch (err) {
+      return { success: false, error: (err as Error).message }
+    }
   })
 }

@@ -18,6 +18,7 @@ import dashboardRoutes from './routes/dashboard.js'
 import anthropicRoutes from './routes/anthropic.js'
 import agentRoutes from './routes/agent.js'
 import captureRoutes from './routes/capture.js'
+import memoryRoutes from './routes/memory.js'
 import { closePool } from './db/client.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -57,6 +58,9 @@ app.use('/agent', agentRoutes)
 
 // URL / YouTube content extraction (no auth — stateless, no user data)
 app.use('/capture', captureRoutes)
+
+// Memory embedding generation (service-token auth — stateless, just generates vectors)
+app.use('/memory', memoryRoutes)
 
 // All API routes require license auth
 app.use('/llm', authMiddleware, usageCeilingMiddleware, llmRoutes)
