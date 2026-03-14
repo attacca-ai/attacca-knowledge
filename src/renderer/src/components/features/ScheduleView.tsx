@@ -48,6 +48,8 @@ interface ProposedChange {
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
+const SCHEDULE_READ_CACHE_MS = 4 * 60 * 60 * 1000 // 4 hours
+
 const HOUR_HEIGHT = 60
 const DAY_START_HOUR = 0
 const DAY_END_HOUR = 24
@@ -275,12 +277,31 @@ function chipIconLabel(icon: string): string {
   return '·'
 }
 
+/** Cheap content hash of today's events for cache invalidation.
+ *  Changes when events are added, removed, or rescheduled. */
+function hashTodayEvents(events: CalEvent[]): string {
+  const today = startOfDay(new Date())
+  const todayEvents = events
+    .filter((e) => isSameDay(new Date(e.start), today))
+    .map((e) => `${e.id}|${e.start}|${e.end}|${e.title}`)
+    .sort()
+    .join('\n')
+  // Simple DJB2 hash — fast and sufficient for change detection
+  let hash = 5381
+  for (let i = 0; i < todayEvents.length; i++) {
+    hash = ((hash << 5) + hash + todayEvents.charCodeAt(i)) | 0
+  }
+  return hash.toString(36)
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export function ScheduleView(): React.JSX.Element {
   const connectionState = useGatewayStore((s) => s.connectionState)
   const scheduleChatHistory = useAgentStore((s) => s.scheduleChatHistory)
   const setScheduleChatHistory = useAgentStore((s) => s.setScheduleChatHistory)
+  const scheduleReadCache = useAgentStore((s) => s.scheduleReadCache)
+  const setScheduleReadCache = useAgentStore((s) => s.setScheduleReadCache)
   const emergencyStop = useAgentStore((s) => s.emergencyStop)
   const userTimezone = useSettingsStore((s) => s.userTimezone)
 
@@ -392,7 +413,9 @@ export function ScheduleView(): React.JSX.Element {
   )
 
   // ── Fetch calendar events ──────────────────────────────────────────────────
-  const fetchEvents = useCallback(async () => {
+  // skipRead: when true, refresh calendar data without triggering LLM analysis
+  // (used after chat actions where the user already has agent context)
+  const fetchEvents = useCallback(async (opts?: { skipRead?: boolean }) => {
     if (connectionState !== 'connected') return
     setLoadingEvents(true)
     try {
@@ -459,13 +482,38 @@ export function ScheduleView(): React.JSX.Element {
       const withConflicts = detectConflicts(sorted)
       const withColumns = assignColumns(withConflicts)
       setEvents(withColumns)
-      void generateScheduleRead(withColumns)
+
+      if (opts?.skipRead) {
+        // After chat actions: invalidate cache so next visit re-analyzes,
+        // but don't call the LLM now (user already has agent context).
+        const currentHash = hashTodayEvents(withColumns)
+        const cache = useAgentStore.getState().scheduleReadCache
+        if (cache && cache.eventsHash !== currentHash) {
+          setScheduleReadCache({ ...cache, eventsHash: '' }) // force stale on next visit
+        }
+      } else {
+        // Only call the LLM if the cache is stale (>4h) or today's events changed
+        const currentHash = hashTodayEvents(withColumns)
+        const cache = useAgentStore.getState().scheduleReadCache
+        const cacheAge = cache ? Date.now() - cache.generatedAt : Infinity
+        const eventsChanged = !cache || cache.eventsHash !== currentHash
+        if (cacheAge > SCHEDULE_READ_CACHE_MS || eventsChanged) {
+          void generateScheduleRead(withColumns)
+        } else {
+          // Restore from cache — no LLM call needed
+          setScheduleRead({
+            message: cache.message,
+            question: cache.question,
+            suggestedActions: cache.suggestedActions
+          })
+        }
+      }
     } catch {
       // silent
     } finally {
       setLoadingEvents(false)
     }
-  }, [connectionState, baseDate, generateScheduleRead])
+  }, [connectionState, baseDate, generateScheduleRead, setScheduleReadCache])
 
   useEffect(() => {
     void fetchEvents()
@@ -489,7 +537,16 @@ export function ScheduleView(): React.JSX.Element {
         setGeneratingRead(false)
         if (jsonMatch) {
           try {
-            setScheduleRead(JSON.parse(jsonMatch[0]) as ScheduleRead)
+            const parsed = JSON.parse(jsonMatch[0]) as ScheduleRead
+            setScheduleRead(parsed)
+            // Persist to cache so subsequent visits skip the LLM call
+            setScheduleReadCache({
+              message: parsed.message,
+              question: parsed.question,
+              suggestedActions: parsed.suggestedActions,
+              generatedAt: Date.now(),
+              eventsHash: hashTodayEvents(events)
+            })
           } catch {
             // ignore parse error
           }
@@ -519,7 +576,8 @@ export function ScheduleView(): React.JSX.Element {
         }
         const msg = { id: crypto.randomUUID(), role: 'assistant' as const, text }
         setScheduleChatHistory([...useAgentStore.getState().scheduleChatHistory, msg])
-        void fetchEvents()
+        // Refresh events (free) but skip LLM re-analysis — user already has agent context
+        void fetchEvents({ skipRead: true })
       }
     }
 

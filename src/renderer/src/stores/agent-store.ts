@@ -65,11 +65,25 @@ export interface MorningLandscape {
   generatedAt: number
 }
 
+export interface ScheduleReadCache {
+  message: string
+  question: string | null
+  suggestedActions: Array<{
+    label: string
+    icon: 'warn' | 'plus' | 'move' | 'send'
+    risk: 'low' | 'mid' | 'high'
+    prompt: string
+  }>
+  generatedAt: number
+  eventsHash: string
+}
+
 interface AgentStore {
   currentTask: AgentTask | null
   taskQueue: AgentTask[]
   activityFeed: ActivityEntry[]
   scheduleChatHistory: ScheduleChatMessage[]
+  scheduleReadCache: ScheduleReadCache | null
   morningLandscape: MorningLandscape | null
   themes: LandscapeTheme[]
   threads: AgentThread[]
@@ -91,6 +105,7 @@ interface AgentStore {
   setUsageLimitReached: (reached: boolean) => void
   emergencyStop: () => void
   setScheduleChatHistory: (history: ScheduleChatMessage[]) => void
+  setScheduleReadCache: (data: ScheduleReadCache) => void
   setMorningLandscape: (data: MorningLandscape) => void
   setThemes: (themes: LandscapeTheme[]) => void
   setThreads: (threads: AgentThread[]) => void
@@ -117,6 +132,7 @@ export const useAgentStore = create<AgentStore>((set, get) => {
       morningBriefing: s.morningBriefing,
       briefingDate: s.briefingDate,
       morningLandscape: s.morningLandscape,
+      scheduleReadCache: s.scheduleReadCache,
       themes: s.themes,
       taskQueue: s.taskQueue,
       activityFeed: s.activityFeed.slice(-MAX_ACTIVITY_ENTRIES),
@@ -131,6 +147,7 @@ export const useAgentStore = create<AgentStore>((set, get) => {
     taskQueue: [],
     activityFeed: [],
     scheduleChatHistory: [],
+    scheduleReadCache: null,
     morningLandscape: null,
     themes: [],
     threads: [],
@@ -161,6 +178,7 @@ export const useAgentStore = create<AgentStore>((set, get) => {
             morningBriefing: saved.morningBriefing ?? null,
             briefingDate: saved.briefingDate ?? null,
             morningLandscape: saved.morningLandscape ?? null,
+            scheduleReadCache: saved.scheduleReadCache ?? null,
             themes: saved.themes ?? [],
             taskQueue: saved.taskQueue ?? [],
             activityFeed: saved.activityFeed ?? [],
@@ -331,6 +349,11 @@ export const useAgentStore = create<AgentStore>((set, get) => {
 
     setScheduleChatHistory: (history) => {
       set({ scheduleChatHistory: history })
+      persist()
+    },
+
+    setScheduleReadCache: (data) => {
+      set({ scheduleReadCache: data })
       persist()
     },
 
