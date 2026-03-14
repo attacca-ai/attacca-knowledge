@@ -41,7 +41,7 @@ cd relay-server && npm run migrate   # Run DB migrations
 The app follows Electron's standard three-process architecture, built with `electron-vite`:
 
 - **Main process** (`src/main/`): Node.js — manages window lifecycle, system tray, spawns the OpenClaw gateway as a child process, handles IPC, license validation (Gumroad), OAuth flows, relay communication, telemetry, and file watchers.
-- **Preload** (`src/preload/index.ts`): Bridges main↔renderer via `contextBridge`. Exposes `window.api` with namespaced methods (license, gateway, onboarding, oauth, llm, app, settings, fs, activecollab, relay, telemetry, **kb**). All renderer↔main communication goes through this typed API.
+- **Preload** (`src/preload/index.ts`): Bridges main↔renderer via `contextBridge`. Exposes `window.api` with namespaced methods (license, gateway, onboarding, oauth, llm, app, settings, fs, activecollab, relay, telemetry, **kb**, **memory**). All renderer↔main communication goes through this typed API.
 - **Renderer** (`src/renderer/src/`): React 19 + TypeScript SPA with Tailwind CSS v4, Zustand stores, and shadcn/ui (New York style) components.
 
 ### Path Aliases
@@ -65,9 +65,15 @@ Key relay channels:
 - `gateway:get-token` — reads the auth token from `~/.openclaw/openclaw.json`; exposed as `window.api.gateway.getToken()`
 
 Knowledge Base channels (exposed as `window.api.kb`):
-- `kb:save-capture` — writes a capture as markdown to `{userData}/attacca-kb/inbox/YYYY-MM-DD/`, updates `memory/CONTEXT.md`, and appends to `daily/YYYY-MM-DD.md`
+- `kb:save-capture` — writes a capture as markdown to `{userData}/attacca-kb/inbox/YYYY-MM-DD/`, updates `memory/CONTEXT.md`, appends to `daily/YYYY-MM-DD.md`, **and persists to the memory SQLite DB with async embedding generation**
 - `kb:read-context` — returns the contents of `memory/CONTEXT.md` (empty string if not yet created)
 - `kb:append-daily-log` — appends an entry to today's daily log file
+
+Memory channels (exposed as `window.api.memory`):
+- `memory:search` — semantic search (cosine similarity over embeddings) with keyword fallback when offline
+- `memory:save` — persist a new memory (preference, decision, capture) with async embedding
+- `memory:get-stats` — returns total memory count, breakdown by type, and embedding coverage
+- `memory:get-identity` — returns identity traits with confidence scores (only traits with confidence >= 0.4)
 
 ### State Management
 
@@ -110,9 +116,35 @@ attacca-kb/
     └── CONTEXT.md        # Always-loaded user context (agent-managed, max ~200 lines)
 ```
 
-**CONTEXT.md injection**: `buildSkillContent()` in `src/main/gateway/config.ts` reads `CONTEXT.md` and prepends it to the SKILL.md on every gateway restart. This means the agent always has the accumulated user context in its system prompt.
+**CONTEXT.md injection**: `readKbContext()` in `src/main/gateway/config.ts` builds a two-tier context block: (1) identity traits from the memory SQLite DB (`identity` table, confidence >= 0.4), then (2) raw CONTEXT.md content. This is prepended to SKILL.md on every gateway restart.
 
-**SKILL.md generation**: The `attacca-tools` skill at `~/.openclaw/workspace/skills/attacca-tools/SKILL.md` is regenerated on every gateway start by `ensureComposioSkill()` in `config.ts`. Edit `buildSkillContent()` to change what the agent sees — never edit the runtime file directly.
+**SKILL.md generation**: The `attacca-tools` skill at `~/.openclaw/workspace/skills/attacca-tools/SKILL.md` is regenerated on every gateway start by `ensureComposioSkill()` in `config.ts`. It only includes documentation for **connected tools** (conditional loading). Edit `buildSkillContent()` to change what the agent sees — never edit the runtime file directly.
+
+**Token optimization**: SKILL.md uses conditional tool loading — only tool documentation for connected integrations is included. Principles are compressed to ~40% of original size. A user with 2 tools connected sees ~3,500 base tokens vs ~14,000 before optimization.
+
+### Memory System (Second Brain)
+
+Local-first memory system that lets the agent learn user preferences, decisions, and context over time.
+
+**Storage**: SQLite via `better-sqlite3` at `{userData}/attacca-memory/memory.db`. Three tables:
+- `memories` — all captured knowledge with embeddings (`BLOB`), importance scores, access tracking
+- `identity` — key-value traits (e.g., `communication_style`, `scheduling_preferences`) with confidence scores
+- `synthesis_log` — tracks daily/weekly synthesis runs
+
+**Memory lifecycle**: Capture → Embed → Store → Retrieve → (future: Synthesize → Evolve Identity)
+
+**Embedding generation**: Relay endpoint `POST /memory/embed` using OpenAI `text-embedding-3-small` (1536 dims). Falls back to Voyage-3-lite if only Anthropic key is available. Memories save immediately with `embedding = NULL` when offline; keyword search works as fallback.
+
+**Agent access**: Local HTTP server (`src/main/memory/server.ts`, port 3101) exposes `/search`, `/save`, `/stats`, `/identity`. The agent uses `memory-search.cjs` skill script (written alongside `call-tool.cjs` in `SKILL_DIR`). SKILL.md includes a "Memory" section with SEARCH and SAVE instructions.
+
+**Key files**:
+- `src/main/memory/db.ts` — schema, CRUD, identity operations
+- `src/main/memory/search.ts` — cosine similarity search with importance × recency ranking
+- `src/main/memory/embeddings.ts` — relay-proxied embedding generation
+- `src/main/memory/server.ts` — local HTTP server for agent skill access
+- `relay-server/src/routes/memory.ts` — embedding endpoint
+
+**Future (Phase 3)**: Daily/weekly synthesis via `src/main/memory/synthesizer.ts` to distill memories into identity traits, importance decay for unused memories.
 
 ### Integration Approach
 
@@ -159,7 +191,7 @@ Agent session key: `agent:main:capture-{uuid}`. Sends structured JSON prompt via
 "Guardar en memoria" calls `window.api.kb.saveCapture()` to write the markdown file to disk and update `CONTEXT.md` + daily log. Failure is non-fatal (local recents still saved).
 
 ### schedule → `ScheduleView.tsx`
-Calendar events list with AI-suggested actions per event. Loaded from connected Google Calendar via agent.
+7-day week calendar view with AI-powered schedule analysis. Fetches events directly from Google Calendar + Outlook (via Composio, **free — no LLM tokens**). The LLM analysis (`generateScheduleRead`) is **cached for 4 hours** in the agent store (`scheduleReadCache`) with a content hash for smart invalidation — only regenerated when cache expires or today's events actually change (added/removed/rescheduled). After chat actions, events refresh but LLM re-analysis is skipped since the user already has agent context. Supports conflict detection, priority classification, and inline reschedule suggestions.
 
 ### transcripts → `TranscriptUpload.tsx`
 3-state flow controlled by a `StateBar` at the top:

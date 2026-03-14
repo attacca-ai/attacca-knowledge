@@ -31,6 +31,7 @@ Attacca syncs your calendar, email, project management tools, file storage, and 
   │ - Composio OAuth│  LLM calls via      │ - Tool execution │
   │ - Tool actions  │  relay proxy        │ - Event streams  │
   │ - Usage tracking│                     │ - SKILL.md skills│
+  │ - Embeddings   │                     │ - Memory search  │
   │ - PostgreSQL    │                     └──────────────────┘
   └────────┬────────┘
            │
@@ -44,7 +45,7 @@ Attacca syncs your calendar, email, project management tools, file storage, and 
 
 The app follows Electron's three-process model built with `electron-vite`:
 
-- **Main process** (`src/main/`) — window lifecycle, system tray, spawns the OpenClaw gateway as a child process, auto-spawns relay server in dev, IPC handlers, license validation, telemetry
+- **Main process** (`src/main/`) — window lifecycle, system tray, spawns the OpenClaw gateway as a child process, auto-spawns relay server in dev, IPC handlers, license validation, telemetry, **local memory system (SQLite + embeddings)**
 - **Preload** (`src/preload/index.ts`) — bridges main↔renderer via `contextBridge`, exposes `window.api` with namespaced methods
 - **Renderer** (`src/renderer/src/`) — React 19 + TypeScript SPA, Tailwind CSS v4, Zustand stores, shadcn/ui components
 
@@ -77,6 +78,7 @@ OpenClaw routes LLM calls through the relay server's Anthropic-compatible proxy 
 - **PostgreSQL** 14+ (for the relay server)
 - **Gumroad license key** (the app requires a valid license to launch)
 - **Anthropic API key** (for Claude — the default LLM provider)
+- **OpenAI API key** (optional — for memory embeddings via `text-embedding-3-small`; memory still works without it using keyword fallback)
 - **Composio API key** (for OAuth integrations: Gmail, Slack, Trello, etc.)
 
 ---
@@ -105,6 +107,9 @@ Edit `relay-server/.env`:
 ```env
 # LLM
 ANTHROPIC_API_KEY=sk-ant-...
+
+# Embeddings (optional — for memory system semantic search)
+OPENAI_API_KEY=sk-...
 
 # Composio — for OAuth integrations (Gmail, Slack, Trello, Google Calendar, etc.)
 COMPOSIO_API_KEY=
@@ -265,6 +270,7 @@ npm run start          # Start compiled server
 |------|---------|
 | `~/.openclaw/openclaw.json` | Gateway config — auto-created on first launch |
 | `~/.openclaw/workspace/skills/attacca-tools/SKILL.md` | Agent tool instructions — regenerated on each gateway start |
+| `{userData}/attacca-memory/memory.db` | Local SQLite memory database (embeddings, identity traits) |
 | `relay-server/.env` | Relay server environment variables |
 | `relay-server/src/db/schema.sql` | PostgreSQL schema |
 
@@ -316,6 +322,11 @@ attaccaclaw-main/
 │   │   ├── license/              # Gumroad license validation + caching
 │   │   ├── relay/                # Auto-spawn relay server + HTTP client
 │   │   │   └── lifecycle.ts      # Relay child process management
+│   │   ├── memory/               # Local memory system (second brain)
+│   │   │   ├── db.ts             # SQLite schema + CRUD (better-sqlite3)
+│   │   │   ├── search.ts         # Cosine similarity + keyword fallback
+│   │   │   ├── embeddings.ts     # Relay-proxied embedding generation
+│   │   │   └── server.ts         # Local HTTP server (port 3101) for agent
 │   │   ├── telemetry/            # Event batching + flush
 │   │   ├── integrations/         # ActiveCollab, Telegram connectors
 │   │   ├── tray/                 # System tray
@@ -346,6 +357,7 @@ attaccaclaw-main/
 │   │   │   ├── agent.ts          # POST /agent/tools — Composio tool proxy for OpenClaw
 │   │   │   ├── anthropic.ts      # POST /anthropic/v1/messages — LLM proxy
 │   │   │   ├── composio.ts       # OAuth, connected apps, action discovery
+│   │   │   ├── memory.ts         # POST /memory/embed — embedding generation
 │   │   │   ├── usage.ts          # Usage tracking
 │   │   │   ├── telemetry.ts      # Anonymous telemetry
 │   │   │   └── dashboard.ts      # Admin dashboard
@@ -366,7 +378,7 @@ Zustand stores in `src/renderer/src/stores/`:
 
 | Store | Responsibility |
 |-------|---------------|
-| `agent-store` | Task queue, activity feed, daily landscape (briefing, themes, threads), emergency stop |
+| `agent-store` | Task queue, activity feed, daily landscape (briefing, themes, threads), schedule read cache (4h TTL), emergency stop |
 | `app-store` | Current page/view navigation |
 | `gateway-store` | WebSocket connection state |
 | `license-store` | License validation state and plan |
