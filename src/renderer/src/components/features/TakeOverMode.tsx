@@ -177,7 +177,7 @@ export function TakeOverMode(): React.JSX.Element {
 
           {/* Action button */}
           <Button
-            onClick={active ? handleDeactivate : handleActivate}
+            onClick={active ? () => handleDeactivate('manual') : handleActivate}
             variant={active ? 'destructive' : 'default'}
             disabled={connectionState !== 'connected'}
           >

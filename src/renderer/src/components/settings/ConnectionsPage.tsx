@@ -141,11 +141,11 @@ export function ConnectionsPage(): React.JSX.Element {
         return
       }
 
-      await window.api.app.openExternal(result.redirectUrl)
+      await window.api.app.openExternal(result.redirectUrl!)
 
       pollRef.current = setInterval(async () => {
         try {
-          const status = await window.api.relay.getOAuthStatus(result.connectionId)
+          const status = await window.api.relay.getOAuthStatus(result.connectionId!)
           if (status.status === 'active') {
             if (pollRef.current) clearInterval(pollRef.current)
             pollRef.current = null

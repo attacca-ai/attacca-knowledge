@@ -41,8 +41,7 @@ const TOOL_NAMES: Record<string, string> = {
   activecollab: 'ActiveCollab'
 }
 
-// Tools that use credential-based auth instead of Composio OAuth
-const CREDENTIAL_BASED_TOOLS = ['activecollab', 'telegram']
+// ActiveCollab and Telegram use credential-based auth instead of Composio OAuth
 
 export function ToolConnectionStep({
   onComplete: _
@@ -119,12 +118,12 @@ export function ToolConnectionStep({
       }
 
       // Open the OAuth URL in the browser
-      await window.api.app.openExternal(result.redirectUrl)
+      await window.api.app.openExternal(result.redirectUrl!)
 
       // Poll for completion
       pollRef.current = setInterval(async () => {
         try {
-          const status = await window.api.relay.getOAuthStatus(result.connectionId)
+          const status = await window.api.relay.getOAuthStatus(result.connectionId!)
           if (status.status === 'active') {
             if (pollRef.current) clearInterval(pollRef.current)
             pollRef.current = null
