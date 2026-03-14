@@ -16,7 +16,8 @@ import {
   relayGetConnectedApps,
   relayProxyToolAction,
   relayLLMCompletion,
-  relayListApps
+  relayListApps,
+  relayExtractUrl
 } from '../relay/client'
 import { getTelemetryCollector } from '../telemetry/collector'
 
@@ -342,6 +343,14 @@ export function registerIpcHandlers(): void {
       return await relayListApps()
     } catch {
       return []
+    }
+  })
+
+  ipcMain.handle(IPC.RELAY_EXTRACT_URL, async (_event, url: string) => {
+    try {
+      return await relayExtractUrl(url)
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : 'URL extraction failed' }
     }
   })
 

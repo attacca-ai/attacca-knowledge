@@ -100,7 +100,8 @@ const api = {
       ipcRenderer.invoke('relay:call-tool', actionName, params),
     llmCompletion: (messages: Array<{ role: string; content: string }>, opts?: { model?: string; max_tokens?: number }) =>
       ipcRenderer.invoke('relay:llm-completion', messages, opts),
-    listApps: () => ipcRenderer.invoke('relay:list-apps')
+    listApps: () => ipcRenderer.invoke('relay:list-apps'),
+    extractUrl: (url: string) => ipcRenderer.invoke('relay:extract-url', url)
   },
 
   // Knowledge Base

@@ -151,6 +151,14 @@ export interface AttaccaAPI {
       opts?: { model?: string; max_tokens?: number }
     ) => Promise<{ id: string; model: string; content: string; usage: { input_tokens: number; output_tokens: number }; provider: string } | { success: false; error: string }>
     listApps: () => Promise<Array<{ slug: string; name: string; categories: string[]; description: string }>>
+    extractUrl: (url: string) => Promise<{
+      success: boolean
+      type?: 'youtube' | 'article'
+      title?: string
+      text?: string
+      wordCount?: number
+      error?: string
+    }>
   }
 
   kb: {

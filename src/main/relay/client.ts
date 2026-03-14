@@ -173,6 +173,17 @@ export async function relayProxyToolAction(
   })
 }
 
+export async function relayExtractUrl(url: string): Promise<{
+  success: boolean
+  type?: 'youtube' | 'article'
+  title?: string
+  text?: string
+  wordCount?: number
+  error?: string
+}> {
+  return relayFetch('/capture/extract-url', { method: 'POST', body: { url } })
+}
+
 export async function relayGetConnectedApps(): Promise<string[]> {
   const result = await relayFetch<RelayConnectedAppsResponse>('/composio/connected')
   return result.apps

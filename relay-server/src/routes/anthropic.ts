@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import type { Request, Response } from 'express'
-import { isLimitReached, addCost } from '../services/usage.js'
+import { isLimitReached, addCost, logRequest } from '../services/usage.js'
 import { calculateCost } from '../services/pricing.js'
 
 const router = Router()
@@ -529,6 +529,8 @@ async function handleProxy(req: Request, res: Response, keyHash?: string): Promi
   const body = req.body as Record<string, unknown>
   const isStream = body?.stream === true
   const model = (body?.model as string) ?? 'unknown'
+  const messages = body?.messages as unknown[] | undefined
+  const messageCount = messages?.length ?? 0
 
   // Forward relevant Anthropic headers from OpenClaw (e.g. anthropic-beta for tool use)
   const forwardHeaders: Record<string, string> = {
@@ -564,7 +566,7 @@ async function handleProxy(req: Request, res: Response, keyHash?: string): Promi
         const openaiKey = process.env.OPENAI_API_KEY
         if (openaiKey) {
           console.warn(`[anthropic-proxy] Anthropic credit balance exhausted — falling back to OpenAI ${FALLBACK_OPENAI_MODEL}`)
-          await handleOpenAIFallback(req, res, body, isStream, openaiKey, keyHash)
+          await handleOpenAIFallback(req, res, body, isStream, openaiKey, keyHash, messageCount)
           return
         }
         console.error('[anthropic-proxy] Billing error but no OPENAI_API_KEY configured for fallback')
@@ -585,6 +587,8 @@ async function handleProxy(req: Request, res: Response, keyHash?: string): Promi
         let accText = ''
         let inputTokens = 0
         let outputTokens = 0
+        let cacheWriteTokens = 0
+        let cacheReadTokens = 0
         try {
           while (true) {
             const { done, value } = await reader.read()
@@ -602,6 +606,8 @@ async function handleProxy(req: Request, res: Response, keyHash?: string): Promi
                 } else if (evt.type === 'message_start') {
                   const usage = (evt.message as Record<string, unknown>)?.usage as Record<string, number> | undefined
                   if (usage?.input_tokens) inputTokens = usage.input_tokens
+                  if (usage?.cache_creation_input_tokens) cacheWriteTokens = usage.cache_creation_input_tokens
+                  if (usage?.cache_read_input_tokens) cacheReadTokens = usage.cache_read_input_tokens
                 } else if (evt.type === 'message_delta') {
                   const usage = evt.usage as Record<string, number> | undefined
                   if (usage?.output_tokens) outputTokens = usage.output_tokens
@@ -614,32 +620,60 @@ async function handleProxy(req: Request, res: Response, keyHash?: string): Promi
         } finally {
           res.end()
           const preview = accText.length > 200 ? accText.slice(0, 200) + '…' : accText
-          console.log(`[anthropic-proxy] Claude response — tokens(in=${inputTokens} out=${outputTokens}) text="${preview}"`)
-          if (keyHash && (inputTokens > 0 || outputTokens > 0)) {
-            const cost = calculateCost(model, inputTokens, outputTokens)
+          console.log(`[anthropic-proxy] Claude response — tokens(in=${inputTokens} out=${outputTokens} cacheWrite=${cacheWriteTokens} cacheRead=${cacheReadTokens}) text="${preview}"`)
+          if (keyHash && (inputTokens > 0 || outputTokens > 0 || cacheWriteTokens > 0)) {
+            const cost = calculateCost(model, inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens)
             addCost(keyHash, cost).catch((err) =>
               console.error('[anthropic-proxy] addCost failed:', err)
             )
+            logRequest(keyHash, {
+              model,
+              input_tokens: inputTokens,
+              output_tokens: outputTokens,
+              cache_write_tokens: cacheWriteTokens,
+              cache_read_tokens: cacheReadTokens,
+              cost_usd: cost,
+              message_count: messageCount
+            }).catch(() => {})
           }
         }
       } else {
         res.status(200).end()
       }
     } else {
-      const data = await upstream.json() as Record<string, unknown>
+      const data = (await upstream.json()) as Record<string, unknown>
       const content = data.content as Array<Record<string, unknown>> | undefined
       const text = content?.find((b) => b.type === 'text')?.text as string | undefined
       const usage = data.usage as Record<string, number> | undefined
       const inputTokens = usage?.input_tokens ?? 0
       const outputTokens = usage?.output_tokens ?? 0
+      const cacheWriteTokens = usage?.cache_creation_input_tokens ?? 0
+      const cacheReadTokens = usage?.cache_read_input_tokens ?? 0
       const preview = (text ?? '').length > 200 ? (text ?? '').slice(0, 200) + '…' : (text ?? '')
-      console.log(`[anthropic-proxy] Claude response — tokens(in=${inputTokens} out=${outputTokens}) text="${preview}"`)
+      console.log(
+        `[anthropic-proxy] Claude response — tokens(in=${inputTokens} out=${outputTokens} cacheWrite=${cacheWriteTokens} cacheRead=${cacheReadTokens}) text="${preview}"`
+      )
       res.status(200).json(data)
-      if (keyHash && (inputTokens > 0 || outputTokens > 0)) {
-        const cost = calculateCost(model, inputTokens, outputTokens)
+      if (keyHash && (inputTokens > 0 || outputTokens > 0 || cacheWriteTokens > 0)) {
+        const cost = calculateCost(
+          model,
+          inputTokens,
+          outputTokens,
+          cacheWriteTokens,
+          cacheReadTokens
+        )
         addCost(keyHash, cost).catch((err) =>
           console.error('[anthropic-proxy] addCost failed:', err)
         )
+        logRequest(keyHash, {
+          model,
+          input_tokens: inputTokens,
+          output_tokens: outputTokens,
+          cache_write_tokens: cacheWriteTokens,
+          cache_read_tokens: cacheReadTokens,
+          cost_usd: cost,
+          message_count: messageCount
+        }).catch(() => {})
       }
     }
   } catch (err) {
@@ -664,7 +698,8 @@ async function handleOpenAIFallback(
   body: Record<string, unknown>,
   isStream: boolean,
   openaiKey: string,
-  keyHash: string | undefined
+  keyHash: string | undefined,
+  messageCount: number
 ): Promise<void> {
   const fallbackModel = resolveOpenAIChatModel(FALLBACK_OPENAI_MODEL)
   const openaiBody = convertAnthropicToOpenAI(body, fallbackModel)
@@ -716,6 +751,15 @@ async function handleOpenAIFallback(
         addCost(keyHash, cost).catch((err) =>
           console.error('[anthropic-proxy] addCost (OpenAI fallback) failed:', err)
         )
+        logRequest(keyHash, {
+          model: fallbackModel,
+          input_tokens: inputTokens,
+          output_tokens: outputTokens,
+          cache_write_tokens: 0,
+          cache_read_tokens: 0,
+          cost_usd: cost,
+          message_count: messageCount
+        }).catch(() => {})
       }
     } else {
       const data = await upstream.json() as Record<string, unknown>
@@ -729,6 +773,15 @@ async function handleOpenAIFallback(
         addCost(keyHash, cost).catch((err) =>
           console.error('[anthropic-proxy] addCost (OpenAI fallback) failed:', err)
         )
+        logRequest(keyHash, {
+          model: fallbackModel,
+          input_tokens: inputTokens,
+          output_tokens: outputTokens,
+          cache_write_tokens: 0,
+          cache_read_tokens: 0,
+          cost_usd: cost,
+          message_count: messageCount
+        }).catch(() => {})
       }
     }
   } catch (err) {

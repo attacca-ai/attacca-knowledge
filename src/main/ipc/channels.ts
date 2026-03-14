@@ -53,6 +53,7 @@ export const IPC = {
   RELAY_CALL_TOOL: 'relay:call-tool',
   RELAY_LLM_COMPLETION: 'relay:llm-completion',
   RELAY_LIST_APPS: 'relay:list-apps',
+  RELAY_EXTRACT_URL: 'relay:extract-url',
 
   // Agent state persistence
   AGENT_GET_STATE: 'agent:get-state',

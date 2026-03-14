@@ -22,6 +22,8 @@ interface CalEvent {
   source?: 'google' | 'outlook'
   hasConflict?: boolean
   priority?: 'critical' | 'flexible'
+  colIndex?: number  // 0-based column within overlap group
+  colCount?: number  // total columns in overlap group
 }
 
 interface ScheduleRead {
@@ -96,6 +98,15 @@ function formatHour(h: number): string {
   return h < 12 ? `${h} AM` : `${h - 12} PM`
 }
 
+/** Normalize Outlook datetime strings to proper UTC ISO.
+ *  Outlook/MS Graph returns "2026-03-14T16:00:00.0000000" (UTC, no Z, 7-digit fractions).
+ *  Without a timezone indicator JS treats it as local time → 6-hour shift for UTC-6 users. */
+function toUtcIso(dt: string): string {
+  if (!dt || !dt.includes('T')) return dt // all-day date-only strings — leave as-is
+  if (/Z$/.test(dt) || /[+-]\d{2}:\d{2}$/.test(dt)) return dt // already has tz indicator
+  return dt.replace(/(\.\d{3})\d+/, '$1') + 'Z' // trim to ms precision, append Z
+}
+
 function classifyEvent(
   item: {
     id: string
@@ -117,11 +128,15 @@ function classifyEvent(
     (a) => a.email ?? a.emailAddress?.address ?? ''
   ).filter(Boolean)
 
+  // Outlook datetimes are UTC without 'Z' → normalize so JS parses them as UTC
+  const normDt = (dt: string | undefined): string | undefined =>
+    source === 'outlook' && dt ? toUtcIso(dt) : dt
+
   const event: CalEvent = {
     id: item.id,
     title,
-    start: item.start?.dateTime ?? item.start?.date ?? '',
-    end: item.end?.dateTime ?? item.end?.date ?? '',
+    start: normDt(item.start?.dateTime) ?? item.start?.date ?? '',
+    end: normDt(item.end?.dateTime) ?? item.end?.date ?? '',
     type,
     attendees,
     source
@@ -134,6 +149,71 @@ function classifyEvent(
   event.priority = (isExternal || hasManyAttendees || isCriticalKeyword) ? 'critical' : 'flexible'
 
   return event
+}
+
+/** Assign side-by-side columns to overlapping events (like Outlook/Google Calendar).
+ *  Each event gets colIndex (0-based) and colCount (# of concurrent columns in its group). */
+function assignColumns(events: CalEvent[]): CalEvent[] {
+  const result = events.map((e) => ({ ...e, colIndex: 0, colCount: 1 }))
+
+  // Build a day → [result indices] map
+  const dayMap = new Map<string, number[]>()
+  result.forEach((e, i) => {
+    if (!e.start.includes('T')) return
+    const day = e.start.slice(0, 10)
+    if (!dayMap.has(day)) dayMap.set(day, [])
+    dayMap.get(day)!.push(i)
+  })
+
+  for (const indices of dayMap.values()) {
+    if (indices.length <= 1) continue
+
+    // Sort indices by start time
+    const sorted = [...indices].sort(
+      (a, b) => new Date(result[a].start).getTime() - new Date(result[b].start).getTime()
+    )
+
+    // Greedy column assignment: place each event in the first column where it doesn't overlap
+    const colEndTimes: number[] = []
+    const colAssign = new Map<number, number>()
+
+    for (const idx of sorted) {
+      const evStart = new Date(result[idx].start).getTime()
+      const evEnd = new Date(result[idx].end).getTime()
+      let placed = false
+      for (let c = 0; c < colEndTimes.length; c++) {
+        if (colEndTimes[c] <= evStart) {
+          colEndTimes[c] = evEnd
+          colAssign.set(idx, c)
+          placed = true
+          break
+        }
+      }
+      if (!placed) {
+        colAssign.set(idx, colEndTimes.length)
+        colEndTimes.push(evEnd)
+      }
+    }
+
+    // colCount per event = number of distinct columns that overlap with it
+    for (const idx of indices) {
+      const evStart = new Date(result[idx].start).getTime()
+      const evEnd = new Date(result[idx].end).getTime()
+      const overlapCols = new Set([colAssign.get(idx) ?? 0])
+      for (const other of indices) {
+        if (other === idx) continue
+        const oStart = new Date(result[other].start).getTime()
+        const oEnd = new Date(result[other].end).getTime()
+        if (evStart < oEnd && oStart < evEnd) {
+          overlapCols.add(colAssign.get(other) ?? 0)
+        }
+      }
+      result[idx].colIndex = colAssign.get(idx) ?? 0
+      result[idx].colCount = overlapCols.size
+    }
+  }
+
+  return result
 }
 
 function detectConflicts(events: CalEvent[]): CalEvent[] {
@@ -160,14 +240,24 @@ function detectConflicts(events: CalEvent[]): CalEvent[] {
 function eventStyle(event: CalEvent): React.CSSProperties {
   const s = new Date(event.start)
   const e = new Date(event.end)
-  const topPx = (s.getHours() - DAY_START_HOUR) * HOUR_HEIGHT + (s.getMinutes() / 60) * HOUR_HEIGHT
-  const endPx = (e.getHours() - DAY_START_HOUR) * HOUR_HEIGHT + (e.getMinutes() / 60) * HOUR_HEIGHT
+  // top = minutes-offset WITHIN the hour cell (0–59px), not from the top of the whole day.
+  // Events are rendered inside their start-hour cell; height overflows into subsequent cells.
+  const topPx = (s.getMinutes() / 60) * HOUR_HEIGHT
+  const startTotal = (s.getHours() - DAY_START_HOUR) * HOUR_HEIGHT + topPx
+  const endTotal = (e.getHours() - DAY_START_HOUR) * HOUR_HEIGHT + (e.getMinutes() / 60) * HOUR_HEIGHT
+
+  // Side-by-side columns for overlapping events (Outlook-style)
+  const colCount = event.colCount ?? 1
+  const colIndex = event.colIndex ?? 0
+  const pct = 100 / colCount
+  const gap = 2 // px gap between columns
+
   return {
     position: 'absolute',
     top: Math.max(0, topPx),
-    height: Math.max(20, endPx - topPx),
-    left: 4,
-    right: 4,
+    height: Math.max(20, endTotal - startTotal),
+    left: `calc(${colIndex * pct}% + ${gap}px)`,
+    right: `calc(${(colCount - colIndex - 1) * pct}% + ${gap}px)`,
     zIndex: 5
   }
 }
@@ -367,8 +457,9 @@ export function ScheduleView(): React.JSX.Element {
         (a, b) => new Date(a.start).getTime() - new Date(b.start).getTime()
       )
       const withConflicts = detectConflicts(sorted)
-      setEvents(withConflicts)
-      void generateScheduleRead(withConflicts)
+      const withColumns = assignColumns(withConflicts)
+      setEvents(withColumns)
+      void generateScheduleRead(withColumns)
     } catch {
       // silent
     } finally {
@@ -518,6 +609,17 @@ export function ScheduleView(): React.JSX.Element {
       pendingChatSessionRef.current = null
     }
   }, [pendingChange, executing])
+
+  // ── Inline reschedule suggestion from conflicting event ───────────────────
+  const handleSuggestReschedule = useCallback((conflictingEvent: CalEvent) => {
+    const prompt =
+      `Hay un conflicto en mi agenda con "${conflictingEvent.title}" ` +
+      `(${formatTime(conflictingEvent.start)}–${formatTime(conflictingEvent.end)}). ` +
+      `Revisa mi calendario completo (Google Calendar y Outlook) y propón cómo reorganizar ` +
+      `este evento considerando las prioridades: reuniones con clientes o más de 3 personas son ` +
+      `críticas e inamovibles, bloques de trabajo son flexibles.`
+    void handleSend(prompt)
+  }, [handleSend])
 
   // ── Navigation ─────────────────────────────────────────────────────────────
   const visibleDays = Array.from({ length: 7 }, (_, i) => new Date(baseDate.getTime() + i * 86400000))
@@ -706,6 +808,14 @@ export function ScheduleView(): React.JSX.Element {
                             <p className="mt-[3px] font-mono text-[8px] text-[#d4a843]">
                               {event.flagNote}
                             </p>
+                          )}
+                          {event.hasConflict && (
+                            <button
+                              onClick={(ev) => { ev.stopPropagation(); handleSuggestReschedule(event) }}
+                              className="mt-[4px] font-mono text-[8px] text-[#e05c5c]/60 transition-colors hover:text-[#e05c5c]"
+                            >
+                              Reorganizar →
+                            </button>
                           )}
                         </div>
                       ))}

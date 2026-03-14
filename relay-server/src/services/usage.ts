@@ -77,6 +77,71 @@ export async function isLimitReached(licenseKeyHash: string): Promise<boolean> {
   return usage.limitReached
 }
 
+export interface RequestLogEntry {
+  id: number
+  logged_at: string
+  model: string
+  input_tokens: number
+  output_tokens: number
+  cache_write_tokens: number
+  cache_read_tokens: number
+  cost_usd: number
+  message_count: number
+}
+
+export async function logRequest(
+  licenseKeyHash: string,
+  data: {
+    model: string
+    input_tokens: number
+    output_tokens: number
+    cache_write_tokens: number
+    cache_read_tokens: number
+    cost_usd: number
+    message_count: number
+  }
+): Promise<void> {
+  try {
+    await query(
+      `INSERT INTO request_logs
+         (license_key_hash, model, input_tokens, output_tokens, cache_write_tokens, cache_read_tokens, cost_usd, message_count)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [
+        licenseKeyHash,
+        data.model,
+        data.input_tokens,
+        data.output_tokens,
+        data.cache_write_tokens,
+        data.cache_read_tokens,
+        data.cost_usd,
+        data.message_count
+      ]
+    )
+  } catch (err) {
+    console.error('[usage] Failed to log request:', err)
+  }
+}
+
+export async function getRecentRequests(
+  licenseKeyHash: string,
+  limit = 50
+): Promise<RequestLogEntry[]> {
+  try {
+    const res = await query<RequestLogEntry>(
+      `SELECT id, logged_at, model, input_tokens, output_tokens, cache_write_tokens, cache_read_tokens, cost_usd::float AS cost_usd, message_count
+       FROM request_logs
+       WHERE license_key_hash = $1
+       ORDER BY logged_at DESC
+       LIMIT $2`,
+      [licenseKeyHash, limit]
+    )
+    return res.rows
+  } catch (err) {
+    console.error('[usage] Failed to get request logs:', err)
+    return []
+  }
+}
+
 export interface AggregateUsageStats {
   totalCostUsd: number
   totalRequests: number

@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { gatewayClient } from '@/lib/gateway-client'
 import { useGatewayStore } from '@/stores/gateway-store'
 import type { OcEvent } from '@/types/gateway'
-import { Upload, Link, FileText, MessageSquare, Check, Clock, X } from 'lucide-react'
+import { Upload, Link, FileText, MessageSquare, Check, Clock, X, Send } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -153,12 +153,20 @@ export function CaptureView(): React.JSX.Element {
   const [actionItems, setActionItems] = useState<ActionItem[]>([])
   const [savedToast, setSavedToast] = useState(false)
 
+  // Chat (review state)
+  const [capturedContent, setCapturedContent] = useState('')
+  const [chatMessages, setChatMessages] = useState<Array<{ role: 'user' | 'assistant'; text: string }>>([])
+  const [chatInput, setChatInput] = useState('')
+  const [chatLoading, setChatLoading] = useState(false)
+
   // Recents
   const [recents, setRecents] = useState<RecentCapture[]>(loadRecents)
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const pendingSessionRef = useRef<string | null>(null)
+  const pendingChatSessionRef = useRef<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const chatBottomRef = useRef<HTMLDivElement>(null)
   const sourceTypeRef = useRef<SourceType>(sourceType)
   sourceTypeRef.current = sourceType
 
@@ -168,12 +176,33 @@ export function CaptureView(): React.JSX.Element {
     }
   }, [])
 
+  // Auto-scroll chat to bottom
+  useEffect(() => {
+    chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [chatMessages, chatLoading])
+
   // Gateway event listener — registered once
   useEffect(() => {
     const handler = (ev: OcEvent): void => {
       if (ev.event !== 'chat') return
       const payload = (ev.payload ?? {}) as Record<string, unknown>
-      if (payload.state !== 'final' || payload.sessionKey !== pendingSessionRef.current) return
+      if (payload.state !== 'final') return
+
+      const sessionKey = payload.sessionKey as string | undefined
+      const rawText =
+        (payload.message as { content?: Array<{ text?: string }> } | undefined)?.content?.[0]
+          ?.text ?? ''
+
+      // Chat Q&A response
+      if (sessionKey && sessionKey === pendingChatSessionRef.current) {
+        pendingChatSessionRef.current = null
+        setChatLoading(false)
+        setChatMessages((prev) => [...prev, { role: 'assistant', text: rawText }])
+        return
+      }
+
+      // Initial analysis response
+      if (sessionKey !== pendingSessionRef.current) return
 
       pendingSessionRef.current = null
       if (timerRef.current) {
@@ -182,9 +211,6 @@ export function CaptureView(): React.JSX.Element {
       }
       setProcessingStep(STEPS_TEXT_URL.length)
 
-      const rawText =
-        (payload.message as { content?: Array<{ text?: string }> } | undefined)?.content?.[0]
-          ?.text ?? ''
       const jsonMatch = rawText.match(/\{[\s\S]*\}/)
 
       if (jsonMatch) {
@@ -207,12 +233,18 @@ export function CaptureView(): React.JSX.Element {
   }, [])
 
   const startCapture = useCallback(
-    async (content: string, _title: string): Promise<void> => {
+    async (content: string, _title: string, typeLabelOverride?: string): Promise<void> => {
       const type = sourceTypeRef.current
-      setCaptureState('processing')
+
+      if (captureState !== 'processing') {
+        setCaptureState('processing')
+      }
       setProcessingStep(0)
       setResult(null)
       setActionItems([])
+      setCapturedContent(content)
+      setChatMessages([])
+      setChatInput('')
 
       timerRef.current = setInterval(() => {
         setProcessingStep((prev) => Math.min(prev + 1, STEPS_TEXT_URL.length - 1))
@@ -229,13 +261,14 @@ export function CaptureView(): React.JSX.Element {
       pendingSessionRef.current = sessionKey
 
       const typeLabel =
-        type === 'text'
+        typeLabelOverride ??
+        (type === 'text'
           ? 'nota/texto'
           : type === 'url'
-            ? 'URL/artículo'
+            ? 'artículo/página web'
             : type === 'file'
               ? 'archivo'
-              : 'transcripción de reunión'
+              : 'transcripción de reunión')
 
       const prompt = `Procesa el siguiente ${typeLabel} y extrae información estructurada.
 
@@ -260,7 +293,7 @@ Reglas:
 - keyPoints: 3-5 puntos más importantes del contenido.
 - entities: extrae solo los que aparecen claramente en el texto.
 
-${type === 'url' ? 'URL a analizar' : type === 'transcript' ? 'Transcripción' : 'Contenido'}:
+${type === 'transcript' ? 'Transcripción' : 'Contenido'}:
 ${content}`
 
       try {
@@ -278,18 +311,70 @@ ${content}`
         setCaptureState('idle')
       }
     },
-    [connectionState]
+    [connectionState, captureState]
   )
+
+  const [urlError, setUrlError] = useState<string | null>(null)
 
   const handleCapture = useCallback(async (): Promise<void> => {
     if (sourceType === 'text') {
       if (!textInput.trim()) return
       await startCapture(textInput, textInput.slice(0, 60))
     } else if (sourceType === 'url') {
-      if (!urlInput.trim()) return
-      await startCapture(`Fetch and analyze this URL: ${urlInput}`, urlInput)
+      const trimmedUrl = urlInput.trim()
+      if (!trimmedUrl) return
+      setUrlError(null)
+      setCaptureState('processing') // show processing UI immediately while we extract
+
+      const extraction = await window.api.relay.extractUrl(trimmedUrl)
+      if (!extraction.success || !extraction.text) {
+        setCaptureState('idle')
+        setUrlError(extraction.error ?? 'No se pudo extraer el contenido de la URL')
+        return
+      }
+
+      const typeLabel =
+        extraction.type === 'youtube'
+          ? 'transcripción de video YouTube'
+          : 'artículo/página web'
+      await startCapture(extraction.text, extraction.title ?? trimmedUrl, typeLabel)
     }
   }, [sourceType, textInput, urlInput, startCapture])
+
+  const handleChatSend = useCallback(async (): Promise<void> => {
+    const question = chatInput.trim()
+    if (!question || chatLoading || !capturedContent) return
+
+    setChatInput('')
+    setChatMessages((prev) => [...prev, { role: 'user', text: question }])
+    setChatLoading(true)
+
+    const sessionKey = `agent:main:capture-chat-${crypto.randomUUID()}`
+    pendingChatSessionRef.current = sessionKey
+
+    const prompt = `Aquí está el contenido fuente:
+
+${capturedContent.slice(0, 10000)}
+
+Basándote únicamente en el contenido anterior, responde esta pregunta de forma concisa y directa:
+
+${question}`
+
+    try {
+      await gatewayClient.rpc('chat.send', {
+        sessionKey,
+        message: prompt,
+        idempotencyKey: sessionKey
+      })
+    } catch {
+      pendingChatSessionRef.current = null
+      setChatLoading(false)
+      setChatMessages((prev) => [
+        ...prev,
+        { role: 'assistant', text: 'Error al procesar la pregunta.' }
+      ])
+    }
+  }, [chatInput, chatLoading, capturedContent])
 
   const handleFile = useCallback(
     async (file: File): Promise<void> => {
@@ -370,6 +455,9 @@ ${content}`
     setCaptureState('idle')
     setResult(null)
     setActionItems([])
+    setChatMessages([])
+    setChatInput('')
+    pendingChatSessionRef.current = null
   }
 
   const handleCancel = (): void => {
@@ -554,7 +642,7 @@ ${content}`
           {(result.entities.people.length > 0 ||
             result.entities.projects.length > 0 ||
             result.entities.dates.length > 0) && (
-            <div>
+            <div className="mb-5">
               <p className="mb-2 font-mono text-[9px] uppercase tracking-[.1em] text-[#4a4d55]">
                 Entidades
               </p>
@@ -598,6 +686,65 @@ ${content}`
               </div>
             </div>
           )}
+
+          {/* Chat */}
+          <div className="border-t border-[#1f2024] pt-4">
+            <p className="mb-3 font-mono text-[9px] uppercase tracking-[.1em] text-[#4a4d55]">
+              Preguntar
+            </p>
+
+            {/* Messages */}
+            {chatMessages.length > 0 && (
+              <div className="mb-3 flex flex-col gap-2.5">
+                {chatMessages.map((msg, i) => (
+                  <div key={i} className={cn('flex', msg.role === 'user' ? 'justify-end' : 'justify-start')}>
+                    <span
+                      className={cn(
+                        'max-w-[220px] rounded-lg px-3 py-2 text-xs leading-relaxed',
+                        msg.role === 'user'
+                          ? 'bg-[rgba(91,124,246,.15)] text-[#c8cad0]'
+                          : 'bg-[#1a1b1e] text-[#c8cad0]'
+                      )}
+                    >
+                      {msg.text}
+                    </span>
+                  </div>
+                ))}
+                {chatLoading && (
+                  <div className="flex justify-start">
+                    <span className="flex items-center gap-1 rounded-lg bg-[#1a1b1e] px-3 py-2">
+                      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-[#4a4d55]" style={{ animationDelay: '0ms' }} />
+                      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-[#4a4d55]" style={{ animationDelay: '120ms' }} />
+                      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-[#4a4d55]" style={{ animationDelay: '240ms' }} />
+                    </span>
+                  </div>
+                )}
+                <div ref={chatBottomRef} />
+              </div>
+            )}
+
+            {/* Input */}
+            <div className="flex gap-1.5">
+              <input
+                type="text"
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !chatLoading) void handleChatSend()
+                }}
+                placeholder="¿Qué quieres saber?"
+                disabled={chatLoading}
+                className="flex-1 rounded-lg border border-[#2a2b2f] bg-[#151618] px-2.5 py-2 text-xs text-foreground placeholder:text-[#3a3b3f] focus:border-[#5b7cf6] focus:outline-none disabled:opacity-50"
+              />
+              <button
+                onClick={() => void handleChatSend()}
+                disabled={chatLoading || !chatInput.trim()}
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#5b7cf6] text-white transition-colors hover:bg-[#4a6be5] disabled:opacity-40"
+              >
+                <Send className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
         </aside>
       </div>
     )
@@ -701,16 +848,20 @@ ${content}`
               <input
                 type="url"
                 value={urlInput}
-                onChange={(e) => setUrlInput(e.target.value)}
+                onChange={(e) => { setUrlInput(e.target.value); setUrlError(null) }}
                 placeholder="https://..."
                 className="w-full rounded-lg border border-[#2a2b2f] bg-[#151618] px-3 py-2.5 text-sm text-foreground placeholder:text-[#3a3b3f] focus:border-[#5b7cf6] focus:outline-none"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && canCapture) void handleCapture()
                 }}
               />
-              <p className="text-[10px] text-[#4a4d55]">
-                El agente leerá y analizará el contenido de la URL.
-              </p>
+              {urlError ? (
+                <p className="text-[10px] text-red-400">{urlError}</p>
+              ) : (
+                <p className="text-[10px] text-[#4a4d55]">
+                  El agente leerá y analizará el contenido de la URL.
+                </p>
+              )}
             </div>
           )}
 
