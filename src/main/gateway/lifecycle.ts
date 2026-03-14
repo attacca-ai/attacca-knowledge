@@ -3,6 +3,7 @@ import path from 'path'
 import { app } from 'electron'
 import { ensureConfig, ensureControlUiConfig, ensureRelayProviderConfig, ensureComposioSkill, clearSessionSkillsSnapshot } from './config'
 import { loadLicense } from '../license/store'
+import { getConnectedTools } from '../oauth/server'
 import { getMainWindow } from '../window/main-window'
 import { IPC } from '../ipc/channels'
 
@@ -87,9 +88,11 @@ export function startGateway(): Promise<void> {
     )
 
     // Write the Composio workspace skill so the agent can call Gmail, Calendar, etc.
+    // Pass connected tools so only relevant tool docs are included (reduces token usage).
     if (license?.key) {
       try {
-        ensureComposioSkill(license.key)
+        const connectedTools = getConnectedTools()
+        ensureComposioSkill(license.key, connectedTools)
       } catch (err) {
         console.warn('[gateway] Could not write Composio skill:', err)
       }
