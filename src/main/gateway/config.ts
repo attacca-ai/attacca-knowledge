@@ -344,7 +344,7 @@ function buildSkillContent(): string {
   const call = (action: string, paramsJson: string) =>
     `echo '${paramsJson}' | node "${scriptPath}" ${action}`
 
-  return `${kbContext}---
+  return `---
 name: attacca-tools
 description: "Email, calendar, and productivity tool actions via the Attacca relay (Gmail, Google Calendar, Outlook Email, Outlook Calendar, Slack, and more)"
 metadata:
@@ -359,6 +359,7 @@ metadata:
 # Attacca Productivity Tools
 
 You have access to Gmail, Google Calendar, Outlook Email (inbox/messages), Outlook Calendar (events), Slack, and other productivity tools. Use the helper script to call tool actions through the local relay.
+${kbContext}
 
 ## Agent Behavior Principles
 
