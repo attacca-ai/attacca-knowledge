@@ -124,7 +124,7 @@ export function startMemoryServer(): Promise<number> {
 
     // Use fixed port 3101 so the agent skill script can find it reliably.
     // Falls back to OS-assigned port if 3101 is taken.
-    const tryPort = 3101
+    const tryPort: number = 3101
     server.listen(tryPort, '127.0.0.1', () => {
       const addr = server!.address()
       actualPort = typeof addr === 'object' && addr ? addr.port : tryPort

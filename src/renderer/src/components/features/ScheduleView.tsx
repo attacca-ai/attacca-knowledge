@@ -300,7 +300,6 @@ export function ScheduleView(): React.JSX.Element {
   const connectionState = useGatewayStore((s) => s.connectionState)
   const scheduleChatHistory = useAgentStore((s) => s.scheduleChatHistory)
   const setScheduleChatHistory = useAgentStore((s) => s.setScheduleChatHistory)
-  const scheduleReadCache = useAgentStore((s) => s.scheduleReadCache)
   const setScheduleReadCache = useAgentStore((s) => s.setScheduleReadCache)
   const emergencyStop = useAgentStore((s) => s.emergencyStop)
   const userTimezone = useSettingsStore((s) => s.userTimezone)

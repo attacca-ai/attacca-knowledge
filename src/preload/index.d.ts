@@ -227,6 +227,18 @@ export interface AttaccaAPI {
 interface PersistedAgentState {
   morningBriefing: string | null
   briefingDate: string | null
+  scheduleReadCache?: {
+    message: string
+    question: string | null
+    suggestedActions: Array<{
+      label: string
+      icon: 'warn' | 'plus' | 'move' | 'send'
+      risk: 'low' | 'mid' | 'high'
+      prompt: string
+    }>
+    generatedAt: number
+    eventsHash: string
+  } | null
   morningLandscape?: {
     message: string
     question: string | null
