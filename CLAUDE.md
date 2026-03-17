@@ -133,16 +133,29 @@ Local-first memory system that lets the agent learn user preferences, decisions,
 
 **Memory lifecycle**: Capture → Embed → Store → Retrieve → (future: Synthesize → Evolve Identity)
 
-**Embedding generation**: Relay endpoint `POST /memory/embed` using OpenAI `text-embedding-3-small` (1536 dims). Falls back to Voyage-3-lite if only Anthropic key is available. Memories save immediately with `embedding = NULL` when offline; keyword search works as fallback.
+**Embedding generation**: Two relay endpoints:
+- `POST /memory/embed` — custom format for Attacca desktop (`{ text }` → `{ success, embedding }`)
+- `POST /memory/embeddings` — OpenAI-compatible format for OpenClaw native memory search (`{ model, input }` → `{ data: [{ embedding }] }`)
 
-**Agent access**: Local HTTP server (`src/main/memory/server.ts`, port 3101) exposes `/search`, `/save`, `/stats`, `/identity`. The agent uses `memory-search.cjs` skill script (written alongside `call-tool.cjs` in `SKILL_DIR`). SKILL.md includes a "Memory" section with SEARCH and SAVE instructions.
+Both proxy to OpenAI `text-embedding-3-small` (1536 dims), with Voyage-3-lite fallback if only Anthropic key is available. Memories save immediately with `embedding = NULL` when offline; keyword search works as fallback.
+
+**Pending improvement — local embeddings**: Replace OpenAI with `@xenova/transformers` (`all-MiniLM-L6-v2`, 23MB, 384 dims, free, runs in Node.js/ONNX). Requires updating `relay-server/src/routes/memory.ts` and regenerating all embeddings (dimension change 1536 → 384). This would eliminate the OPENAI_API_KEY dependency for the memory system entirely.
+
+**OpenClaw native memory search (primary)**: Configured via `agents.defaults.memorySearch` in `openclaw.json` (written by `ensureRelayProviderConfig()` in `config.ts`). OpenClaw indexes `~/.openclaw/workspace/memory/*.md` files into its own SQLite (`~/.openclaw/memory/main.sqlite`) using `sqlite-vec`. Config: `provider: "openai"`, `remote.baseUrl: "http://localhost:3100/memory"`, `batch.enabled: false`, `sync.onSearch: true`, `sync.watch: true`. The agent's `memory_search` tool uses hybrid BM25 + vector search over this index.
+
+**Attacca memory server (secondary)**: Local HTTP server (`src/main/memory/server.ts`, port 3101) exposes `/search`, `/save`, `/stats`, `/identity`. Available to the agent via `memory-search.cjs` in SKILL.md as a fallback. Uses Attacca's own SQLite at `{userData}/attacca-memory/memory.db`.
+
+**Dual write on capture**: `kb:save-capture` writes to (1) Attacca SQLite via `insertMemory()`, (2) `.md` file in `~/.openclaw/workspace/memory/` for OpenClaw indexing. Filenames must be ASCII-only — accented characters are normalized via `normalize('NFD').replace(/[\u0300-\u036f]/g, '')` to avoid Windows ENOENT errors.
 
 **Key files**:
 - `src/main/memory/db.ts` — schema, CRUD, identity operations
 - `src/main/memory/search.ts` — cosine similarity search with importance × recency ranking
-- `src/main/memory/embeddings.ts` — relay-proxied embedding generation
-- `src/main/memory/server.ts` — local HTTP server for agent skill access
-- `relay-server/src/routes/memory.ts` — embedding endpoint
+- `src/main/memory/embeddings.ts` — relay-proxied embedding generation (for Attacca's own SQLite)
+- `src/main/memory/server.ts` — local HTTP server for agent skill access (port 3101)
+- `src/main/gateway/config.ts` — writes `memorySearch` config to `openclaw.json` in `ensureRelayProviderConfig()`
+- `relay-server/src/routes/memory.ts` — both embedding endpoints (`/embed` + `/embeddings`)
+- `~/.openclaw/workspace/memory/` — `.md` files indexed by OpenClaw (do not delete)
+- `~/.openclaw/memory/main.sqlite` — OpenClaw's vector search index (auto-managed)
 
 **Future (Phase 3)**: Daily/weekly synthesis via `src/main/memory/synthesizer.ts` to distill memories into identity traits, importance decay for unused memories.
 

@@ -1,4 +1,4 @@
-import { getMemoriesWithEmbeddings, getMemory, markAccessed, type MemoryRow } from './db'
+import { getMemoriesWithEmbeddings, getMemory, markAccessed, getActiveMemories, type MemoryRow } from './db'
 
 export interface SearchResult {
   id: string
@@ -86,8 +86,6 @@ export function searchMemories(queryEmbedding: Float32Array, topN = 5): SearchRe
  * Simple full-text match on content and summary.
  */
 export function searchMemoriesByKeyword(query: string, topN = 5): SearchResult[] {
-  // Import here to avoid circular dependency at module level
-  const { getActiveMemories } = require('./db') as typeof import('./db')
   const all = getActiveMemories(undefined, 500)
   const lower = query.toLowerCase()
   const words = lower.split(/\s+/).filter(w => w.length > 2)

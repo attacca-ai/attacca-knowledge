@@ -60,11 +60,21 @@ export function startMemoryServer(): Promise<number> {
             return
           }
 
-          // Try semantic search first, fall back to keyword
+          // Semantic search + keyword supplement for memories without embeddings yet
           const queryEmb = await generateEmbedding(query)
-          const results = queryEmb
+          let results = queryEmb
             ? searchMemories(queryEmb)
             : searchMemoriesByKeyword(query)
+
+          // Always merge keyword results (catches memories with pending embeddings)
+          if (queryEmb) {
+            const kw = searchMemoriesByKeyword(query)
+            const seen = new Set(results.map(r => r.id))
+            for (const r of kw) {
+              if (!seen.has(r.id)) results.push(r)
+            }
+            results = results.slice(0, 5)
+          }
 
           sendJson(res, 200, { success: true, results })
           return

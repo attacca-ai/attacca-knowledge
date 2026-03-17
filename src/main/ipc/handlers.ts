@@ -1,6 +1,7 @@
 import { ipcMain, app, shell, dialog } from 'electron'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import { join, dirname } from 'path'
+import { homedir } from 'os'
 import { IPC } from './channels'
 import { getGatewayState, startGateway, stopGateway, restartGateway } from '../gateway/lifecycle'
 import { checkGatewayHealth } from '../gateway/health'
@@ -20,7 +21,7 @@ import {
   relayExtractUrl
 } from '../relay/client'
 import { getTelemetryCollector } from '../telemetry/collector'
-import { insertMemory, getMemoryStats, getIdentityTraits } from '../memory/db'
+import { insertMemory, updateEmbedding, getMemoryStats, getIdentityTraits } from '../memory/db'
 import { generateEmbedding, float32ToBuffer } from '../memory/embeddings'
 import { searchMemories, searchMemoriesByKeyword } from '../memory/search'
 
@@ -524,11 +525,22 @@ ${entitiesMd}
       superseded_by: null
     })
 
+    // Also write as markdown to ~/.openclaw/workspace/memory/ so the agent can find it via filesystem
+    try {
+      const ocMemDir = join(homedir(), '.openclaw', 'workspace', 'memory')
+      if (!existsSync(ocMemDir)) mkdirSync(ocMemDir, { recursive: true })
+      const ts = new Date(data.timestamp)
+      const fileDateStr = ts.toISOString().slice(0, 10)
+      const fileTimeStr = ts.toISOString().slice(11, 16).replace(':', '')
+      const slug = data.result.summary.slice(0, 40).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, '').trim().replace(/ +/g, '-').slice(0, 40)
+      const memFilePath = join(ocMemDir, `${fileDateStr}-${fileTimeStr}-${slug}.md`)
+      writeFileSync(memFilePath, `# ${data.result.summary}\n\nDate: ${fileDateStr}\nType: capture\n\n${memContent}`, 'utf-8')
+    } catch { /* non-critical */ }
+
     // Generate embedding async — don't block the capture save
     generateEmbedding(`${data.result.summary}\n${memContent}`)
       .then(emb => {
         if (emb) {
-          const { updateEmbedding } = require('../memory/db') as typeof import('../memory/db')
           updateEmbedding(memId, float32ToBuffer(emb))
         }
       })

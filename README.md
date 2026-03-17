@@ -72,6 +72,59 @@ OpenClaw routes LLM calls through the relay server's Anthropic-compatible proxy 
 
 ---
 
+## Memory System (RAG — Second Brain)
+
+Captures que el usuario guarda ("Guardar en memoria") se persisten en dos SQLites y se indexan con embeddings para búsqueda semántica.
+
+### Flujo de guardado
+
+```
+UI "Guardar en memoria"
+  → kb:save-capture IPC
+  → insertMemory() → Attacca SQLite ({userData}/attacca-memory/memory.db)  [inmediato]
+  → generateEmbedding() → POST relay:3100/memory/embed → OpenAI text-embedding-3-small  [async]
+  → updateEmbedding() → guarda vector BLOB en Attacca SQLite  [cuando termina]
+  → writeFileSync() → ~/.openclaw/workspace/memory/YYYY-MM-DD-HHmm-slug.md  [para OpenClaw]
+```
+
+OpenClaw indexa automáticamente los `.md` files en su propio SQLite (`~/.openclaw/memory/main.sqlite`) usando `sqlite-vec` para vector search. El indexado se dispara por file watcher (`sync.watch: true`) y antes de cada búsqueda (`sync.onSearch: true`).
+
+### Búsqueda semántica — cómo funciona
+
+Hay dos sistemas de búsqueda que coexisten:
+
+**1. OpenClaw nativo (`memory_search` tool) — sistema principal:**
+```
+Agente llama memory_search("query")
+  → OpenClaw genera embedding via POST relay:3100/memory/embeddings (OpenAI-compatible)
+  → Hybrid search: BM25 (FTS) + vector (cosine similarity) en ~/.openclaw/memory/main.sqlite
+  → Retorna top resultados por relevancia semántica
+```
+Configurado en `openclaw.json` → `agents.defaults.memorySearch` con `provider: "openai"` apuntando al relay.
+
+**2. Attacca memory server (port 3101) — sistema secundario/fallback:**
+```
+memory-search.cjs SEARCH "query"
+  → POST http://127.0.0.1:3101/search
+  → cosine similarity en Attacca SQLite → score = cosine × importance × recencyBoost
+  → Retorna top 5 por relevancia
+```
+Disponible via SKILL.md para el agente, pero OpenClaw prefiere su tool nativa.
+
+### Embeddings — OpenAI (con opción local gratuita)
+
+Actualmente se usa OpenAI `text-embedding-3-small` (1536 dims) vía relay. Costo: $0.02/M tokens (~$0.001/mes con uso normal). El relay expone dos endpoints:
+- `POST /memory/embed` — formato custom para Attacca desktop (`{ text }` → `{ success, embedding }`)
+- `POST /memory/embeddings` — formato OpenAI-compatible para OpenClaw (`{ model, input }` → `{ data: [{ embedding }] }`)
+
+**Alternativa local gratuita (no implementada aún)**: `@xenova/transformers` con modelo `all-MiniLM-L6-v2` (23MB, 384 dims, corre en Node.js/ONNX sin API externa). Cambiar requeriría: instalar el paquete, adaptar `relay-server/src/routes/memory.ts`, y regenerar embeddings (dimensiones cambian de 1536 → 384). Eliminaría la dependencia de OPENAI_API_KEY para el sistema de memoria.
+
+### Filenames — solo ASCII
+
+Los `.md` files en `~/.openclaw/workspace/memory/` deben usar nombres ASCII-only. Caracteres acentuados (ó, á, é, etc.) se normalizan a ASCII via `normalize('NFD').replace(/[\u0300-\u036f]/g, '')` para evitar errores ENOENT por encoding en Windows.
+
+---
+
 ## Prerequisites
 
 - **Node.js** v18+

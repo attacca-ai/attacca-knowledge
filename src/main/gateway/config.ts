@@ -159,9 +159,7 @@ export function ensureRelayProviderConfig(
 
   // Compute per-user base URL so the relay can track usage per license key.
   // A licenseKey is always expected in production (app is behind the license gate).
-  const keyHash = licenseKey
-    ? createHash('sha256').update(licenseKey).digest('hex')
-    : null
+  const keyHash = licenseKey ? createHash('sha256').update(licenseKey).digest('hex') : null
   const relayBaseUrl = keyHash
     ? `http://localhost:${RELAY_PORT}/anthropic/u/${keyHash}`
     : `http://localhost:${RELAY_PORT}/anthropic/u/unlicensed` // fallback returns 401
@@ -204,6 +202,22 @@ export function ensureRelayProviderConfig(
   } else {
     defaults.model = { primary: `attacca-relay/${RELAY_MODEL_ID}` }
   }
+  // Enable native memory search with relay-proxied embeddings.
+  // OpenClaw indexes workspace/memory/*.md files into its own SQLite
+  // and uses this provider for embedding generation + vector search.
+  defaults.memorySearch = {
+    provider: 'openai',
+    remote: {
+      baseUrl: `http://localhost:${RELAY_PORT}/memory`,
+      apiKey: RELAY_SERVICE_TOKEN,
+      batch: { enabled: false }
+    },
+    sync: {
+      onSearch: true,
+      watch: true
+    }
+  }
+
   agents.defaults = defaults
   rawConfig.agents = agents
 
@@ -327,9 +341,6 @@ function buildMemorySearchScript(): string {
 var ACTION = process.argv[2] // SEARCH or SAVE
 var MEMORY_PORT = 3101
 
-// Try to discover the actual port (future: written by memory server)
-// For now, use the default port which the server binds to.
-
 function run(params) {
   var endpoint = ACTION === 'SAVE' ? '/save' : '/search'
   fetch('http://127.0.0.1:' + MEMORY_PORT + endpoint, {
@@ -342,23 +353,23 @@ function run(params) {
     .catch(function(err) { process.stdout.write(JSON.stringify({ success: false, error: err.message }) + '\\n') })
 }
 
-function readStdinAndRun() {
-  var chunks = []
-  process.stdin.on('data', function(d) { chunks.push(d) })
-  process.stdin.on('end', function() {
-    var str = Buffer.concat(chunks).toString().trim()
-    try { run(str ? JSON.parse(str) : {}) } catch (_) { run({}) }
-  })
-  process.stdin.on('error', function() { run({}) })
-}
+// argv[3] is the plain query/content string (no JSON needed — avoids cmd.exe quoting issues)
+// argv[4] is the type for SAVE (default: 'preference')
+var arg3 = process.argv[3]
+var arg4 = process.argv[4]
 
-var paramsArg = process.argv[3]
-if (paramsArg) {
-  try { run(JSON.parse(paramsArg)) } catch (_) { readStdinAndRun() }
-} else if (process.stdin.isTTY) {
-  run({})
+if (arg3) {
+  var parsed = null
+  try { parsed = JSON.parse(arg3) } catch (_) { parsed = null }
+  if (parsed) {
+    run(parsed)
+  } else if (ACTION === 'SAVE') {
+    run({ content: arg3, type: arg4 || 'preference', summary: arg3.slice(0, 200) })
+  } else {
+    run({ query: arg3 })
+  }
 } else {
-  readStdinAndRun()
+  run({})
 }
 `
 }
@@ -371,7 +382,9 @@ function readKbContext(): string {
     const { getIdentityTraits } = require('../memory/db') as typeof import('../memory/db')
     const traits = getIdentityTraits(0.4)
     if (traits.length > 0) {
-      const traitLines = traits.map(t => `- **${t.key.replace(/_/g, ' ')}**: ${t.value}`).join('\n')
+      const traitLines = traits
+        .map((t) => `- **${t.key.replace(/_/g, ' ')}**: ${t.value}`)
+        .join('\n')
       sections.push(`## About This User\n\n${traitLines}`)
     }
   } catch {
@@ -406,7 +419,7 @@ function buildSkillContent(connectedTools: string[]): string {
     `echo '${paramsJson}' | node "${scriptPath}" ${action}`
 
   // Normalize connected tool IDs for matching
-  const has = (id: string): boolean => connectedTools.some(t => t.toLowerCase() === id)
+  const has = (id: string): boolean => connectedTools.some((t) => t.toLowerCase() === id)
   const hasGmail = has('gmail')
   const hasGcal = has('googlecalendar')
   const hasOutlook = has('outlook')
@@ -419,12 +432,19 @@ function buildSkillContent(connectedTools: string[]): string {
 
   // Build list of active tool names for the description
   const activeNames = [
-    hasGmail && 'Gmail', hasGcal && 'Google Calendar',
-    hasOutlook && 'Outlook', hasSlack && 'Slack',
-    hasTrello && 'Trello', hasClickup && 'ClickUp',
-    hasAsana && 'Asana', hasNotion && 'Notion'
+    hasGmail && 'Gmail',
+    hasGcal && 'Google Calendar',
+    hasOutlook && 'Outlook',
+    hasSlack && 'Slack',
+    hasTrello && 'Trello',
+    hasClickup && 'ClickUp',
+    hasAsana && 'Asana',
+    hasNotion && 'Notion'
   ].filter(Boolean)
-  const toolList = activeNames.length > 0 ? activeNames.join(', ') : 'productivity tools (none currently connected)'
+  const toolList =
+    activeNames.length > 0
+      ? activeNames.join(', ')
+      : 'productivity tools (none currently connected)'
 
   // Determine if both email providers or both calendar providers are active
   const hasBothEmail = hasGmail && hasOutlook
@@ -441,8 +461,12 @@ function buildSkillContent(connectedTools: string[]): string {
    - **Always require approval**: sending any communication, deleting anything, modifying shared resources, first-time actions.
 6. **Plain language** — Never expose API names, error codes, or tool internals. Report results, not process.
 7. **Graceful degradation** — Never silently fail or invent data. Say what failed and what you can still do.
-8. **Intent over words** — Interpret meaning ("clear my afternoon" = reschedule, not delete). Confirm before medium/high-risk interpretation. One step at a time — never cascade without confirmation.${hasBothEmail || hasBothCal ? `
-9. **Tool loyalty** — ${hasBothEmail ? 'If context references Outlook → use only Outlook tools; if Gmail → only Gmail. If ambiguous → ask.' : ''}${hasBothCal ? ' Same for Google Calendar vs Outlook Calendar.' : ''} Never cross-reply (e.g., reply to Outlook email via Gmail).` : ''}
+8. **Intent over words** — Interpret meaning ("clear my afternoon" = reschedule, not delete). Confirm before medium/high-risk interpretation. One step at a time — never cascade without confirmation.${
+    hasBothEmail || hasBothCal
+      ? `
+9. **Tool loyalty** — ${hasBothEmail ? 'If context references Outlook → use only Outlook tools; if Gmail → only Gmail. If ambiguous → ask.' : ''}${hasBothCal ? ' Same for Google Calendar vs Outlook Calendar.' : ''} Never cross-reply (e.g., reply to Outlook email via Gmail).`
+      : ''
+  }
 10. **Timezone** — User timezone: \`${tzName}\` (UTC${tzOffset}). Always use this offset for calendar events. Never use UTC unless explicitly asked.`
 
   // --- Tool sections (only for connected tools) ---
@@ -562,19 +586,26 @@ The entityId is pre-configured. Only connected tools will work.`)
   const memoryScriptPath = join(SKILL_DIR, 'memory-search.cjs').replace(/\\/g, '/')
   sections.push(`## Memory
 
-Your memory persists across conversations. Use it to recall past decisions, preferences, and context about this user.
+This user's memory is stored in a local database. When asked about past events, conversations, or meetings, you MUST run the search command below — it is the ONLY source of actual user data.
 
-- **Search memories**: \`echo '{"query":"what did user decide about..."}' | node "${memoryScriptPath}" SEARCH\`
-- **Save a preference**: \`echo '{"content":"User prefers...","type":"preference"}' | node "${memoryScriptPath}" SAVE\`
-- **Save a decision**: \`echo '{"content":"User decided to...","type":"decision"}' | node "${memoryScriptPath}" SAVE\`
+**REQUIRED workflow** when user asks about past events/people/meetings:
+1. Run \`memory_search\` (may return empty — that is normal)
+2. **ALWAYS also run** the node command: this searches the ACTUAL database
+
+**Commands:**
+- **Search**: \`node "${memoryScriptPath}" SEARCH "keywords here"\`
+- **Save preference**: \`node "${memoryScriptPath}" SAVE "User prefers..." preference\`
+- **Save decision**: \`node "${memoryScriptPath}" SAVE "User decided to..." decision\`
+
+**Do NOT** look in \`~/.openclaw/workspace/memory/\` or any folder — use the node command above.
 
 **Rules:**
-- Search memory before asking something the user may have already told you.
-- When you learn something new about preferences, work style, or decisions, save it.
-- Never mention the memory system to the user — just use it naturally.
-- Types: \`preference\` (how they like things), \`decision\` (choices they made), \`capture\` (information they saved).`)
+- Step 2 (node command) is REQUIRED even when step 1 (memory_search) returns empty.
+- Use the node command results to answer the user.
+- When you learn new preferences or decisions, save them with the node command.
+- Never mention the memory system — use it silently.`)
 
-  return `${kbContext}---
+  return `---
 name: attacca-tools
 description: "${toolList} via the Attacca relay"
 metadata:
@@ -590,6 +621,7 @@ metadata:
 
 You are a productivity assistant for a non-technical knowledge worker.${hasAnyTool ? ` Connected tools: ${activeNames.join(', ')}.` : ' No tools currently connected.'}
 
+${kbContext ? `## User Context\n\n${kbContext}\n` : ''}
 ${principles}
 
 ${sections.join('\n\n')}
