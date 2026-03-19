@@ -1,4 +1,5 @@
-import { generateLocalEmbedding, EMBEDDING_DIMS } from './local-embeddings'
+import { generateLocalEmbedding } from './local-embeddings'
+import { EMBEDDING_DIMS } from '../lib/constants'
 
 export { EMBEDDING_DIMS }
 

@@ -3,6 +3,8 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { join, dirname } from 'path'
 import { app } from 'electron'
 import { llmCompletion } from '../llm/completion'
+import { readConfig } from '../gateway/config'
+import { parseLlmJson } from '../lib/parse-llm-json'
 import {
   getMemoriesSince,
   getAllIdentityTraits,
@@ -18,14 +20,24 @@ import {
 
 // ── LLM Helper ──────────────────────────────────────────────────────────────
 
+// Cheapest model per provider — synthesis doesn't need top-tier reasoning
+const CHEAP_MODELS: Record<string, string> = {
+  anthropic: 'claude-haiku-4-5-20251001',
+  openai: 'gpt-4o-mini',
+  google: 'gemini-2.0-flash'
+}
+
 async function synthesisLlmCall(systemPrompt: string, userPrompt: string): Promise<string> {
+  const config = readConfig()
+  const provider = config.llm?.provider ?? 'anthropic'
+  const model = CHEAP_MODELS[provider] ?? CHEAP_MODELS.anthropic
+
   const response = await llmCompletion({
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPrompt }
     ],
-    // Use the cheapest model — synthesis doesn't need top-tier reasoning
-    model: 'claude-haiku-4-5-20251001',
+    model,
     max_tokens: 2000
   })
   return response.content
@@ -108,9 +120,7 @@ Rules:
 
   let result: { observations: DailyObservation[]; importance_adjustments: ImportanceAdjustment[] }
   try {
-    // Extract JSON from response (may have markdown code fences)
-    const jsonStr = raw.replace(/```json?\n?/g, '').replace(/```/g, '').trim()
-    result = JSON.parse(jsonStr)
+    result = parseLlmJson(raw)
   } catch {
     console.error('[synthesis] Daily: failed to parse LLM response')
     return
@@ -256,8 +266,7 @@ Rules:
     context_summary: string
   }
   try {
-    const jsonStr = raw.replace(/```json?\n?/g, '').replace(/```/g, '').trim()
-    result = JSON.parse(jsonStr)
+    result = parseLlmJson(raw)
   } catch {
     console.error('[synthesis] Weekly: failed to parse LLM response')
     return

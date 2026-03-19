@@ -8,7 +8,7 @@ export function ensureUsageTables(): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS usage_tracking (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      month_year TEXT NOT NULL,
+      month_year TEXT NOT NULL UNIQUE,
       total_cost_usd REAL DEFAULT 0,
       request_count INTEGER DEFAULT 0,
       last_request_at TEXT
@@ -48,26 +48,24 @@ export function trackRequest(
   const cost = calculateCost(model, inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens)
   const monthYear = getMonthYear()
 
-  // Log the individual request
-  db.prepare(`
-    INSERT INTO request_logs (model, input_tokens, output_tokens, cache_write_tokens, cache_read_tokens, cost_usd)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(model, inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens, cost)
-
-  // Upsert monthly aggregate
-  const existing = db.prepare('SELECT id FROM usage_tracking WHERE month_year = ?').get(monthYear) as { id: number } | undefined
-  if (existing) {
+  const tx = db.transaction(() => {
+    // Log the individual request
     db.prepare(`
-      UPDATE usage_tracking
-      SET total_cost_usd = total_cost_usd + ?, request_count = request_count + 1, last_request_at = datetime('now')
-      WHERE month_year = ?
-    `).run(cost, monthYear)
-  } else {
+      INSERT INTO request_logs (model, input_tokens, output_tokens, cache_write_tokens, cache_read_tokens, cost_usd)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(model, inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens, cost)
+
+    // Upsert monthly aggregate (single statement, no read-then-write)
     db.prepare(`
       INSERT INTO usage_tracking (month_year, total_cost_usd, request_count, last_request_at)
       VALUES (?, ?, 1, datetime('now'))
+      ON CONFLICT(month_year) DO UPDATE SET
+        total_cost_usd = total_cost_usd + excluded.total_cost_usd,
+        request_count = request_count + 1,
+        last_request_at = datetime('now')
     `).run(monthYear, cost)
-  }
+  })
+  tx()
 }
 
 export interface MonthlyUsage {

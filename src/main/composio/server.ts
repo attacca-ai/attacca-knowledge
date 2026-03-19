@@ -4,25 +4,12 @@
  * Listens on port 3102 so the OpenClaw call-tool.cjs script can reach it.
  */
 
-import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'http'
+import { createServer, type Server } from 'http'
 import { proxyToolAction, executeActionDirect } from './service'
+import { readBody, sendJson } from '../lib/http-helpers'
 
 let server: Server | null = null
 let actualPort = 3102
-
-function readBody(req: IncomingMessage): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = []
-    req.on('data', (chunk: Buffer) => chunks.push(chunk))
-    req.on('end', () => resolve(Buffer.concat(chunks).toString()))
-    req.on('error', reject)
-  })
-}
-
-function sendJson(res: ServerResponse, status: number, data: unknown): void {
-  res.writeHead(status, { 'Content-Type': 'application/json' })
-  res.end(JSON.stringify(data))
-}
 
 export function startComposioServer(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -64,7 +51,8 @@ export function startComposioServer(): Promise<number> {
         let result: unknown
         try {
           result = await proxyToolAction(entityId, actionName, params || {})
-        } catch {
+        } catch (sdkErr) {
+          console.warn(`[composio-server] SDK failed for ${actionName}, trying REST:`, (sdkErr as Error).message)
           result = await executeActionDirect(entityId, actionName, params || {})
         }
 

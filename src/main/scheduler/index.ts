@@ -17,6 +17,7 @@ export interface ScheduledTask {
 
 const tasks: Map<string, ScheduledTask> = new Map()
 const cronJobs: Map<string, cron.ScheduledTask> = new Map()
+const retryTimers: Map<string, ReturnType<typeof setTimeout>> = new Map()
 
 const IDLE_THRESHOLD_SECONDS = 300 // 5 minutes
 
@@ -61,12 +62,15 @@ function scheduleTask(task: ScheduledTask): void {
         console.log(`[scheduler] ${task.id} skipped — user is active`)
         task.lastResult = 'skipped'
         saveTaskState(task)
-        // Retry once in 5 minutes
-        setTimeout(async () => {
+        // Retry once in 5 minutes (tracked for cleanup on quit)
+        const existing = retryTimers.get(task.id)
+        if (existing) clearTimeout(existing)
+        retryTimers.set(task.id, setTimeout(async () => {
+          retryTimers.delete(task.id)
           if (isAppIdle()) {
             await executeTask(task)
           }
-        }, 5 * 60 * 1000)
+        }, 5 * 60 * 1000))
         return
       }
 
@@ -154,6 +158,10 @@ export function stopAll(): void {
     job.stop()
   }
   cronJobs.clear()
+  for (const timer of retryTimers.values()) {
+    clearTimeout(timer)
+  }
+  retryTimers.clear()
 }
 
 // ── Persistence ──────────────────────────────────────────────────────────

@@ -1,38 +1,52 @@
 import { getMemoryDb } from './db'
-import { generateEmbedding, float32ToBuffer, EMBEDDING_DIMS } from './embeddings'
+import { generateEmbedding, float32ToBuffer } from './embeddings'
+import { EMBEDDING_DIMS } from '../lib/constants'
 
 /**
- * Regenerates all embeddings using the local model (384 dims).
- * Called once on first launch after upgrade from 1536-dim OpenAI embeddings.
- * Runs in background — does not block app startup.
+ * Regenerate embeddings for memories that need it (wrong dimension or missing).
+ * Used by both migration and backfill.
  */
-export async function migrateEmbeddings(): Promise<{ migrated: number; failed: number }> {
+async function processRows(
+  rows: Array<{ id: string; content: string; summary: string }>
+): Promise<{ success: number; failed: number }> {
   const db = getMemoryDb()
-  const rows = db
-    .prepare('SELECT id, content, summary, embedding FROM memories WHERE superseded_by IS NULL')
-    .all() as Array<{ id: string; content: string; summary: string; embedding: Buffer | null }>
-
-  let migrated = 0
+  const stmt = db.prepare('UPDATE memories SET embedding = ? WHERE id = ?')
+  let success = 0
   let failed = 0
 
   for (const row of rows) {
-    // Check if embedding exists and is already the correct dimension
-    if (row.embedding) {
-      const dims = row.embedding.byteLength / 4 // Float32 = 4 bytes
-      if (dims === EMBEDDING_DIMS) continue // already correct
-    }
-
     const text = `${row.summary}\n${row.content}`
     const emb = await generateEmbedding(text)
     if (emb) {
-      db.prepare('UPDATE memories SET embedding = ? WHERE id = ?').run(float32ToBuffer(emb), row.id)
-      migrated++
+      stmt.run(float32ToBuffer(emb), row.id)
+      success++
     } else {
       failed++
     }
   }
 
-  return { migrated, failed }
+  return { success, failed }
+}
+
+/**
+ * Regenerates all embeddings using the local model (384 dims).
+ * Filters in SQL to avoid loading correct-dimension BLOBs into memory.
+ */
+export async function migrateEmbeddings(): Promise<{ migrated: number; failed: number }> {
+  const db = getMemoryDb()
+  const expectedBytes = EMBEDDING_DIMS * 4 // Float32 = 4 bytes per dim
+
+  // Only fetch rows that need migration: NULL embedding or wrong dimension
+  const rows = db
+    .prepare(
+      'SELECT id, content, summary FROM memories WHERE superseded_by IS NULL AND (embedding IS NULL OR LENGTH(embedding) != ?)'
+    )
+    .all(expectedBytes) as Array<{ id: string; content: string; summary: string }>
+
+  if (rows.length === 0) return { migrated: 0, failed: 0 }
+
+  const result = await processRows(rows)
+  return { migrated: result.success, failed: result.failed }
 }
 
 /**
@@ -47,20 +61,7 @@ export async function backfillEmbeddings(): Promise<{ filled: number; failed: nu
 
   if (rows.length === 0) return { filled: 0, failed: 0 }
 
-  let filled = 0
-  let failed = 0
-
-  for (const row of rows) {
-    const text = `${row.summary}\n${row.content}`
-    const emb = await generateEmbedding(text)
-    if (emb) {
-      db.prepare('UPDATE memories SET embedding = ? WHERE id = ?').run(float32ToBuffer(emb), row.id)
-      filled++
-    } else {
-      failed++
-    }
-  }
-
-  console.log(`[memory] Backfill: ${filled} filled, ${failed} failed`)
-  return { filled, failed }
+  const result = await processRows(rows)
+  console.log(`[memory] Backfill: ${result.success} filled, ${result.failed} failed`)
+  return { filled: result.success, failed: result.failed }
 }

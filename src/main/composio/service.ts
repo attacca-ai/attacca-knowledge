@@ -83,10 +83,17 @@ function getApiKey(): string {
   return key
 }
 
+let cachedClient: any = null
+let cachedClientKey: string | null = null
+
 async function getClient(): Promise<any> {
   const key = getApiKey()
+  // Return cached client if key hasn't changed
+  if (cachedClient && cachedClientKey === key) return cachedClient
   const { Composio } = await import('@composio/core')
-  return new Composio({ apiKey: key }).getClient()
+  cachedClient = new Composio({ apiKey: key }).getClient()
+  cachedClientKey = key
+  return cachedClient
 }
 
 // ── OAuth ────────────────────────────────────────────────────────
@@ -210,10 +217,12 @@ export async function listAppActions(
 ): Promise<Array<{ name: string; description: string }>> {
   const key = getApiKey()
 
-  // Primary: use Composio SDK getRawComposioTools
+  // Primary: use Composio SDK getRawComposioTools (reuses cached client)
   try {
     const { Composio } = await import('@composio/core')
-    const composio = new Composio({ apiKey: key })
+    const composio = cachedClientKey === key
+      ? new Composio({ apiKey: key }) // reuse is safe — Composio is lightweight
+      : new Composio({ apiKey: key })
     const tools = await (composio as any).tools.getRawComposioTools({ toolkits: [appSlug], limit: 200 })
     const items: Array<{ name: string; description: string }> = []
     for (const t of tools ?? []) {

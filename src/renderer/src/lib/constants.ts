@@ -4,6 +4,8 @@ export const GATEWAY_PORT = 18789
 export const APP_NAME = 'Attacca'
 export const APP_DESCRIPTION = 'AI Productivity Assistant'
 
+export const MONO_FONT = "'IBM Plex Mono', monospace"
+
 export const LLM_PROVIDERS = {
   anthropic: {
     name: 'Anthropic Claude',

@@ -1,12 +1,10 @@
 import { existsSync } from 'fs'
 import { join } from 'path'
 import { app } from 'electron'
+import { EMBEDDING_MODEL_ID } from '../lib/constants'
 
 let embedder: any = null
 let loadingPromise: Promise<any> | null = null
-
-const MODEL_ID = 'Xenova/all-MiniLM-L6-v2'
-export const EMBEDDING_DIMS = 384
 
 /**
  * Resolve the model cache directory.
@@ -32,7 +30,7 @@ async function getEmbedder(): Promise<any> {
     const cacheDir = getModelCacheDir()
     const hasBundled = existsSync(join(cacheDir, 'onnx'))
 
-    const pipe = await pipeline('feature-extraction', MODEL_ID, {
+    const pipe = await pipeline('feature-extraction', EMBEDDING_MODEL_ID, {
       // Use bundled weights if available, otherwise download from HuggingFace Hub
       ...(hasBundled ? { local_files_only: true, cache_dir: cacheDir } : { cache_dir: getModelCacheDir() }),
       dtype: 'fp32'

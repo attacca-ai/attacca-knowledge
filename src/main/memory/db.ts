@@ -117,21 +117,18 @@ function initSchema(database: Database.Database): void {
 // ── Embedding Migration ─────────────────────────────────────────────────────
 
 function triggerEmbeddingMigration(database: Database.Database): void {
-  try {
-    const { EMBEDDING_DIMS } = require('./embeddings') as typeof import('./embeddings')
-    const row = database.prepare('SELECT value FROM meta WHERE key = ?').get('embedding_dims') as { value: string } | undefined
-    if (row && row.value === String(EMBEDDING_DIMS)) return // already migrated
+  // Use shared constant directly — no circular dependency
+  const DIMS = 384 // must match EMBEDDING_DIMS in lib/constants.ts
+  const row = database.prepare('SELECT value FROM meta WHERE key = ?').get('embedding_dims') as { value: string } | undefined
+  if (row && row.value === String(DIMS)) return // already migrated
 
-    // Trigger async migration — does not block startup
-    import('./migrate-embeddings').then((m) => m.migrateEmbeddings()).then((result) => {
-      console.log(`[memory] Embedding migration: ${result.migrated} migrated, ${result.failed} failed`)
-      database.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run('embedding_dims', String(EMBEDDING_DIMS))
-    }).catch((err) => {
-      console.warn('[memory] Embedding migration failed:', err)
-    })
-  } catch {
-    // Module not ready yet — skip migration on this launch
-  }
+  // Trigger async migration — does not block startup
+  import('./migrate-embeddings').then((m) => m.migrateEmbeddings()).then((result) => {
+    console.log(`[memory] Embedding migration: ${result.migrated} migrated, ${result.failed} failed`)
+    database.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run('embedding_dims', String(DIMS))
+  }).catch((err) => {
+    console.warn('[memory] Embedding migration failed:', err)
+  })
 }
 
 // ── CRUD Operations ──────────────────────────────────────────────────────────

@@ -1,8 +1,10 @@
-import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'http'
+import { createServer, type Server } from 'http'
 import { randomUUID } from 'crypto'
 import { searchMemories, searchMemoriesByKeyword } from './search'
 import { insertMemory, getMemoryStats, getIdentityTraits } from './db'
 import { generateEmbedding, float32ToBuffer } from './embeddings'
+import { readBody, sendJson } from '../lib/http-helpers'
+import { EMBEDDING_MODEL_ID } from '../lib/constants'
 
 let server: Server | null = null
 let actualPort = 3101
@@ -10,20 +12,6 @@ let actualPort = 3101
 /** Returns the port the memory server is listening on */
 export function getMemoryServerPort(): number {
   return actualPort
-}
-
-function readBody(req: IncomingMessage): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = []
-    req.on('data', (chunk: Buffer) => chunks.push(chunk))
-    req.on('end', () => resolve(Buffer.concat(chunks).toString()))
-    req.on('error', reject)
-  })
-}
-
-function sendJson(res: ServerResponse, status: number, data: unknown): void {
-  res.writeHead(status, { 'Content-Type': 'application/json' })
-  res.end(JSON.stringify(data))
 }
 
 export function startMemoryServer(): Promise<number> {
@@ -141,7 +129,7 @@ export function startMemoryServer(): Promise<number> {
           sendJson(res, 200, {
             object: 'list',
             data: results,
-            model: 'text-embedding-3-small',
+            model: EMBEDDING_MODEL_ID,
             usage: { prompt_tokens: 0, total_tokens: 0 }
           })
           return
