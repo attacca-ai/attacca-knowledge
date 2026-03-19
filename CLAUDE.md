@@ -58,10 +58,10 @@ Key Composio channels (exposed as `window.api.composio`):
 - `composio:call-tool` — executes a Composio tool action
 - `composio:list-apps` — fetches the full toolkit catalog
 
-Key local channels:
-- `llm:completion` — local LLM completion using BYOK provider keys; exposed as `window.api.llm.completion(messages, opts?)`
-- `extract:url` — local URL content extraction
-- `usage:get` — local usage tracking data
+Key local channels (legacy `relay:` prefix — handlers route to local implementations):
+- `relay:llm-completion` — local LLM completion using BYOK provider keys; exposed as `window.api.relay.llmCompletion(messages, opts?)`
+- `relay:extract-url` — local URL content extraction; exposed as `window.api.relay.extractUrl(url)`
+- `relay:get-usage` — local SQLite usage tracking; exposed as `window.api.relay.getUsage()`
 - `gateway:get-token` — reads the auth token from `~/.openclaw/openclaw.json`; exposed as `window.api.gateway.getToken()`
 
 Knowledge Base channels (exposed as `window.api.kb`):
@@ -97,7 +97,7 @@ Cron-based background scheduler in `src/main/scheduler/` that runs recurring tas
 - Daily memory synthesis (consolidates recent memories into identity traits)
 - Weekly memory synthesis (broader pattern recognition across the week)
 - Embedding backfill (generates embeddings for any memories saved without them)
-- Stale cache cleanup (purges expired schedule and briefing caches)
+- Memory importance decay (reduces importance of memories not accessed in 30+ days)
 
 Tasks are registered declaratively and managed by a central scheduler that handles timing, error recovery, and overlap prevention.
 
@@ -259,7 +259,7 @@ The Connections section (`settings/connections`) was redesigned into two treatme
 - 3-state flow: **describe** (free-text input) → **exploring** (animated step feed) → **result** (parsed LLM output)
 - `ExplorationFeed` (`custom-tools/ExplorationFeed.tsx`) — animates 5 investigation steps (identify → auth → capabilities → definition)
 - `ToolResultView` (`custom-tools/ToolResultView.tsx`) — renders structured `CustomToolResult` JSON: capabilities, auth type, risk badges, action buttons
-- Real LLM call via `window.api.llm.completion()` returns structured JSON describing the tool's API, auth, and capabilities
+- Real LLM call via `window.api.relay.llmCompletion()` returns structured JSON describing the tool's API, auth, and capabilities
 - Recent custom connections persisted in `localStorage` under key `attacca_custom_tools`
 - `initialToolName` prop pre-fills the input when navigating from CatalogPanel's escape hatch
 
