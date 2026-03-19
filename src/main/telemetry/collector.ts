@@ -1,26 +1,32 @@
-import { createHash } from 'crypto'
 import { app } from 'electron'
 import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
-import { loadLicense } from '../license/store'
+import { getAnonymousId } from '../identity/user-identity'
 import { loadQueue, saveQueue, clearQueue } from './store'
 import type { TelemetryEvent } from './types'
 
-const FLUSH_INTERVAL_MS = 60 * 1000 // 1 minute (relay is local)
-const RELAY_TELEMETRY_URL = 'http://127.0.0.1:3100/telemetry/events'
+const FLUSH_INTERVAL_MS = 60 * 1000 // 1 minute
+
+// Datadog HTTP intake (US region)
+const DATADOG_LOGS_URL = 'https://http-intake.logs.datadoghq.com/api/v2/logs'
+
+// Build-time env var — baked into the binary by CI/CD. Not in source code.
+// If not set (fork builds), telemetry silently disables — events queue locally but never flush.
+const DD_CLIENT_KEY = process.env.DD_CLIENT_KEY ?? ''
 
 class TelemetryCollector {
   private queue: TelemetryEvent[] = []
   private optIn = false
   private anonymousId = ''
   private flushTimer: ReturnType<typeof setInterval> | null = null
+  private lastFlush: string | null = null
   private optInPath: string
 
   constructor() {
     this.optInPath = join(app.getPath('userData'), 'telemetry-opt-in.json')
     this.loadOptIn()
     this.queue = loadQueue()
-    this.anonymousId = this.computeAnonymousId()
+    this.anonymousId = getAnonymousId()
 
     // Start periodic flush
     this.flushTimer = setInterval(() => this.flush(), FLUSH_INTERVAL_MS)
@@ -41,28 +47,32 @@ class TelemetryCollector {
     writeFileSync(this.optInPath, JSON.stringify({ optIn: this.optIn }), 'utf-8')
   }
 
-  private computeAnonymousId(): string {
-    const stored = loadLicense()
-    if (!stored?.key) return 'unknown'
-    return createHash('sha256').update(stored.key).digest('hex')
-  }
-
   setOptIn(optIn: boolean): void {
     this.optIn = optIn
     this.saveOptIn()
 
     if (!optIn) {
-      // Clear local queue when opting out
       this.queue = []
       clearQueue()
     } else {
-      // Flush any queued events immediately on opt-in
       this.flush().catch(() => {})
     }
   }
 
   getOptIn(): boolean {
     return this.optIn
+  }
+
+  getLastFlush(): string | null {
+    return this.lastFlush
+  }
+
+  getQueueSize(): number {
+    return this.queue.length
+  }
+
+  getQueuedEvents(): TelemetryEvent[] {
+    return [...this.queue]
   }
 
   emit(eventType: string, payload: Record<string, unknown>): void {
@@ -77,33 +87,46 @@ class TelemetryCollector {
 
     this.queue.push(event)
     saveQueue(this.queue)
-    // Flush immediately — relay is local so latency is negligible
     this.flush().catch(() => {})
   }
 
   async flush(): Promise<void> {
     if (!this.optIn || this.queue.length === 0) return
 
+    // If no Datadog key, events stay queued locally but never send
+    if (!DD_CLIENT_KEY) return
+
     const batch = [...this.queue]
     this.queue = []
     saveQueue(this.queue)
 
     try {
-      const stored = loadLicense()
-      const response = await fetch(RELAY_TELEMETRY_URL, {
+      // Convert Attacca events to Datadog log format
+      const ddLogs = batch.map((event) => ({
+        ddsource: 'attacca-claw',
+        ddtags: `env:production,version:${app.getVersion()}`,
+        message: event.eventType,
+        date: event.timestamp,
+        attributes: event.payload,
+        usr: { id: event.anonymousId }
+      }))
+
+      const response = await fetch(DATADOG_LOGS_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(stored?.key ? { Authorization: `Bearer ${stored.key}` } : {})
+          'DD-API-KEY': DD_CLIENT_KEY
         },
-        body: JSON.stringify({ events: batch })
+        body: JSON.stringify(ddLogs)
       })
 
       if (!response.ok) {
         // Put events back in queue for retry
         this.queue = [...batch, ...this.queue]
         saveQueue(this.queue)
-        console.error('[telemetry] Flush failed:', response.status)
+        console.error('[telemetry] Datadog flush failed:', response.status)
+      } else {
+        this.lastFlush = new Date().toISOString()
       }
     } catch (err) {
       // Network error — put events back
@@ -114,26 +137,8 @@ class TelemetryCollector {
   }
 
   async deleteData(): Promise<void> {
-    // Clear local data
     this.queue = []
     clearQueue()
-
-    // Request server-side deletion
-    try {
-      const stored = loadLicense()
-      if (stored?.key) {
-        await fetch('http://127.0.0.1:3100/telemetry/delete', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${stored.key}`
-          },
-          body: JSON.stringify({ anonymousId: this.anonymousId })
-        })
-      }
-    } catch {
-      // Best effort
-    }
   }
 
   destroy(): void {

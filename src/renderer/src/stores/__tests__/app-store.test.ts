@@ -4,7 +4,7 @@ import { useAppStore } from '../app-store'
 describe('app-store', () => {
   beforeEach(() => {
     useAppStore.setState({
-      page: 'license',
+      page: 'onboarding',
       version: null,
       isOnline: true
     })
@@ -12,14 +12,9 @@ describe('app-store', () => {
 
   it('has correct initial state', () => {
     const state = useAppStore.getState()
-    expect(state.page).toBe('license')
+    expect(state.page).toBe('onboarding')
     expect(state.version).toBeNull()
     expect(state.isOnline).toBe(true)
-  })
-
-  it('setPage transitions to onboarding', () => {
-    useAppStore.getState().setPage('onboarding')
-    expect(useAppStore.getState().page).toBe('onboarding')
   })
 
   it('setPage transitions to dashboard', () => {
@@ -27,10 +22,10 @@ describe('app-store', () => {
     expect(useAppStore.getState().page).toBe('dashboard')
   })
 
-  it('setPage transitions from dashboard back to license', () => {
+  it('setPage transitions from dashboard back to onboarding', () => {
     useAppStore.getState().setPage('dashboard')
-    useAppStore.getState().setPage('license')
-    expect(useAppStore.getState().page).toBe('license')
+    useAppStore.getState().setPage('onboarding')
+    expect(useAppStore.getState().page).toBe('onboarding')
   })
 
   it('setVersion sets version string', () => {

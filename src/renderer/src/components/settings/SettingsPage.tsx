@@ -8,6 +8,8 @@ import { useUsageStore } from '@/stores/usage-store'
 import { TRUST_PROFILES, type TrustProfile } from '@/types/trust'
 import { BYOKGuide } from './BYOKGuide'
 import { TelemetryDataCategories } from './TelemetryDataCategories'
+import { TelemetryViewer } from './TelemetryViewer'
+import { SystemHealth } from './SystemHealth'
 
 // ── Mono font shorthand ──────────────────────────────────────
 const MONO = "'IBM Plex Mono', monospace"
@@ -18,7 +20,9 @@ const SECTIONS = [
   { id: 'rhythm',    label: 'Tu rutina',            group: 'Comportamiento' },
   { id: 'usage',     label: 'Uso del agente',        group: 'Avanzado' },
   { id: 'byok',      label: 'API propia (BYOK)',     group: 'Avanzado' },
+  { id: 'composio',  label: 'Composio (tools)',      group: 'Avanzado' },
   { id: 'telemetry', label: 'Datos de investigación',group: 'Avanzado' },
+  { id: 'health',    label: 'System Health',         group: 'Avanzado' },
 ]
 
 // ── Trust profile extended data ──────────────────────────────
@@ -105,6 +109,13 @@ export function SettingsPage(): React.JSX.Element {
   const [testing, setTesting] = useState(false)
   const [saving, setSaving] = useState(false)
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
+  // Telemetry viewer
+  const [showTelemetryViewer, setShowTelemetryViewer] = useState(false)
+  // Composio key state
+  const [composioKey, setComposioKey] = useState('')
+  const [composioKeyHint, setComposioKeyHint] = useState<string | null>(null)
+  const [savingComposio, setSavingComposio] = useState(false)
+  const [composioFeedback, setComposioFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
   // Rhythm: inline edit state
   const [editingTime, setEditingTime] = useState<'morning' | 'eod' | null>(null)
 
@@ -115,7 +126,7 @@ export function SettingsPage(): React.JSX.Element {
   // Stores
   const settings = useSettingsStore()
   const { loadSettings } = settings
-  const { costUsd, limitUsd, limitReached, resetDate, fetchUsage } = useUsageStore()
+  const { costUsd, requestCount, fetchUsage } = useUsageStore()
   const trustProfile = useTrustStore((s) => s.profile)
   const setTrustProfile = useTrustStore((s) => s.setProfile)
   const loadTrustProfile = useTrustStore((s) => s.loadProfile)
@@ -124,9 +135,39 @@ export function SettingsPage(): React.JSX.Element {
   useEffect(() => {
     loadSettings()
     loadLLMConfig()
+    loadComposioConfig()
     loadTrustProfile()
     fetchUsage()
   }, [loadSettings, loadTrustProfile, fetchUsage])
+
+  async function loadComposioConfig(): Promise<void> {
+    try {
+      const result = await window.api.composio.getApiKey()
+      if (result?.hint) setComposioKeyHint(result.hint)
+    } catch {
+      // No key configured
+    }
+  }
+
+  async function handleSaveComposioKey(): Promise<void> {
+    if (!composioKey.trim()) return
+    setSavingComposio(true)
+    setComposioFeedback(null)
+    try {
+      const result = await window.api.composio.setApiKey(composioKey)
+      if (result.success) {
+        setComposioKeyHint(composioKey.slice(0, 4) + '...' + composioKey.slice(-4))
+        setComposioKey('')
+        setComposioFeedback({ type: 'success', message: 'Composio API key guardada.' })
+      } else {
+        setComposioFeedback({ type: 'error', message: result.error || 'Error al guardar' })
+      }
+    } catch (err) {
+      setComposioFeedback({ type: 'error', message: err instanceof Error ? err.message : 'Error al guardar' })
+    } finally {
+      setSavingComposio(false)
+    }
+  }
 
   // Scroll-spy via IntersectionObserver
   useEffect(() => {
@@ -217,7 +258,7 @@ export function SettingsPage(): React.JSX.Element {
     if (path) settings.setSetting('folderWatchPath', path)
   }
 
-  const usagePct = limitUsd > 0 ? Math.min((costUsd / limitUsd) * 100, 100) : 0
+  // Usage is now informational only (no ceiling)
 
   return (
     <div className="flex h-full overflow-hidden bg-background" style={{ color: '#e8e9eb', fontSize: 13 }}>
@@ -576,60 +617,38 @@ export function SettingsPage(): React.JSX.Element {
           <div className="flex-1 h-px" style={{ background: '#1f2024' }} />
         </div>
 
-        {/* ══ §3 Estado del agente (Usage) ══ */}
+        {/* ══ §3 Uso del agente (Usage) ══ */}
         <section id="s-usage" className="max-w-[620px] mb-12" style={{ scrollMarginTop: 32 }}>
           <SectionHeader
             eyebrow="Avanzado · uso"
-            title="Estado del agente"
-            desc="El agente usa una infraestructura compartida con un límite mensual. El 99% de los usuarios nunca lo alcanzan en uso normal."
+            title="Uso del agente"
+            desc="El agente usa tu propia API key. Aqui puedes ver el costo estimado de este mes basado en los tokens consumidos."
           />
 
           <div className="rounded-[10px] p-4" style={{ background: '#151618', border: '1px solid #1f2024' }}>
-            <div className="flex items-start justify-between mb-3.5">
+            <div className="flex items-start justify-between">
               <div>
                 <div className="flex items-center gap-2 mb-1">
                   <div
                     className="w-2 h-2 rounded-full"
-                    style={{
-                      background: limitReached ? '#e05c5c' : '#4caf82',
-                      boxShadow: limitReached ? undefined : '0 0 5px #4caf82',
-                    }}
+                    style={{ background: '#4caf82', boxShadow: '0 0 5px #4caf82' }}
                   />
                   <span className="text-[13px] text-[#e8e9eb]">
-                    {limitReached ? 'Límite mensual alcanzado' : 'El agente funciona con normalidad'}
+                    El agente funciona con normalidad
                   </span>
                 </div>
-                {resetDate && (
-                  <div className="text-[9px] text-[#4a4d55]" style={{ fontFamily: MONO }}>
-                    El límite se reinicia el{' '}
-                    {new Date(resetDate).toLocaleDateString('es-ES', { day: 'numeric', month: 'long' })}
-                  </div>
-                )}
+                <div className="text-[9px] text-[#4a4d55]" style={{ fontFamily: MONO }}>
+                  {requestCount} solicitudes este mes
+                </div>
               </div>
               <div className="text-right">
                 <div className="text-[20px] font-light text-[#e8e9eb]" style={{ fontFamily: MONO }}>
                   ${costUsd.toFixed(2)}
                 </div>
                 <div className="text-[10px] text-[#4a4d55]" style={{ fontFamily: MONO }}>
-                  de ${limitUsd.toFixed(2)} mensuales
+                  costo estimado este mes
                 </div>
               </div>
-            </div>
-            <div
-              className="h-[3px] rounded-sm overflow-hidden mb-1.5"
-              style={{ background: '#232428' }}
-            >
-              <div
-                className="h-full rounded-sm transition-all"
-                style={{
-                  width: `${usagePct}%`,
-                  background: limitReached ? '#e05c5c' : usagePct > 80 ? '#d4a843' : '#4caf82',
-                }}
-              />
-            </div>
-            <div className="text-[9px] text-[#4a4d55]" style={{ fontFamily: MONO }}>
-              {usagePct.toFixed(1)}% usado este mes
-              {usagePct < 5 ? ' — muy lejos del límite' : ''}
             </div>
           </div>
         </section>
@@ -758,7 +777,91 @@ export function SettingsPage(): React.JSX.Element {
           </div>
         </section>
 
-        {/* ══ §5 Telemetry ══ */}
+        {/* ══ §5 Composio ══ */}
+        <section id="s-composio" className="max-w-[620px] mb-12" style={{ scrollMarginTop: 32 }}>
+          <SectionHeader
+            eyebrow="Avanzado · integraciones"
+            title="Composio API Key"
+            desc={
+              <>
+                Agrega una clave de Composio para conectar herramientas como Gmail, Calendar y Slack.{' '}
+                <button
+                  onClick={() => window.api.app.openExternal('https://composio.dev')}
+                  className="text-[#5b7cf6] hover:underline cursor-pointer"
+                  style={{ background: 'none', border: 'none', padding: 0, font: 'inherit' }}
+                >
+                  Obtén una clave gratis en composio.dev
+                </button>
+              </>
+            }
+          />
+
+          <div className="rounded-[10px] p-4" style={{ background: '#151618', border: '1px solid #1f2024' }}>
+            {composioKeyHint && (
+              <p className="text-[11px] text-[#4a4d55] mb-2" style={{ fontFamily: MONO }}>
+                Clave actual: {composioKeyHint}
+              </p>
+            )}
+
+            <div className="flex gap-2">
+              <input
+                type="password"
+                placeholder={composioKeyHint ? 'Ingresa nueva clave para reemplazar' : 'Pega tu Composio API key aquí'}
+                value={composioKey}
+                onChange={(e) => setComposioKey(e.target.value)}
+                className="flex-1 rounded-[6px] px-3 py-2 text-[11px] text-[#e8e9eb] outline-none transition-colors"
+                style={{
+                  background: '#1c1d20',
+                  border: '1px solid #2a2b2f',
+                  fontFamily: MONO,
+                }}
+                onFocus={(e) => (e.currentTarget.style.borderColor = '#5b7cf6')}
+                onBlur={(e) => (e.currentTarget.style.borderColor = '#2a2b2f')}
+              />
+              <button
+                onClick={handleSaveComposioKey}
+                disabled={savingComposio || !composioKey.trim()}
+                className="px-3.5 py-2 rounded-[6px] text-[12px] border transition-all cursor-pointer whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+                style={{
+                  background: 'transparent',
+                  border: '1px solid #2a2b2f',
+                  color: '#7a7d85',
+                  fontFamily: 'inherit',
+                }}
+                onMouseEnter={(e) => {
+                  if (!savingComposio && composioKey.trim()) {
+                    e.currentTarget.style.borderColor = '#5b7cf6'
+                    e.currentTarget.style.color = '#5b7cf6'
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.borderColor = '#2a2b2f'
+                  e.currentTarget.style.color = '#7a7d85'
+                }}
+              >
+                {savingComposio && <Loader2 className="w-3 h-3 animate-spin" />}
+                {savingComposio ? 'Guardando...' : 'Guardar'}
+              </button>
+            </div>
+
+            {composioFeedback && (
+              <p
+                className="mt-2 text-[11px]"
+                style={{ color: composioFeedback.type === 'success' ? '#4caf82' : '#e05c5c' }}
+              >
+                {composioFeedback.message}
+              </p>
+            )}
+
+            {!composioKeyHint && (
+              <p className="mt-3 text-[11px] text-[#4a4d55] leading-[1.4]">
+                Sin una clave de Composio, el agente funciona para chat pero no puede conectar herramientas externas.
+              </p>
+            )}
+          </div>
+        </section>
+
+        {/* ══ §6 Telemetry ══ */}
         <section id="s-telemetry" className="max-w-[620px] mb-12" style={{ scrollMarginTop: 32 }}>
           <SectionHeader
             eyebrow="Avanzado · privacidad"
@@ -788,6 +891,26 @@ export function SettingsPage(): React.JSX.Element {
             >
               <TelemetryDataCategories />
               <button
+                onClick={() => setShowTelemetryViewer(true)}
+                className="px-3 py-1 rounded-[6px] text-[11.5px] border transition-colors cursor-pointer"
+                style={{
+                  background: 'transparent',
+                  border: '1px solid #2a2b2f',
+                  color: '#7a7d85',
+                  fontFamily: 'inherit',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.borderColor = '#5b7cf6'
+                  e.currentTarget.style.color = '#5b7cf6'
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.borderColor = '#2a2b2f'
+                  e.currentTarget.style.color = '#7a7d85'
+                }}
+              >
+                Ver datos
+              </button>
+              <button
                 onClick={handleDeleteTelemetryData}
                 className="px-3 py-1 rounded-[6px] text-[11.5px] border transition-colors cursor-pointer"
                 style={{
@@ -810,6 +933,20 @@ export function SettingsPage(): React.JSX.Element {
             </div>
           </div>
         </section>
+
+        {/* ══ §7 System Health ══ */}
+        <section id="s-health" className="max-w-[620px] mb-12" style={{ scrollMarginTop: 32 }}>
+          <SectionHeader
+            eyebrow="Avanzado · sistema"
+            title="System Health"
+            desc="Estado de las tareas de fondo: sintesis de memoria, decaimiento de importancia, backfill de embeddings."
+          />
+          <SystemHealth />
+        </section>
+
+        {showTelemetryViewer && (
+          <TelemetryViewer onClose={() => setShowTelemetryViewer(false)} />
+        )}
 
       </div>
     </div>

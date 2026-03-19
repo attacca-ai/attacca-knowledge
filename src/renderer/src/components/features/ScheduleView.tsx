@@ -426,7 +426,7 @@ export function ScheduleView(): React.JSX.Element {
 
       // Fetch Google Calendar events
       try {
-        const googleResp = await window.api.relay.callTool('GOOGLECALENDAR_EVENTS_LIST', {
+        const googleResp = await window.api.composio.callTool('GOOGLECALENDAR_EVENTS_LIST', {
           calendarId: 'primary',
           timeMin,
           timeMax,
@@ -446,7 +446,7 @@ export function ScheduleView(): React.JSX.Element {
 
       // Fetch Outlook Calendar events (relay tries multiple action names automatically)
       try {
-        const outlookResp = await window.api.relay.callTool('ATTACCA_OUTLOOK_EVENTS', {
+        const outlookResp = await window.api.composio.callTool('ATTACCA_OUTLOOK_EVENTS', {
           timeMin,
           timeMax,
           top: 50

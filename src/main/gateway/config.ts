@@ -1,7 +1,6 @@
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
-import { createHash } from 'crypto'
 import { app } from 'electron'
 
 const OPENCLAW_DIR = join(homedir(), '.openclaw')
@@ -130,23 +129,22 @@ export function ensureControlUiConfig(): void {
   writeConfig(config)
 }
 
-const RELAY_SERVICE_TOKEN = 'attacca-relay-service'
-const RELAY_PORT = 3100
-const RELAY_MODEL_ID = 'claude-sonnet-4-6'
+const MEMORY_SERVER_PORT = 3101
+const COMPOSIO_SERVER_PORT = 3102
 
 /**
- * Writes the OpenClaw models.providers config so the gateway routes LLM calls
- * through the local relay's Anthropic-compatible proxy by default.
- *
- * - No BYOK: uses the "attacca-relay" custom provider → relay's own API key
- * - BYOK configured: uses the built-in provider directly (lifecycle.ts injects env var)
+ * Configures OpenClaw's LLM routing and memory search.
+ * BYOK is the only mode — routes directly to the user's provider.
  *
  * Reads and rewrites the full openclaw.json to preserve OpenClaw-managed fields
  * (commands, meta, agents.defaults.compaction, etc.).
  */
+/**
+ * Configures OpenClaw's LLM routing and memory search.
+ * BYOK is the only mode — routes directly to the user's provider.
+ */
 export function ensureRelayProviderConfig(
-  byokConfig?: { provider: string; model: string } | null,
-  licenseKey?: string | null
+  byokConfig?: { provider: string; model: string } | null
 ): void {
   let rawConfig: Record<string, unknown> = {}
   if (existsSync(CONFIG_PATH)) {
@@ -157,36 +155,6 @@ export function ensureRelayProviderConfig(
     }
   }
 
-  // Compute per-user base URL so the relay can track usage per license key.
-  // A licenseKey is always expected in production (app is behind the license gate).
-  const keyHash = licenseKey ? createHash('sha256').update(licenseKey).digest('hex') : null
-  const relayBaseUrl = keyHash
-    ? `http://localhost:${RELAY_PORT}/anthropic/u/${keyHash}`
-    : `http://localhost:${RELAY_PORT}/anthropic/u/unlicensed` // fallback returns 401
-
-  // Register the relay provider (always present so it can be switched to at runtime)
-  const models = (rawConfig.models ?? {}) as Record<string, unknown>
-  models.mode = 'merge'
-  const providers = (models.providers ?? {}) as Record<string, unknown>
-  providers['attacca-relay'] = {
-    baseUrl: relayBaseUrl,
-    apiKey: RELAY_SERVICE_TOKEN,
-    api: 'anthropic-messages',
-    models: [
-      {
-        id: RELAY_MODEL_ID,
-        name: 'Claude Sonnet (Attacca)',
-        reasoning: false,
-        input: ['text'],
-        cost: { input: 0, output: 0 },
-        contextWindow: 200000,
-        maxTokens: 8192
-      }
-    ]
-  }
-  models.providers = providers
-  rawConfig.models = models
-
   // Allow skill-driven tool execution in the OpenClaw sandbox host.
   const tools = (rawConfig.tools ?? {}) as Record<string, unknown>
   const exec = (tools.exec ?? {}) as Record<string, unknown>
@@ -194,22 +162,22 @@ export function ensureRelayProviderConfig(
   tools.exec = exec
   rawConfig.tools = tools
 
-  // Set default model: BYOK → built-in provider; default → relay proxy
+  // Set default model via BYOK built-in provider
   const agents = (rawConfig.agents ?? {}) as Record<string, unknown>
   const defaults = (agents.defaults ?? {}) as Record<string, unknown>
   if (byokConfig) {
     defaults.model = { primary: `${byokConfig.provider}/${byokConfig.model}` }
   } else {
-    defaults.model = { primary: `attacca-relay/${RELAY_MODEL_ID}` }
+    // No BYOK configured yet — use anthropic as default (user must set key in wizard)
+    defaults.model = { primary: 'anthropic/claude-sonnet-4-5-20250514' }
   }
-  // Enable native memory search with relay-proxied embeddings.
-  // OpenClaw indexes workspace/memory/*.md files into its own SQLite
-  // and uses this provider for embedding generation + vector search.
+
+  // Enable native memory search via local memory server (port 3101)
   defaults.memorySearch = {
     provider: 'openai',
     remote: {
-      baseUrl: `http://localhost:${RELAY_PORT}/memory`,
-      apiKey: RELAY_SERVICE_TOKEN,
+      baseUrl: `http://localhost:${MEMORY_SERVER_PORT}`,
+      apiKey: 'local',
       batch: { enabled: false }
     },
     sync: {
@@ -220,6 +188,13 @@ export function ensureRelayProviderConfig(
 
   agents.defaults = defaults
   rawConfig.agents = agents
+
+  // Clean up legacy relay provider config from pre-OSS installs
+  const models = (rawConfig.models ?? {}) as Record<string, unknown>
+  const providers = (models.providers ?? {}) as Record<string, unknown>
+  delete providers['attacca-relay']
+  models.providers = providers
+  rawConfig.models = models
 
   if (!existsSync(OPENCLAW_DIR)) {
     mkdirSync(OPENCLAW_DIR, { recursive: true })
@@ -235,7 +210,6 @@ export function getOpenClawDir(): string {
   return OPENCLAW_DIR
 }
 
-const RELAY_PORT_FOR_SKILL = 3100
 const SKILL_DIR = join(OPENCLAW_DIR, 'workspace', 'skills', 'attacca-tools')
 const SESSIONS_JSON = join(OPENCLAW_DIR, 'agents', 'main', 'sessions', 'sessions.json')
 
@@ -268,15 +242,13 @@ export function clearSessionSkillsSnapshot(): void {
 
 /**
  * Writes a custom OpenClaw workspace skill that lets the agent call Composio
- * tool actions (Gmail, Google Calendar, Slack, etc.) via the local relay.
+ * tool actions (Gmail, Google Calendar, Slack, etc.) via the local Composio service.
  *
  * The entityId is derived from the license key using the same hash chain as
  * the relay server, so it matches the user's Composio OAuth connections.
  * The skill is re-written on every gateway start so it stays current.
  */
-export function ensureComposioSkill(licenseKey: string, connectedTools?: string[]): void {
-  const keyHash = createHash('sha256').update(licenseKey).digest('hex')
-  const entityId = createHash('sha256').update(`composio:${keyHash}`).digest('hex').slice(0, 32)
+export function ensureComposioSkill(entityId: string, connectedTools?: string[]): void {
 
   if (!existsSync(SKILL_DIR)) {
     mkdirSync(SKILL_DIR, { recursive: true })
@@ -289,7 +261,7 @@ export function ensureComposioSkill(licenseKey: string, connectedTools?: string[
 }
 
 /**
- * Generates a portable Node.js CJS script that calls the relay agent endpoint.
+ * Generates a portable Node.js CJS script that calls the local Composio server.
  * Using node instead of curl avoids Windows cmd.exe single-quote quoting issues.
  * The entityId is baked in at generation time.
  */
@@ -300,9 +272,9 @@ var paramsArg = process.argv[3]
 var ENTITY_ID = ${JSON.stringify(entityId)}
 
 function run(params) {
-  fetch('http://localhost:${RELAY_PORT_FOR_SKILL}/agent/tools', {
+  fetch('http://localhost:${COMPOSIO_SERVER_PORT}/execute', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-api-key': 'attacca-relay-service' },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ actionName: ACTION_NAME, entityId: ENTITY_ID, params: params })
   })
     .then(function(r) { return r.json() })
@@ -607,7 +579,7 @@ This user's memory is stored in a local database. When asked about past events, 
 
   return `---
 name: attacca-tools
-description: "${toolList} via the Attacca relay"
+description: "${toolList} via local Composio service"
 metadata:
   {
     "openclaw": {

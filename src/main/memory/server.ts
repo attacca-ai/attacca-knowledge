@@ -125,6 +125,28 @@ export function startMemoryServer(): Promise<number> {
           return
         }
 
+        // OpenAI-compatible embeddings endpoint for OpenClaw native memory search
+        if (req.url === '/embeddings' || req.url === '/v1/embeddings') {
+          const input = body.input as string | string[]
+          const texts = Array.isArray(input) ? input : [input]
+          const results: Array<{ object: string; index: number; embedding: number[] }> = []
+
+          for (let i = 0; i < texts.length; i++) {
+            const emb = await generateEmbedding(texts[i])
+            if (emb) {
+              results.push({ object: 'embedding', index: i, embedding: Array.from(emb) })
+            }
+          }
+
+          sendJson(res, 200, {
+            object: 'list',
+            data: results,
+            model: 'text-embedding-3-small',
+            usage: { prompt_tokens: 0, total_tokens: 0 }
+          })
+          return
+        }
+
         sendJson(res, 404, { success: false, error: 'Not found' })
       } catch (err) {
         console.error('[memory-server] Error:', err)

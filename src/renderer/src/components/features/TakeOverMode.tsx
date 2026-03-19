@@ -228,7 +228,7 @@ export function TakeOverMode(): React.JSX.Element {
 
   // Load connected tools on mount
   useEffect(() => {
-    window.api.relay
+    window.api.composio
       .getConnected()
       .then((tools) => {
         const normalized = tools.map((t) => COMPOSIO_TO_TOOL_KEY[t] ?? t)

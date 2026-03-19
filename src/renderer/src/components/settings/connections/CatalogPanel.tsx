@@ -24,7 +24,7 @@ export function CatalogPanel({
   const [query, setQuery] = useState('')
 
   useEffect(() => {
-    window.api.relay.listApps().then((list) => {
+    window.api.composio.listApps().then((list) => {
       setApps(list as CatalogApp[])
       setLoading(false)
     }).catch(() => setLoading(false))

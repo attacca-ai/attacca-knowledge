@@ -4,11 +4,6 @@ import { vi } from 'vitest'
 
 export function installMockApi(): void {
   const api = {
-    license: {
-      validate: vi.fn().mockResolvedValue({ success: true, plan: 'monthly' }),
-      checkExisting: vi.fn().mockResolvedValue({ exists: false, valid: false }),
-      getStatus: vi.fn().mockResolvedValue({ status: 'unchecked' })
-    },
     gateway: {
       start: vi.fn().mockResolvedValue({ success: true }),
       stop: vi.fn().mockResolvedValue({ success: true }),
@@ -65,13 +60,24 @@ export function installMockApi(): void {
       status: vi.fn().mockResolvedValue({ connected: false, config: null }),
       disconnect: vi.fn().mockResolvedValue({ success: true })
     },
-    relay: {
+    composio: {
+      setApiKey: vi.fn().mockResolvedValue({ success: true }),
+      getApiKey: vi.fn().mockResolvedValue({ hint: null }),
       initiateOAuth: vi.fn().mockResolvedValue({ success: true, connectionId: 'conn_1', redirectUrl: 'https://example.com' }),
-      getOAuthStatus: vi.fn().mockResolvedValue({ connectionId: 'conn_1', status: 'active', appName: 'test' }),
-      disconnectOAuth: vi.fn().mockResolvedValue({ success: true }),
-      getUsage: vi.fn().mockResolvedValue({ totalCostUsd: 0, limitUsd: 30, requestCount: 0, limitReached: false, resetDate: '2026-03-01' }),
+      getStatus: vi.fn().mockResolvedValue({ connectionId: 'conn_1', status: 'active', appName: 'test' }),
       getConnected: vi.fn().mockResolvedValue([]),
+      listApps: vi.fn().mockResolvedValue([]),
       callTool: vi.fn().mockResolvedValue({ success: true, result: { data: { items: [] } } })
+    },
+    scheduler: {
+      getTasks: vi.fn().mockResolvedValue([]),
+      setEnabled: vi.fn().mockResolvedValue({ success: true }),
+      runNow: vi.fn().mockResolvedValue({ success: true })
+    },
+    relay: {
+      getUsage: vi.fn().mockResolvedValue({ totalCostUsd: 0, limitUsd: 30, requestCount: 0, limitReached: false, resetDate: '2026-03-01' }),
+      llmCompletion: vi.fn().mockResolvedValue({ success: true, content: '' }),
+      extractUrl: vi.fn().mockResolvedValue({ success: true, type: 'article', title: '', text: '', wordCount: 0 })
     },
     agent: {
       getState: vi.fn().mockResolvedValue(null),

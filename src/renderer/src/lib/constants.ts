@@ -4,8 +4,6 @@ export const GATEWAY_PORT = 18789
 export const APP_NAME = 'Attacca'
 export const APP_DESCRIPTION = 'AI Productivity Assistant'
 
-export const GUMROAD_PRODUCT_ID = 'attacca'
-
 export const LLM_PROVIDERS = {
   anthropic: {
     name: 'Anthropic Claude',

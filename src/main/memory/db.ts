@@ -100,10 +100,38 @@ function initSchema(database: Database.Database): void {
       created_at INTEGER NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(type);
     CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at);
     CREATE INDEX IF NOT EXISTS idx_memories_superseded ON memories(superseded_by);
   `)
+
+  // Check if embedding dimension migration is needed
+  triggerEmbeddingMigration(database)
+}
+
+// ── Embedding Migration ─────────────────────────────────────────────────────
+
+function triggerEmbeddingMigration(database: Database.Database): void {
+  try {
+    const { EMBEDDING_DIMS } = require('./embeddings') as typeof import('./embeddings')
+    const row = database.prepare('SELECT value FROM meta WHERE key = ?').get('embedding_dims') as { value: string } | undefined
+    if (row && row.value === String(EMBEDDING_DIMS)) return // already migrated
+
+    // Trigger async migration — does not block startup
+    import('./migrate-embeddings').then((m) => m.migrateEmbeddings()).then((result) => {
+      console.log(`[memory] Embedding migration: ${result.migrated} migrated, ${result.failed} failed`)
+      database.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run('embedding_dims', String(EMBEDDING_DIMS))
+    }).catch((err) => {
+      console.warn('[memory] Embedding migration failed:', err)
+    })
+  } catch {
+    // Module not ready yet — skip migration on this launch
+  }
 }
 
 // ── CRUD Operations ──────────────────────────────────────────────────────────
@@ -181,6 +209,10 @@ export function getMemoryStats(): { total: number; byType: Record<string, number
   const byType: Record<string, number> = {}
   for (const row of byTypeRows) byType[row.type] = row.c
   return { total, byType, withEmbeddings }
+}
+
+export function updateImportance(id: string, newImportance: number): void {
+  getMemoryDb().prepare('UPDATE memories SET importance = ? WHERE id = ?').run(newImportance, id)
 }
 
 // ── Identity Operations ──────────────────────────────────────────────────────

@@ -28,20 +28,14 @@ npm run build:win      # NSIS installer (x64)
 npm run build:linux    # AppImage (x64)
 ```
 
-Relay server (separate package in `relay-server/`):
-```bash
-cd relay-server && npm run dev       # Dev with tsx watch
-cd relay-server && npm run migrate   # Run DB migrations
-```
-
 ## Architecture
 
 ### Electron Three-Process Model
 
 The app follows Electron's standard three-process architecture, built with `electron-vite`:
 
-- **Main process** (`src/main/`): Node.js — manages window lifecycle, system tray, spawns the OpenClaw gateway as a child process, handles IPC, license validation (Gumroad), OAuth flows, relay communication, telemetry, and file watchers.
-- **Preload** (`src/preload/index.ts`): Bridges main↔renderer via `contextBridge`. Exposes `window.api` with namespaced methods (license, gateway, onboarding, oauth, llm, app, settings, fs, activecollab, relay, telemetry, **kb**, **memory**). All renderer↔main communication goes through this typed API.
+- **Main process** (`src/main/`): Node.js — manages window lifecycle, system tray, spawns the OpenClaw gateway as a child process, handles IPC, user identity, local Composio service, local usage tracking, OAuth flows, telemetry, and file watchers.
+- **Preload** (`src/preload/index.ts`): Bridges main↔renderer via `contextBridge`. Exposes `window.api` with namespaced methods (gateway, onboarding, oauth, llm, app, settings, fs, activecollab, composio, scheduler, telemetry, **kb**, **memory**). All renderer↔main communication goes through this typed API.
 - **Renderer** (`src/renderer/src/`): React 19 + TypeScript SPA with Tailwind CSS v4, Zustand stores, and shadcn/ui (New York style) components.
 
 ### Path Aliases
@@ -52,16 +46,22 @@ The app follows Electron's standard three-process architecture, built with `elec
 
 The main process spawns `openclaw.mjs` (from the `openclaw` npm package) as a child process on port 18789. The renderer connects to it via WebSocket using a JSON-RPC 2.0 protocol (`src/renderer/src/lib/rpc.ts`). The `GatewayClient` class (`src/renderer/src/lib/gateway-client.ts`) is a singleton that manages the WebSocket connection with auto-reconnect and pending request tracking.
 
-Gateway lifecycle: `src/main/gateway/lifecycle.ts` — has auto-restart with exponential backoff (max 5 restarts per 60s). Config stored at `~/.openclaw/openclaw.json`.
+Gateway lifecycle: `src/main/gateway/lifecycle.ts` — has auto-restart with exponential backoff (max 5 restarts per 60s). Config stored at `~/.openclaw/openclaw.json`. LLM calls route directly to provider APIs using the user's own BYOK keys (configured in settings). Memory search points to `localhost:3101` (local memory server).
 
 ### IPC Channel Pattern
 
 All IPC channels are defined as string constants in `src/main/ipc/channels.ts` (the `IPC` object). Handlers are registered in `src/main/ipc/handlers.ts`. New IPC channels must be added to both the `IPC` constant map and the preload bridge (`src/preload/index.ts`).
 
-Key relay channels:
-- `relay:llm-completion` — calls the relay server's `/llm/completions` endpoint with a messages array; exposed as `window.api.relay.llmCompletion(messages, opts?)`
-- `relay:list-apps` — fetches Composio's full toolkit catalog via `/composio/apps`; exposed as `window.api.relay.listApps()`
-- `relay:get-connected` — returns connected Composio tool slugs; exposed as `window.api.relay.getConnected()`
+Key Composio channels (exposed as `window.api.composio`):
+- `composio:initiate-oauth` — kicks off OAuth flow for a toolkit slug
+- `composio:get-connected` — returns connected Composio tool slugs
+- `composio:call-tool` — executes a Composio tool action
+- `composio:list-apps` — fetches the full toolkit catalog
+
+Key local channels:
+- `llm:completion` — local LLM completion using BYOK provider keys; exposed as `window.api.llm.completion(messages, opts?)`
+- `extract:url` — local URL content extraction
+- `usage:get` — local usage tracking data
 - `gateway:get-token` — reads the auth token from `~/.openclaw/openclaw.json`; exposed as `window.api.gateway.getToken()`
 
 Knowledge Base channels (exposed as `window.api.kb`):
@@ -77,31 +77,29 @@ Memory channels (exposed as `window.api.memory`):
 
 ### State Management
 
-Zustand stores in `src/renderer/src/stores/` — one store per domain (agent, app, gateway, license, notification, onboarding, permission, settings, trust, usage). Tests can set state directly via `useXxxStore.setState({...})`.
+Zustand stores in `src/renderer/src/stores/` — one store per domain (agent, app, gateway, notification, onboarding, permission, settings, trust, usage). Tests can set state directly via `useXxxStore.setState({...})`.
 
 ### Permission Engine
 
 Three-tier risk classification (low/medium/high) defined in `src/renderer/src/lib/permission-engine.ts`. Actions are classified against a static risk floor map; context (shared resources, attendees) can escalate but never downgrade risk. Trust profiles (cautious/balanced/autonomous) only affect presentation behavior, not the risk tier itself.
 
-### Relay Server
+### Local Services
 
-Separate Express.js backend in `relay-server/` — proxies LLM requests (content-blind), manages Composio OAuth connections, tracks usage, and stores telemetry. Authenticates desktop clients via license key Bearer tokens. Uses PostgreSQL (`relay-server/src/db/`). The desktop app communicates with it through `src/main/relay/client.ts` using `electron.net.fetch`.
+The main process starts several local services alongside the OpenClaw gateway:
 
-Key relay endpoints used by the desktop:
-- `POST /llm/completions` — non-streaming LLM proxy (Anthropic/OpenAI); used by `window.api.relay.llmCompletion()`
-- `POST /anthropic/v1/messages` — Anthropic-compatible proxy; the OpenClaw gateway routes all agent LLM calls here (configured via `models.providers.attacca-relay.baseUrl`)
-- `POST /agent/tools` — Composio tool execution proxy; called by the OpenClaw `attacca-tools` skill with service token auth
-- `GET /composio/apps` — returns list of all available Composio toolkits (`{ apps: RelayComposioApp[] }`), with a 50-tool fallback if the Composio API is unavailable. `RelayComposioApp = { slug, name, categories, description }`
-- `GET /composio/connected` — returns slugs of currently connected tools
-- `POST /composio/initiate-oauth` — kicks off OAuth flow for a toolkit slug
-- `POST /agent/tools` — Composio tool execution proxy (`ATTACCA_*` actions); supports `ATTACCA_OUTLOOK_SEND_EMAIL` and `ATTACCA_OUTLOOK_REPLY_EMAIL` in addition to standard Composio actions
+- **Memory server** (port 3101): HTTP server (`src/main/memory/server.ts`) exposing `/search`, `/save`, `/stats`, `/identity`, and `/embeddings`. Provides semantic search over the Attacca memory SQLite DB and serves OpenClaw-compatible embedding endpoints for memory indexing.
+- **Composio server** (port 3102): Local HTTP server (`src/main/composio/service.ts`) that handles agent tool execution requests. The OpenClaw `attacca-tools` skill calls this to run Composio actions (e.g., send email, create calendar event) using the user's own Composio API key.
+- **Usage tracking**: Local SQLite-based usage tracking for LLM token consumption and tool calls — no external server required.
 
-### OpenAI Fallback
+### Background Scheduler
 
-The relay server (`relay-server/src/routes/anthropic.ts`) auto-falls back to OpenAI when Anthropic returns a billing error (`overloaded_error` with "credit balance" message). Fallback model: `gpt-5.1` (configurable via `OPENAI_FALLBACK_MODEL` env var). Key implementation details:
-- `convertAnthropicToOpenAI()` — strips `thinking`/`redacted_thinking` blocks, maps `max_tokens` → `max_completion_tokens` (required by GPT-5.1)
-- `OPENAI_TOOL_INJECTION` — injected into system prompt when `bash` tool is present, instructs GPT-5.1 to call the `bash` tool for every action
-- `streamOpenAIAsAnthropic()` / `convertOpenAIToAnthropic()` — convert OpenAI responses back to Anthropic SSE format
+Cron-based background scheduler in `src/main/scheduler/` that runs recurring tasks while the app is open. Has 4 registered tasks:
+- Daily memory synthesis (consolidates recent memories into identity traits)
+- Weekly memory synthesis (broader pattern recognition across the week)
+- Embedding backfill (generates embeddings for any memories saved without them)
+- Stale cache cleanup (purges expired schedule and briefing caches)
+
+Tasks are registered declaratively and managed by a central scheduler that handles timing, error recovery, and overlap prevention.
 
 ### Knowledge Base
 
@@ -131,37 +129,32 @@ Local-first memory system that lets the agent learn user preferences, decisions,
 - `identity` — key-value traits (e.g., `communication_style`, `scheduling_preferences`) with confidence scores
 - `synthesis_log` — tracks daily/weekly synthesis runs
 
-**Memory lifecycle**: Capture → Embed → Store → Retrieve → (future: Synthesize → Evolve Identity)
+**Memory lifecycle**: Capture → Embed → Store → Retrieve → Synthesize → Evolve Identity
 
-**Embedding generation**: Two relay endpoints:
-- `POST /memory/embed` — custom format for Attacca desktop (`{ text }` → `{ success, embedding }`)
-- `POST /memory/embeddings` — OpenAI-compatible format for OpenClaw native memory search (`{ model, input }` → `{ data: [{ embedding }] }`)
+**Embedding generation**: Local ONNX model (`all-MiniLM-L6-v2`, 384 dims, ~23MB). Runs in Node.js main process via `@huggingface/transformers`. No API key required. Embeddings are generated asynchronously after save; memories are immediately available via keyword search before embeddings complete.
 
-Both proxy to OpenAI `text-embedding-3-small` (1536 dims), with Voyage-3-lite fallback if only Anthropic key is available. Memories save immediately with `embedding = NULL` when offline; keyword search works as fallback.
-
-**Pending improvement — local embeddings**: Replace OpenAI with `@xenova/transformers` (`all-MiniLM-L6-v2`, 23MB, 384 dims, free, runs in Node.js/ONNX). Requires updating `relay-server/src/routes/memory.ts` and regenerating all embeddings (dimension change 1536 → 384). This would eliminate the OPENAI_API_KEY dependency for the memory system entirely.
-
-**OpenClaw native memory search (primary)**: Configured via `agents.defaults.memorySearch` in `openclaw.json` (written by `ensureRelayProviderConfig()` in `config.ts`). OpenClaw indexes `~/.openclaw/workspace/memory/*.md` files into its own SQLite (`~/.openclaw/memory/main.sqlite`) using `sqlite-vec`. Config: `provider: "openai"`, `remote.baseUrl: "http://localhost:3100/memory"`, `batch.enabled: false`, `sync.onSearch: true`, `sync.watch: true`. The agent's `memory_search` tool uses hybrid BM25 + vector search over this index.
+**OpenClaw native memory search (primary)**: Configured via `agents.defaults.memorySearch` in `openclaw.json` (written by `ensureRelayProviderConfig()` in `config.ts`). OpenClaw indexes `~/.openclaw/workspace/memory/*.md` files into its own SQLite (`~/.openclaw/memory/main.sqlite`) using `sqlite-vec`. Config: `provider: "openai"`, `remote.baseUrl: "http://localhost:3101"`, `batch.enabled: false`, `sync.onSearch: true`, `sync.watch: true`. The agent's `memory_search` tool uses hybrid BM25 + vector search over this index.
 
 **Attacca memory server (secondary)**: Local HTTP server (`src/main/memory/server.ts`, port 3101) exposes `/search`, `/save`, `/stats`, `/identity`. Available to the agent via `memory-search.cjs` in SKILL.md as a fallback. Uses Attacca's own SQLite at `{userData}/attacca-memory/memory.db`.
 
 **Dual write on capture**: `kb:save-capture` writes to (1) Attacca SQLite via `insertMemory()`, (2) `.md` file in `~/.openclaw/workspace/memory/` for OpenClaw indexing. Filenames must be ASCII-only — accented characters are normalized via `normalize('NFD').replace(/[\u0300-\u036f]/g, '')` to avoid Windows ENOENT errors.
 
+**Memory Synthesis**: Daily and weekly synthesis runs via `src/main/memory/synthesizer.ts`, triggered by the background scheduler. Daily synthesis reviews recent memories (last 24h) and distills recurring patterns into identity traits with confidence scores. Weekly synthesis performs broader pattern recognition, adjusts trait confidence based on reinforcement or contradiction, and applies importance decay to unused memories. Synthesis results are logged in the `synthesis_log` table to prevent duplicate runs.
+
 **Key files**:
 - `src/main/memory/db.ts` — schema, CRUD, identity operations
 - `src/main/memory/search.ts` — cosine similarity search with importance × recency ranking
-- `src/main/memory/embeddings.ts` — relay-proxied embedding generation (for Attacca's own SQLite)
+- `src/main/memory/local-embeddings.ts` — local ONNX embedding generation (`all-MiniLM-L6-v2`)
+- `src/main/memory/migrate-embeddings.ts` — migration utility for re-embedding with new model dimensions
+- `src/main/memory/synthesizer.ts` — daily/weekly memory synthesis into identity traits
 - `src/main/memory/server.ts` — local HTTP server for agent skill access (port 3101)
 - `src/main/gateway/config.ts` — writes `memorySearch` config to `openclaw.json` in `ensureRelayProviderConfig()`
-- `relay-server/src/routes/memory.ts` — both embedding endpoints (`/embed` + `/embeddings`)
 - `~/.openclaw/workspace/memory/` — `.md` files indexed by OpenClaw (do not delete)
 - `~/.openclaw/memory/main.sqlite` — OpenClaw's vector search index (auto-managed)
 
-**Future (Phase 3)**: Daily/weekly synthesis via `src/main/memory/synthesizer.ts` to distill memories into identity traits, importance decay for unused memories.
-
 ### Integration Approach
 
-OAuth-based integrations (Gmail, Slack, Google Drive, etc.) are managed through Composio via the relay server. Direct OAuth was deprecated in v1.1. Non-OAuth integrations (ActiveCollab credential auth, Telegram bot token) have dedicated connectors in `src/main/integrations/`.
+OAuth-based integrations (Gmail, Slack, Google Drive, etc.) are managed through Composio locally via `src/main/composio/service.ts` using the user's own Composio API key. Non-OAuth integrations (ActiveCollab credential auth, Telegram bot token) have dedicated connectors in `src/main/integrations/`.
 
 ## Testing
 
@@ -178,7 +171,7 @@ Uses shadcn/ui (New York style, `components.json`). UI primitives live in `src/r
 
 ## App Flow
 
-License gate → Onboarding wizard (tool connection → telemetry consent → use case selection) → Dashboard. The `App.tsx` router uses `useAppStore.page` to switch between these views.
+Setup Wizard (if first run) → Dashboard. The `App.tsx` router uses `useAppStore.page` to switch between these views.
 
 ## Feature Views
 
@@ -190,7 +183,7 @@ type SidebarView = 'dashboard' | 'capture' | 'schedule' | 'transcripts' | 'workf
 
 ### dashboard → `Dashboard.tsx`
 Wraps two panels side-by-side:
-- **`LandscapeView.tsx`** — Morning briefing, 2×2 themes grid, open threads, thread detail chat panel. Auto-triggers once per 6-hour window on gateway connect. Fetches connected tools via `window.api.relay.getConnected()` (normalizes Composio slugs via `COMPOSIO_SLUG_TO_TOOL_KEY`), builds a structured prompt, calls `chat.send`, parses JSON response `{ message, question, themes[], threads[], suggestedActions[] }`. `TOOL_ACTIONS` maps tool IDs to agent instructions.
+- **`LandscapeView.tsx`** — Morning briefing, 2×2 themes grid, open threads, thread detail chat panel. Auto-triggers once per 6-hour window on gateway connect. Fetches connected tools via `window.api.composio.getConnected()` (normalizes Composio slugs via `COMPOSIO_SLUG_TO_TOOL_KEY`), builds a structured prompt, calls `chat.send`, parses JSON response `{ message, question, themes[], threads[], suggestedActions[] }`. `TOOL_ACTIONS` maps tool IDs to agent instructions.
 - **`CapturePanel.tsx`** — Textarea with type-selector pills (thought/action/question), recent captures list (last 20), activity strip showing live agent tool calls. Communicates via `chat.send` + `chat` event listener.
 
 ### capture → `CaptureView.tsx`
@@ -231,7 +224,7 @@ Agent session keys: `workflow-{uuid}` (building) vs `workflow-run-{uuid}` (execu
 ### takeover → `TakeOverMode.tsx`
 3-phase state machine (`phase: 'briefing' | 'active' | 'return'`):
 
-**Phase 1 — Briefing**: Duration chips, scope card (loads connected toolkits via `window.api.relay.getConnected()`, renders one row per allowed action with risk toggle — mid=ON by default, hold=OFF), exceptions textarea, right aside preview. "Activar" button disabled if no tools connected.
+**Phase 1 — Briefing**: Duration chips, scope card (loads connected toolkits via `window.api.composio.getConnected()`, renders one row per allowed action with risk toggle — mid=ON by default, hold=OFF), exceptions textarea, right aside preview. "Activar" button disabled if no tools connected.
 
 **Phase 2 — Active**: Hero band with pulsing amber badge, elapsed timer (30s interval), progress bar toward `endAt`. Activity feed: `active`/`done`/`held` items with colored dots and tool tags. Right aside: stats + held items list + "Ya volví" stop button.
 
@@ -257,7 +250,7 @@ The Connections section (`settings/connections`) was redesigned into two treatme
 
 **Treatment A — ConnectionsPage** (`src/renderer/src/components/settings/ConnectionsPage.tsx`)
 - Two-column layout: main panel (curated tool grid) + `CatalogPanel` (260px right sidebar)
-- `CatalogPanel` (`connections/CatalogPanel.tsx`) loads all Composio apps via `window.api.relay.listApps()`, supports search, one-click connect
+- `CatalogPanel` (`connections/CatalogPanel.tsx`) loads all Composio apps via `window.api.composio.listApps()`, supports search, one-click connect
 - `ToolCard` (`connections/ToolCard.tsx`) — reusable card with connected/connecting/idle states and AlertDialog disconnect confirm
 - `EscapeHatch` (`connections/EscapeHatch.tsx`) — dashed-border CTA linking to CustomToolsPage
 - 15 curated tools defined in `TOOL_META`; non-curated connected tools (from catalog) get a generic fallback display
@@ -266,7 +259,7 @@ The Connections section (`settings/connections`) was redesigned into two treatme
 - 3-state flow: **describe** (free-text input) → **exploring** (animated step feed) → **result** (parsed LLM output)
 - `ExplorationFeed` (`custom-tools/ExplorationFeed.tsx`) — animates 5 investigation steps (identify → auth → capabilities → definition)
 - `ToolResultView` (`custom-tools/ToolResultView.tsx`) — renders structured `CustomToolResult` JSON: capabilities, auth type, risk badges, action buttons
-- Real LLM call via `window.api.relay.llmCompletion()` returns structured JSON describing the tool's API, auth, and capabilities
+- Real LLM call via `window.api.llm.completion()` returns structured JSON describing the tool's API, auth, and capabilities
 - Recent custom connections persisted in `localStorage` under key `attacca_custom_tools`
 - `initialToolName` prop pre-fills the input when navigating from CatalogPanel's escape hatch
 

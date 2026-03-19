@@ -1,13 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
 const api = {
-  // License
-  license: {
-    validate: (key: string) => ipcRenderer.invoke('license:validate', key),
-    checkExisting: () => ipcRenderer.invoke('license:check-existing'),
-    getStatus: () => ipcRenderer.invoke('license:get-status')
-  },
-
   // Gateway
   gateway: {
     start: () => ipcRenderer.invoke('gateway:start'),
@@ -88,19 +81,23 @@ const api = {
     disconnect: () => ipcRenderer.invoke('activecollab:disconnect')
   },
 
-  // Relay (managed service)
-  relay: {
-    initiateOAuth: (appName: string) => ipcRenderer.invoke('relay:oauth-initiate', appName),
-    getOAuthStatus: (connectionId: string) =>
-      ipcRenderer.invoke('relay:oauth-status', connectionId),
-    disconnectOAuth: (appName: string) => ipcRenderer.invoke('relay:oauth-disconnect', appName),
-    getUsage: () => ipcRenderer.invoke('relay:get-usage'),
-    getConnected: () => ipcRenderer.invoke('relay:get-connected'),
+  // Composio (local)
+  composio: {
+    setApiKey: (apiKey: string) => ipcRenderer.invoke('composio:set-api-key', apiKey),
+    getApiKey: () => ipcRenderer.invoke('composio:get-api-key'),
+    initiateOAuth: (appName: string) => ipcRenderer.invoke('composio:initiate-oauth', appName),
+    getStatus: (connectionId: string) => ipcRenderer.invoke('composio:get-status', connectionId),
+    getConnected: () => ipcRenderer.invoke('composio:get-connected'),
+    listApps: () => ipcRenderer.invoke('composio:list-apps'),
     callTool: (actionName: string, params: Record<string, unknown>) =>
-      ipcRenderer.invoke('relay:call-tool', actionName, params),
+      ipcRenderer.invoke('composio:call-tool', actionName, params)
+  },
+
+  // Relay (remaining — moved to local in Phase 3)
+  relay: {
+    getUsage: () => ipcRenderer.invoke('relay:get-usage'),
     llmCompletion: (messages: Array<{ role: string; content: string }>, opts?: { model?: string; max_tokens?: number }) =>
       ipcRenderer.invoke('relay:llm-completion', messages, opts),
-    listApps: () => ipcRenderer.invoke('relay:list-apps'),
     extractUrl: (url: string) => ipcRenderer.invoke('relay:extract-url', url)
   },
 
@@ -120,13 +117,23 @@ const api = {
     getIdentity: () => ipcRenderer.invoke('memory:get-identity')
   },
 
+  // Scheduler
+  scheduler: {
+    getTasks: () => ipcRenderer.invoke('scheduler:get-tasks'),
+    setEnabled: (taskId: string, enabled: boolean) =>
+      ipcRenderer.invoke('scheduler:set-enabled', taskId, enabled),
+    runNow: (taskId: string) => ipcRenderer.invoke('scheduler:run-now', taskId)
+  },
+
   // Telemetry
   telemetry: {
     setOptIn: (optIn: boolean) => ipcRenderer.invoke('telemetry:set-opt-in', optIn),
     getOptIn: () => ipcRenderer.invoke('telemetry:get-opt-in'),
     deleteData: () => ipcRenderer.invoke('telemetry:delete-data'),
     emit: (eventType: string, payload: Record<string, unknown>) =>
-      ipcRenderer.invoke('telemetry:emit', eventType, payload)
+      ipcRenderer.invoke('telemetry:emit', eventType, payload),
+    getQueue: () => ipcRenderer.invoke('telemetry:get-queue'),
+    getStatus: () => ipcRenderer.invoke('telemetry:get-status')
   }
 }
 

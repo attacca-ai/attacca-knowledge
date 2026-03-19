@@ -1,10 +1,15 @@
 {
   "name": "attacca",
   "version": "0.1.2",
-  "description": "AI productivity assistant for knowledge workers",
+  "description": "Open-source AI productivity assistant for knowledge workers",
   "main": "./out/main/index.js",
   "author": "Attacca",
-  "homepage": "https://attacca.ai",
+  "license": "MIT",
+  "homepage": "https://github.com/attacca/attacca-claw",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/attacca/attacca-claw.git"
+  },
   "scripts": {
     "format": "prettier --write .",
     "lint": "eslint --cache .",
@@ -23,18 +28,23 @@
     "build:linux": "electron-vite build && electron-builder --linux"
   },
   "dependencies": {
+    "@composio/core": "^0.6.5",
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
+    "@huggingface/transformers": "^3.8.1",
+    "@mozilla/readability": "^0.6.0",
     "better-sqlite3": "^12.8.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^0.575.0",
     "next-themes": "^0.4.6",
-    "openclaw": "^2026.2.19-2",
+    "node-cron": "^4.2.1",
+    "openclaw": "2026.2.19-2",
     "radix-ui": "^1.4.3",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.5.0",
     "ws": "^8.19.0",
+    "youtube-transcript": "^1.3.0",
     "zustand": "^5.0.11"
   },
   "devDependencies": {
@@ -46,7 +56,9 @@
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
     "@types/better-sqlite3": "^7.6.13",
+    "@types/jsdom": "^28.0.0",
     "@types/node": "^22.19.1",
+    "@types/node-cron": "^3.0.11",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
     "@types/ws": "^8.18.1",

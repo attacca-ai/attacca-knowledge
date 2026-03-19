@@ -2,8 +2,8 @@ import { ChildProcess, spawn } from 'child_process'
 import path from 'path'
 import { app } from 'electron'
 import { ensureConfig, ensureControlUiConfig, ensureRelayProviderConfig, ensureComposioSkill, clearSessionSkillsSnapshot } from './config'
-import { loadLicense } from '../license/store'
 import { getConnectedTools } from '../oauth/server'
+import { getComposioEntityId } from '../identity/user-identity'
 import { getMainWindow } from '../window/main-window'
 import { IPC } from '../ipc/channels'
 
@@ -76,26 +76,21 @@ export function startGateway(): Promise<void> {
     ensureControlUiConfig()
     const config = ensureConfig()
 
-    // Load license now — needed both for the relay base URL and the Composio skill.
-    const license = loadLicense()
-
-    // Configure OpenClaw to route LLM calls through the relay proxy by default.
-    // Pass the license key so the relay can track per-user usage and enforce the ceiling.
-    // If the user has set a BYOK key, switch to the built-in provider instead.
+    // Configure OpenClaw LLM routing.
+    // If the user has set a BYOK key, use the built-in provider directly.
+    // Otherwise, fall back to the relay proxy (interim — relay removed in Phase 3).
     ensureRelayProviderConfig(
-      config.llm ? { provider: config.llm.provider, model: config.llm.model } : null,
-      license?.key ?? null
+      config.llm ? { provider: config.llm.provider, model: config.llm.model } : null
     )
 
     // Write the Composio workspace skill so the agent can call Gmail, Calendar, etc.
     // Pass connected tools so only relevant tool docs are included (reduces token usage).
-    if (license?.key) {
-      try {
-        const connectedTools = getConnectedTools()
-        ensureComposioSkill(license.key, connectedTools)
-      } catch (err) {
-        console.warn('[gateway] Could not write Composio skill:', err)
-      }
+    try {
+      const entityId = getComposioEntityId()
+      const connectedTools = getConnectedTools()
+      ensureComposioSkill(entityId, connectedTools)
+    } catch (err) {
+      console.warn('[gateway] Could not write Composio skill:', err)
     }
 
     // Clear stale skills snapshot so the gateway rebuilds it with the current skill set.

@@ -78,10 +78,10 @@ export function ConnectionsPage({
   useEffect(() => {
     async function loadConnections(): Promise<void> {
       try {
-        const relayApps = await window.api.relay.getConnected()
+        const relayApps = await window.api.composio.getConnected()
         for (const app of relayApps) addConnectedTool(app)
       } catch {
-        // Relay may not be available
+        // Composio may not be configured
       }
       try {
         const localTools = await window.api.oauth.getConnected()
@@ -132,7 +132,7 @@ export function ConnectionsPage({
     setConnecting(tool)
     setError(null)
     try {
-      const result = await window.api.relay.initiateOAuth(tool)
+      const result = await window.api.composio.initiateOAuth(tool)
       if (!result.success) {
         setError(result.error || 'Could not start connection')
         setConnecting(null)
@@ -147,7 +147,7 @@ export function ConnectionsPage({
       const connectionId = result.connectionId
       pollRef.current = setInterval(async () => {
         try {
-          const status = await window.api.relay.getOAuthStatus(connectionId)
+          const status = await window.api.composio.getStatus(connectionId)
           if (status.status === 'active') {
             if (pollRef.current) clearInterval(pollRef.current)
             pollRef.current = null
@@ -200,7 +200,7 @@ export function ConnectionsPage({
       if (result.success) removeConnectedTool(tool)
       else setError(result.error || 'Disconnect failed')
     } else {
-      const result = await window.api.relay.disconnectOAuth(tool)
+      const result = await window.api.oauth.disconnect(tool)
       if (result.success) removeConnectedTool(tool)
       else setError('Disconnect failed')
     }

@@ -340,11 +340,10 @@ export function LandscapeView(): React.JSX.Element {
     if (connectionState !== 'connected' || loading) return
     setLoading(true)
 
-    // Always fetch the latest connected apps directly from the relay so we
-    // never use a stale Zustand snapshot (e.g. Trello connected after last mount).
+    // Always fetch the latest connected apps so we never use a stale snapshot.
     let liveTools = connectedTools
     try {
-      const relayApps = await window.api.relay.getConnected()
+      const relayApps = await window.api.composio.getConnected()
       // Normalize Composio slugs (e.g. "googlecalendar" → "google-calendar")
       if (relayApps.length > 0) liveTools = relayApps.map(normalizeAppSlug)
     } catch {

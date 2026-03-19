@@ -55,8 +55,8 @@ export function ToolConnectionStep({
   useEffect(() => {
     async function loadConnections(): Promise<void> {
       try {
-        // Get Composio connections from relay
-        const relayApps = await window.api.relay.getConnected()
+        // Get Composio connections
+        const relayApps = await window.api.composio.getConnected()
         for (const app of relayApps) {
           addConnectedTool(app)
         }
@@ -108,7 +108,7 @@ export function ToolConnectionStep({
     setError(null)
 
     try {
-      const result = await window.api.relay.initiateOAuth(tool)
+      const result = await window.api.composio.initiateOAuth(tool)
       if (!result.success) {
         setError(result.error || 'Could not start connection')
         setConnecting(null)
@@ -127,7 +127,7 @@ export function ToolConnectionStep({
       const connectionId = result.connectionId
       pollRef.current = setInterval(async () => {
         try {
-          const status = await window.api.relay.getOAuthStatus(connectionId)
+          const status = await window.api.composio.getStatus(connectionId)
           if (status.status === 'active') {
             if (pollRef.current) clearInterval(pollRef.current)
             pollRef.current = null

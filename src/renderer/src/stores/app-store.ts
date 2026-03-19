@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-export type AppPage = 'license' | 'onboarding' | 'dashboard'
+export type AppPage = 'onboarding' | 'dashboard'
 
 interface AppStore {
   page: AppPage
@@ -13,7 +13,7 @@ interface AppStore {
 }
 
 export const useAppStore = create<AppStore>((set) => ({
-  page: 'license',
+  page: 'onboarding',
   version: null,
   isOnline: navigator.onLine,
 

@@ -4,7 +4,10 @@ import { createMainWindow, destroyMainWindow, getMainWindow } from './window/mai
 import { createTray, destroyTray } from './tray/tray'
 import { registerIpcHandlers } from './ipc/handlers'
 import { startGateway, stopGateway } from './gateway/lifecycle'
-import { startRelayServer, stopRelayServer } from './relay/lifecycle'
+import { startComposioServer, stopComposioServer } from './composio/server'
+import { ensureUsageTables } from './usage/tracker'
+import { registerAllTasks } from './scheduler/tasks'
+import { stopAll as stopScheduler } from './scheduler'
 import { initTelemetryCollector, getTelemetryCollector } from './telemetry/collector'
 import { getMemoryDb, closeMemoryDb } from './memory/db'
 import { startMemoryServer, stopMemoryServer } from './memory/server'
@@ -58,8 +61,16 @@ if (!gotTheLock) {
       .then(port => console.log(`[main] Memory server on port ${port}`))
       .catch(err => console.error('[main] Memory server failed:', err))
 
-    // Start local relay server (dev only; no-op when app.isPackaged)
-    startRelayServer()
+    // Initialize usage tracking tables
+    ensureUsageTables()
+
+    // Register background scheduler tasks
+    registerAllTasks()
+
+    // Start local Composio server for agent tool calls
+    startComposioServer()
+      .then(port => console.log(`[main] Composio server on port ${port}`))
+      .catch(err => console.error('[main] Composio server failed:', err))
 
     // Start OpenClaw gateway
     try {
@@ -96,7 +107,8 @@ async function quitApp(): Promise<void> {
     console.error('[main] Error stopping gateway:', err)
   }
 
-  stopRelayServer()
+  stopScheduler()
+  stopComposioServer()
   stopMemoryServer()
   closeMemoryDb()
   destroyTray()

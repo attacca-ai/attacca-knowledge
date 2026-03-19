@@ -6,15 +6,23 @@ out
 *.log*
 *.tsbuildinfo
 connection/
+
+# Environment files
 .env
 .env.*
 !.env.example
-relay-server/.env
 
-# Design explorations & internal docs (not part of the codebase)
+# User data (never commit)
+user-identity.json
+composio-key.enc
+license.enc
+onboarding.json
+telemetry-opt-in.json
+telemetry-queue.json
+attacca-kb/
+attacca-memory/
+
+# Design explorations & internal docs
 redesign/
 documentos guia/
 docs/
-
-# One-off debug/investigation scripts in relay-server root
-relay-server/*.cjs

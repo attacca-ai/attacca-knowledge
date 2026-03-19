@@ -5,21 +5,23 @@ import { homedir } from 'os'
 import { IPC } from './channels'
 import { getGatewayState, startGateway, stopGateway, restartGateway } from '../gateway/lifecycle'
 import { checkGatewayHealth } from '../gateway/health'
-import { validateNewKey, checkExistingLicense } from '../license/validator'
-import { loadLicense } from '../license/store'
 import { writeConfig, readConfig, getGatewayToken, writeAgentAuthProfiles } from '../gateway/config'
 import { registerActiveCollabHandlers } from './activecollab-handlers'
 import { getMainWindow } from '../window/main-window'
+import { llmCompletion } from '../llm/completion'
+import { extractUrl } from '../capture/extractor'
+import { getMonthlyUsage, ensureUsageTables } from '../usage/tracker'
+import { getTaskStatuses, setTaskEnabled, runTaskNow } from '../scheduler'
+import { getComposioEntityId } from '../identity/user-identity'
 import {
-  relayInitiateOAuth,
-  relayGetOAuthStatus,
-  relayGetUsage,
-  relayGetConnectedApps,
-  relayProxyToolAction,
-  relayLLMCompletion,
-  relayListApps,
-  relayExtractUrl
-} from '../relay/client'
+  saveComposioApiKey,
+  getComposioApiKeyHint,
+  initiateOAuth as composioInitiateOAuth,
+  getConnectionStatus as composioGetStatus,
+  getConnectedApps as composioGetConnected,
+  listApps as composioListApps,
+  proxyToolAction as composioCallTool
+} from '../composio/service'
 import { getTelemetryCollector } from '../telemetry/collector'
 import { insertMemory, updateEmbedding, getMemoryStats, getIdentityTraits } from '../memory/db'
 import { generateEmbedding, float32ToBuffer } from '../memory/embeddings'
@@ -28,36 +30,6 @@ import { searchMemories, searchMemoriesByKeyword } from '../memory/search'
 export function registerIpcHandlers(): void {
   // Register non-OAuth integration handlers
   registerActiveCollabHandlers()
-  // ── License ──
-  ipcMain.handle(IPC.LICENSE_VALIDATE, async (_event, key: string) => {
-    const result = await validateNewKey(key)
-    return {
-      success: result.status === 'valid',
-      plan: result.plan,
-      error: result.error
-    }
-  })
-
-  ipcMain.handle(IPC.LICENSE_CHECK_EXISTING, async () => {
-    const result = await checkExistingLicense()
-    return {
-      exists: result.status !== 'unchecked',
-      valid: result.status === 'valid' || result.status === 'grace',
-      plan: result.plan,
-      error: result.error
-    }
-  })
-
-  ipcMain.handle(IPC.LICENSE_GET_STATUS, () => {
-    const stored = loadLicense()
-    if (!stored) return { status: 'unchecked' }
-    return {
-      status: 'valid',
-      plan: stored.plan,
-      lastValidated: stored.validatedAt
-    }
-  })
-
   // ── Gateway ──
   ipcMain.handle(IPC.GATEWAY_START, async () => {
     await startGateway()
@@ -89,7 +61,7 @@ export function registerIpcHandlers(): void {
   // ── LLM Provider ──
   ipcMain.handle(IPC.LLM_TEST_CONNECTION, async (_event, provider: string, apiKey: string) => {
     try {
-      const { testLLMConnection } = await import('../license/llm-test')
+      const { testLLMConnection } = await import('../llm/test-connection')
       return testLLMConnection(provider, apiKey)
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : 'Unknown error' }
@@ -281,78 +253,98 @@ export function registerIpcHandlers(): void {
     writeFileSync(filePath, JSON.stringify(settings, null, 2), 'utf-8')
   })
 
-  // ── Relay ──
-  ipcMain.handle(IPC.RELAY_OAUTH_INITIATE, async (_event, appName: string) => {
+  // ── Composio (local) ──
+  ipcMain.handle(IPC.COMPOSIO_SET_API_KEY, (_event, apiKey: string) => {
     try {
-      return await relayInitiateOAuth(appName)
+      saveComposioApiKey(apiKey)
+      return { success: true }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : 'Failed to save key' }
+    }
+  })
+
+  ipcMain.handle(IPC.COMPOSIO_GET_API_KEY, () => {
+    return { hint: getComposioApiKeyHint() }
+  })
+
+  ipcMain.handle(IPC.COMPOSIO_INITIATE_OAUTH, async (_event, appName: string) => {
+    try {
+      const entityId = getComposioEntityId()
+      return await composioInitiateOAuth(entityId, appName)
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : 'OAuth initiation failed' }
     }
   })
 
-  ipcMain.handle(IPC.RELAY_OAUTH_STATUS, async (_event, connectionId: string) => {
+  ipcMain.handle(IPC.COMPOSIO_GET_STATUS, async (_event, connectionId: string) => {
     try {
-      return await relayGetOAuthStatus(connectionId)
+      return await composioGetStatus(connectionId)
     } catch (err) {
       return { status: 'failed', error: err instanceof Error ? err.message : 'Status check failed' }
     }
   })
 
-  ipcMain.handle(IPC.RELAY_OAUTH_DISCONNECT, async (_event, _appName: string) => {
-    // Composio connections are managed server-side; client just removes local state
-    return { success: true }
-  })
-
-  ipcMain.handle(IPC.RELAY_GET_USAGE, async () => {
+  ipcMain.handle(IPC.COMPOSIO_GET_CONNECTED, async () => {
     try {
-      return await relayGetUsage()
-    } catch (err) {
-      return {
-        totalCostUsd: 0,
-        limitUsd: 30,
-        requestCount: 0,
-        limitReached: false,
-        resetDate: new Date().toISOString(),
-        error: err instanceof Error ? err.message : 'Failed to get usage'
-      }
-    }
-  })
-
-  ipcMain.handle(IPC.RELAY_GET_CONNECTED, async () => {
-    try {
-      return await relayGetConnectedApps()
+      const entityId = getComposioEntityId()
+      return await composioGetConnected(entityId)
     } catch {
       return []
     }
   })
 
-  ipcMain.handle(IPC.RELAY_CALL_TOOL, async (_event, actionName: string, params: Record<string, unknown>) => {
+  ipcMain.handle(IPC.COMPOSIO_LIST_APPS, async () => {
     try {
-      return await relayProxyToolAction(actionName, params)
+      return await composioListApps()
+    } catch {
+      return []
+    }
+  })
+
+  ipcMain.handle(IPC.COMPOSIO_CALL_TOOL, async (_event, actionName: string, params: Record<string, unknown>) => {
+    try {
+      const entityId = getComposioEntityId()
+      return await composioCallTool(entityId, actionName, params)
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : 'Tool call failed' }
     }
   })
 
+  // ── Usage (local) ──
+  ipcMain.handle(IPC.RELAY_GET_USAGE, () => {
+    try {
+      ensureUsageTables()
+      const usage = getMonthlyUsage()
+      return {
+        totalCostUsd: usage.totalCostUsd,
+        requestCount: usage.requestCount,
+        models: usage.models,
+        budgetAlert: usage.budgetAlert
+      }
+    } catch (err) {
+      return {
+        totalCostUsd: 0,
+        requestCount: 0,
+        models: {},
+        budgetAlert: null,
+        error: err instanceof Error ? err.message : 'Failed to get usage'
+      }
+    }
+  })
+
+  // ── LLM Completion (local BYOK) ──
   ipcMain.handle(IPC.RELAY_LLM_COMPLETION, async (_event, messages: Array<{ role: string; content: string }>, opts?: { model?: string; max_tokens?: number }) => {
     try {
-      return await relayLLMCompletion({ messages, ...opts })
+      return await llmCompletion({ messages, ...opts })
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : 'LLM completion failed' }
     }
   })
 
-  ipcMain.handle(IPC.RELAY_LIST_APPS, async () => {
-    try {
-      return await relayListApps()
-    } catch {
-      return []
-    }
-  })
-
+  // ── URL Extraction (local) ──
   ipcMain.handle(IPC.RELAY_EXTRACT_URL, async (_event, url: string) => {
     try {
-      return await relayExtractUrl(url)
+      return await extractUrl(url)
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : 'URL extraction failed' }
     }
@@ -592,6 +584,39 @@ ${entitiesMd}
     const collector = getTelemetryCollector()
     collector.emit(eventType, payload)
     return { success: true }
+  })
+
+  ipcMain.handle(IPC.TELEMETRY_GET_QUEUE, () => {
+    const collector = getTelemetryCollector()
+    return { events: collector.getQueuedEvents() }
+  })
+
+  ipcMain.handle(IPC.TELEMETRY_GET_STATUS, () => {
+    const collector = getTelemetryCollector()
+    return {
+      optedIn: collector.getOptIn(),
+      lastFlush: collector.getLastFlush(),
+      queueSize: collector.getQueueSize()
+    }
+  })
+
+  // ── Scheduler ──
+  ipcMain.handle(IPC.SCHEDULER_GET_TASKS, () => {
+    return getTaskStatuses()
+  })
+
+  ipcMain.handle(IPC.SCHEDULER_SET_ENABLED, (_event, taskId: string, enabled: boolean) => {
+    setTaskEnabled(taskId, enabled)
+    return { success: true }
+  })
+
+  ipcMain.handle(IPC.SCHEDULER_RUN_NOW, async (_event, taskId: string) => {
+    try {
+      await runTaskNow(taskId)
+      return { success: true }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : 'Task failed' }
+    }
   })
 
   // ── Memory ──

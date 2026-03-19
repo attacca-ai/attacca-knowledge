@@ -1,19 +1,4 @@
 export interface AttaccaAPI {
-  license: {
-    validate: (key: string) => Promise<{ success: boolean; error?: string; plan?: string }>
-    checkExisting: () => Promise<{
-      exists: boolean
-      valid: boolean
-      plan?: string
-      error?: string
-    }>
-    getStatus: () => Promise<{
-      status: 'unchecked' | 'valid' | 'invalid' | 'expired' | 'grace'
-      plan?: string
-      lastValidated?: number
-    }>
-  }
-
   gateway: {
     start: () => Promise<{ success: boolean }>
     stop: () => Promise<{ success: boolean }>
@@ -119,20 +104,30 @@ export interface AttaccaAPI {
     disconnect: () => Promise<{ success: boolean; error?: string }>
   }
 
-  relay: {
+  composio: {
+    setApiKey: (apiKey: string) => Promise<{ success: boolean; error?: string }>
+    getApiKey: () => Promise<{ hint: string | null }>
     initiateOAuth: (appName: string) => Promise<{
       success: boolean
       connectionId?: string
       redirectUrl?: string
       error?: string
     }>
-    getOAuthStatus: (connectionId: string) => Promise<{
-      connectionId: string
+    getStatus: (connectionId: string) => Promise<{
+      id: string
       status: 'initiated' | 'active' | 'failed' | 'expired'
       appName: string
       error?: string
     }>
-    disconnectOAuth: (appName: string) => Promise<{ success: boolean; error?: string }>
+    getConnected: () => Promise<string[]>
+    listApps: () => Promise<Array<{ slug: string; name: string; categories: string[]; description: string }>>
+    callTool: (
+      actionName: string,
+      params: Record<string, unknown>
+    ) => Promise<{ success: boolean; result?: unknown; error?: string }>
+  }
+
+  relay: {
     getUsage: () => Promise<{
       totalCostUsd: number
       limitUsd: number
@@ -141,16 +136,10 @@ export interface AttaccaAPI {
       resetDate: string
       error?: string
     }>
-    getConnected: () => Promise<string[]>
-    callTool: (
-      actionName: string,
-      params: Record<string, unknown>
-    ) => Promise<{ success: boolean; result?: unknown; error?: string }>
     llmCompletion: (
       messages: Array<{ role: string; content: string }>,
       opts?: { model?: string; max_tokens?: number }
     ) => Promise<{ id: string; model: string; content: string; usage: { input_tokens: number; output_tokens: number }; provider: string } | { success: false; error: string }>
-    listApps: () => Promise<Array<{ slug: string; name: string; categories: string[]; description: string }>>
     extractUrl: (url: string) => Promise<{
       success: boolean
       type?: 'youtube' | 'article'
@@ -216,11 +205,40 @@ export interface AttaccaAPI {
     }>
   }
 
+  scheduler: {
+    getTasks: () => Promise<
+      Array<{
+        id: string
+        name: string
+        description: string
+        enabled: boolean
+        lastRun: number | null
+        lastResult: string | null
+        lastError: string | null
+      }>
+    >
+    setEnabled: (taskId: string, enabled: boolean) => Promise<{ success: boolean }>
+    runNow: (taskId: string) => Promise<{ success: boolean; error?: string }>
+  }
+
   telemetry: {
     setOptIn: (optIn: boolean) => Promise<{ success: boolean }>
     getOptIn: () => Promise<{ optIn: boolean }>
     deleteData: () => Promise<{ success: boolean }>
     emit: (eventType: string, payload: Record<string, unknown>) => Promise<{ success: boolean }>
+    getQueue: () => Promise<{
+      events: Array<{
+        eventType: string
+        payload: Record<string, unknown>
+        timestamp: string
+        anonymousId: string
+      }>
+    }>
+    getStatus: () => Promise<{
+      optedIn: boolean
+      lastFlush: string | null
+      queueSize: number
+    }>
   }
 }
 

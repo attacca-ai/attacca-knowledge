@@ -2,22 +2,19 @@ import { create } from 'zustand'
 
 interface UsageStore {
   costUsd: number
-  limitUsd: number
-  limitReached: boolean
-  resetDate: string | null
-  byokActive: boolean
+  requestCount: number
+  models: Record<string, number>
+  budgetAlert: number | null
   loading: boolean
 
   fetchUsage: () => Promise<void>
-  setBYOKActive: (active: boolean) => void
 }
 
 export const useUsageStore = create<UsageStore>((set) => ({
   costUsd: 0,
-  limitUsd: 30,
-  limitReached: false,
-  resetDate: null,
-  byokActive: false,
+  requestCount: 0,
+  models: {},
+  budgetAlert: null,
   loading: false,
 
   fetchUsage: async () => {
@@ -26,17 +23,13 @@ export const useUsageStore = create<UsageStore>((set) => ({
       const usage = await window.api.relay.getUsage()
       set({
         costUsd: usage.totalCostUsd ?? 0,
-        limitUsd: usage.limitUsd ?? 30,
-        limitReached: usage.limitReached ?? false,
-        resetDate: usage.resetDate ?? null,
+        requestCount: usage.requestCount ?? 0,
+        models: (usage as any).models ?? {},
+        budgetAlert: (usage as any).budgetAlert ?? null,
         loading: false
       })
     } catch {
       set({ loading: false })
     }
-  },
-
-  setBYOKActive: (active) => {
-    set({ byokActive: active })
   }
 }))

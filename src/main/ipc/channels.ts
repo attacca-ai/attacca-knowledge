@@ -1,9 +1,4 @@
 export const IPC = {
-  // License
-  LICENSE_VALIDATE: 'license:validate',
-  LICENSE_CHECK_EXISTING: 'license:check-existing',
-  LICENSE_GET_STATUS: 'license:get-status',
-
   // Gateway
   GATEWAY_START: 'gateway:start',
   GATEWAY_STOP: 'gateway:stop',
@@ -44,15 +39,18 @@ export const IPC = {
   FS_WRITE_FILE: 'fs:write-file',
   FS_SELECT_FOLDER: 'fs:select-folder',
 
-  // Relay
-  RELAY_OAUTH_INITIATE: 'relay:oauth-initiate',
-  RELAY_OAUTH_STATUS: 'relay:oauth-status',
-  RELAY_OAUTH_DISCONNECT: 'relay:oauth-disconnect',
+  // Composio (local)
+  COMPOSIO_SET_API_KEY: 'composio:set-api-key',
+  COMPOSIO_GET_API_KEY: 'composio:get-api-key',
+  COMPOSIO_INITIATE_OAUTH: 'composio:initiate-oauth',
+  COMPOSIO_GET_STATUS: 'composio:get-status',
+  COMPOSIO_GET_CONNECTED: 'composio:get-connected',
+  COMPOSIO_LIST_APPS: 'composio:list-apps',
+  COMPOSIO_CALL_TOOL: 'composio:call-tool',
+
+  // Relay (remaining — moved to local in Phase 3)
   RELAY_GET_USAGE: 'relay:get-usage',
-  RELAY_GET_CONNECTED: 'relay:get-connected',
-  RELAY_CALL_TOOL: 'relay:call-tool',
   RELAY_LLM_COMPLETION: 'relay:llm-completion',
-  RELAY_LIST_APPS: 'relay:list-apps',
   RELAY_EXTRACT_URL: 'relay:extract-url',
 
   // Agent state persistence
@@ -64,6 +62,8 @@ export const IPC = {
   TELEMETRY_GET_OPT_IN: 'telemetry:get-opt-in',
   TELEMETRY_DELETE_DATA: 'telemetry:delete-data',
   TELEMETRY_EMIT: 'telemetry:emit',
+  TELEMETRY_GET_QUEUE: 'telemetry:get-queue',
+  TELEMETRY_GET_STATUS: 'telemetry:get-status',
 
   // Knowledge Base
   KB_SAVE_CAPTURE: 'kb:save-capture',
@@ -76,9 +76,13 @@ export const IPC = {
   MEMORY_GET_STATS: 'memory:get-stats',
   MEMORY_GET_IDENTITY: 'memory:get-identity',
 
+  // Scheduler
+  SCHEDULER_GET_TASKS: 'scheduler:get-tasks',
+  SCHEDULER_SET_ENABLED: 'scheduler:set-enabled',
+  SCHEDULER_RUN_NOW: 'scheduler:run-now',
+
   // Events (main → renderer)
   EVENT_GATEWAY_STATE_CHANGED: 'event:gateway-state-changed',
-  EVENT_LICENSE_STATE_CHANGED: 'event:license-state-changed',
   EVENT_OAUTH_CALLBACK: 'event:oauth-callback'
 } as const
 

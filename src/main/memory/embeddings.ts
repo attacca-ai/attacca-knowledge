@@ -1,36 +1,13 @@
-const RELAY_URL = 'http://localhost:3100'
+import { generateLocalEmbedding, EMBEDDING_DIMS } from './local-embeddings'
+
+export { EMBEDDING_DIMS }
 
 /**
- * Generate an embedding vector for the given text via the relay server.
- * Falls back to null if the relay is unavailable (offline mode).
+ * Generate an embedding vector for the given text using the local model.
+ * No network calls, no API key required.
  */
 export async function generateEmbedding(text: string): Promise<Float32Array | null> {
-  try {
-    const resp = await fetch(`${RELAY_URL}/memory/embed`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': 'attacca-relay-service'
-      },
-      body: JSON.stringify({ text })
-    })
-
-    if (!resp.ok) {
-      console.warn(`[memory] Embedding request failed: ${resp.status}`)
-      return null
-    }
-
-    const data = await resp.json() as { success: boolean; embedding?: number[]; error?: string }
-    if (!data.success || !data.embedding) {
-      console.warn('[memory] Embedding response missing data:', data.error)
-      return null
-    }
-
-    return new Float32Array(data.embedding)
-  } catch (err) {
-    console.warn('[memory] Embedding unavailable (relay offline):', (err as Error).message)
-    return null
-  }
+  return generateLocalEmbedding(text)
 }
 
 /** Convert Float32Array to Buffer for SQLite storage */
