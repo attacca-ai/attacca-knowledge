@@ -1,12 +1,4 @@
 export const IPC = {
-  // Gateway
-  GATEWAY_START: 'gateway:start',
-  GATEWAY_STOP: 'gateway:stop',
-  GATEWAY_RESTART: 'gateway:restart',
-  GATEWAY_STATUS: 'gateway:status',
-  GATEWAY_HEALTH: 'gateway:health',
-  GATEWAY_GET_TOKEN: 'gateway:get-token',
-
   // Onboarding
   ONBOARDING_GET_STATE: 'onboarding:get-state',
   ONBOARDING_SAVE_STATE: 'onboarding:save-state',
@@ -40,7 +32,13 @@ export const IPC = {
   COMPOSIO_GET_STATUS: 'composio:get-status',
   COMPOSIO_GET_CONNECTED: 'composio:get-connected',
   COMPOSIO_LIST_APPS: 'composio:list-apps',
+  COMPOSIO_LIST_ACTIONS: 'composio:list-actions',
   COMPOSIO_CALL_TOOL: 'composio:call-tool',
+  COMPOSIO_DISCONNECT: 'composio:disconnect',
+  COMPOSIO_GET_ACCOUNTS: 'composio:get-accounts',
+  COMPOSIO_SET_LABEL: 'composio:set-label',
+  COMPOSIO_SET_DEFAULT: 'composio:set-default',
+  COMPOSIO_GET_DEFAULTS: 'composio:get-defaults',
 
   // Relay (remaining — moved to local in Phase 3)
   RELAY_GET_USAGE: 'relay:get-usage',
@@ -63,6 +61,9 @@ export const IPC = {
   KB_SAVE_CAPTURE: 'kb:save-capture',
   KB_READ_CONTEXT: 'kb:read-context',
   KB_APPEND_DAILY_LOG: 'kb:append-daily-log',
+  KB_GET_PATH: 'kb:get-path',
+  KB_OPEN_FOLDER: 'kb:open-folder',
+  KB_IMPORT_FILES: 'kb:import-files',
 
   // Memory
   MEMORY_SEARCH: 'memory:search',
@@ -77,10 +78,22 @@ export const IPC = {
 
   // Permissions
   PERMISSION_RESOLVE: 'permission:resolve',
+  PERMISSION_LIST_STANDING: 'permission:list-standing',
+  PERMISSION_REVOKE_STANDING: 'permission:revoke-standing',
+
+  // Agent Runtime (new — replaces gateway for chat)
+  AGENT_CHAT_SEND: 'agent:chat:send',
+  AGENT_CHAT_STOP: 'agent:chat:stop',
+  AGENT_SESSION_LIST: 'agent:session:list',
+  AGENT_SESSION_CLEAR: 'agent:session:clear',
 
   // Events (main → renderer)
-  EVENT_GATEWAY_STATE_CHANGED: 'event:gateway-state-changed',
-  EVENT_PERMISSION_REQUEST: 'event:permission-request'
+  EVENT_PERMISSION_REQUEST: 'event:permission-request',
+  EVENT_AGENT_STREAM: 'event:agent:stream',
+  EVENT_AGENT_TOOL_CALL: 'event:agent:tool-call',
+  EVENT_AGENT_TOOL_RESULT: 'event:agent:tool-result',
+  EVENT_AGENT_FINAL: 'event:agent:final',
+  EVENT_AGENT_ERROR: 'event:agent:error'
 } as const
 
 export type IPCChannel = (typeof IPC)[keyof typeof IPC]

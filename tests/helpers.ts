@@ -66,7 +66,12 @@ export function installMockApi(): void {
         .mockResolvedValue({ connectionId: 'conn_1', status: 'active', appName: 'test' }),
       getConnected: vi.fn().mockResolvedValue([]),
       listApps: vi.fn().mockResolvedValue([]),
-      callTool: vi.fn().mockResolvedValue({ success: true, result: { data: { items: [] } } })
+      callTool: vi.fn().mockResolvedValue({ success: true, result: { data: { items: [] } } }),
+      disconnect: vi.fn().mockResolvedValue({ success: true, deleted: 1 }),
+      getAccounts: vi.fn().mockResolvedValue({ success: true, accounts: [] }),
+      setLabel: vi.fn().mockResolvedValue({ success: true }),
+      setDefault: vi.fn().mockResolvedValue({ success: true }),
+      getDefaults: vi.fn().mockResolvedValue({ success: true, defaults: {} })
     },
     scheduler: {
       getTasks: vi.fn().mockResolvedValue([]),
@@ -86,13 +91,26 @@ export function installMockApi(): void {
         .fn()
         .mockResolvedValue({ success: true, type: 'article', title: '', text: '', wordCount: 0 })
     },
-    agent: {
+    agentState: {
       getState: vi.fn().mockResolvedValue(null),
       setState: vi.fn().mockResolvedValue(undefined)
     },
+    agent: {
+      send: vi.fn().mockResolvedValue({ success: true }),
+      stop: vi.fn().mockResolvedValue({ success: true }),
+      listSessions: vi.fn().mockResolvedValue({ success: true, sessions: [] }),
+      clearSession: vi.fn().mockResolvedValue({ success: true }),
+      onStream: vi.fn().mockReturnValue(vi.fn()),
+      onToolCall: vi.fn().mockReturnValue(vi.fn()),
+      onToolResult: vi.fn().mockReturnValue(vi.fn()),
+      onFinal: vi.fn().mockReturnValue(vi.fn()),
+      onError: vi.fn().mockReturnValue(vi.fn())
+    },
     permission: {
       onRequest: vi.fn().mockReturnValue(vi.fn()),
-      resolve: vi.fn().mockResolvedValue({ success: true })
+      resolve: vi.fn().mockResolvedValue({ success: true }),
+      listStanding: vi.fn().mockResolvedValue({ success: true, approvals: [] }),
+      revokeStanding: vi.fn().mockResolvedValue({ success: true, revoked: true })
     },
     telemetry: {
       setOptIn: vi.fn().mockResolvedValue({ success: true }),

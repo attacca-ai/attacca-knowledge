@@ -1,18 +1,20 @@
 import { ipcMain, app, shell, dialog } from 'electron'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import { join, dirname } from 'path'
-import { homedir } from 'os'
 import { IPC } from './channels'
-import { getGatewayState, startGateway, stopGateway, restartGateway } from '../gateway/lifecycle'
-import { checkGatewayHealth } from '../gateway/health'
-import { writeConfig, readConfig, getGatewayToken, writeAgentAuthProfiles } from '../gateway/config'
+import { readLLMConfig, writeLLMConfig } from '../config/llm-config'
 import { registerActiveCollabHandlers } from './activecollab-handlers'
 import { llmCompletion } from '../llm/completion'
 import { extractUrl } from '../capture/extractor'
 import { getMonthlyUsage, ensureUsageTables } from '../usage/tracker'
 import { getTaskStatuses, setTaskEnabled, runTaskNow } from '../scheduler'
 import { getComposioEntityId } from '../identity/user-identity'
-import { resolvePermission } from '../composio/permission-gate'
+import {
+  resolvePermission,
+  clearAllStandingApprovals,
+  revokeStandingApproval,
+  listStandingApprovals
+} from '../composio/permission-gate'
 import {
   saveComposioApiKey,
   getComposioApiKeyHint,
@@ -20,9 +22,19 @@ import {
   getConnectionStatus as composioGetStatus,
   getConnectedApps as composioGetConnected,
   listApps as composioListApps,
+  listAppActions as composioListActions,
   proxyToolAction as composioCallTool,
-  executeActionDirect as composioCallToolDirect
+  executeActionDirect as composioCallToolDirect,
+  disconnectAccount as composioDisconnect,
+  invalidateConnectedAppsCache,
+  getAccountsWithLabels as composioGetAccounts
 } from '../composio/service'
+import { setConnectionLabel, isValidLabel, type AccountLabel } from '../composio/connections'
+import {
+  setDefaultAccount,
+  removeDefaultAccount,
+  getAllDefaults
+} from '../composio/defaults'
 import { getTelemetryCollector } from '../telemetry/collector'
 import { insertMemory, updateEmbedding, getMemoryStats, getIdentityTraits } from '../memory/db'
 import { generateEmbedding, float32ToBuffer } from '../memory/embeddings'
@@ -30,34 +42,6 @@ import { searchMemories, searchMemoriesByKeyword } from '../memory/search'
 
 export function registerIpcHandlers(): void {
   registerActiveCollabHandlers()
-  // ── Gateway ──
-  ipcMain.handle(IPC.GATEWAY_START, async () => {
-    await startGateway()
-    return { success: true }
-  })
-
-  ipcMain.handle(IPC.GATEWAY_STOP, async () => {
-    await stopGateway()
-    return { success: true }
-  })
-
-  ipcMain.handle(IPC.GATEWAY_RESTART, async () => {
-    await restartGateway()
-    return { success: true }
-  })
-
-  ipcMain.handle(IPC.GATEWAY_STATUS, () => {
-    return getGatewayState()
-  })
-
-  ipcMain.handle(IPC.GATEWAY_HEALTH, async () => {
-    return checkGatewayHealth()
-  })
-
-  ipcMain.handle(IPC.GATEWAY_GET_TOKEN, () => {
-    return { token: getGatewayToken() }
-  })
-
   // ── LLM Provider ──
   ipcMain.handle(IPC.LLM_TEST_CONNECTION, async (_event, provider: string, apiKey: string) => {
     try {
@@ -72,27 +56,23 @@ export function registerIpcHandlers(): void {
     IPC.LLM_SAVE_CONFIG,
     async (_event, provider: string, model: string, apiKey: string) => {
       console.log(`[llm] Saving config: provider=${provider} model=${model}`)
-      const config = readConfig()
-      config.llm = {
-        provider: provider as 'anthropic' | 'openai' | 'google',
+      writeLLMConfig({
+        provider: provider as 'anthropic',
         model,
         apiKey
-      }
-      writeConfig(config)
-      // Also write auth-profiles.json so the gateway process can find the key directly
-      writeAgentAuthProfiles(provider, apiKey)
-      console.log('[llm] Config saved + auth-profiles written')
+      })
+      console.log('[llm] Config saved')
       return { success: true }
     }
   )
 
   ipcMain.handle(IPC.LLM_GET_CONFIG, () => {
-    const config = readConfig()
-    if (!config.llm) return null
+    const config = readLLMConfig()
+    if (!config) return null
     return {
-      provider: config.llm.provider,
-      model: config.llm.model,
-      apiKeyHint: config.llm.apiKey ? '****' + config.llm.apiKey.slice(-4) : null
+      provider: config.provider,
+      model: config.model,
+      apiKeyHint: config.apiKey ? '****' + config.apiKey.slice(-4) : null
     }
   })
 
@@ -175,6 +155,37 @@ export function registerIpcHandlers(): void {
         /* empty */
       }
     }
+
+    // DVR-4: changing trust profile clears all standing approvals atomically.
+    // `clearAllStandingApprovals` updates both the in-memory Map and the
+    // on-disk `standingApprovals` key BEFORE the new profile is written, so
+    // no in-flight gate check can observe the new profile with old grants.
+    if (key === 'trustProfile' && settings.trustProfile !== value) {
+      // M1: Snapshot the old profile BEFORE any mutation. Previously we
+      // re-read settings.json after clearAllStandingApprovals and read
+      // `settings.trustProfile` — correct in practice but fragile to changes
+      // in the re-read path. Capture once, use throughout.
+      const oldProfile = settings.trustProfile
+      try {
+        const cleared = clearAllStandingApprovals()
+        if (cleared > 0) {
+          console.log(
+            `[settings] Trust profile changed — cleared ${cleared} standing approvals (DVR-4)`
+          )
+          // Re-read so our next write doesn't clobber the standingApprovals
+          // reset that clearAllStandingApprovals just performed.
+          settings = JSON.parse(readFileSync(filePath, 'utf-8'))
+        }
+        getTelemetryCollector().emit('standing_approval.cleared_on_profile_change', {
+          count: cleared,
+          oldProfile,
+          newProfile: value
+        })
+      } catch (err) {
+        console.error('[settings] Failed to clear standing approvals on profile change:', err)
+      }
+    }
+
     settings[key] = value
     writeFileSync(filePath, JSON.stringify(settings, null, 2), 'utf-8')
   })
@@ -183,10 +194,6 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.COMPOSIO_SET_API_KEY, (_event, apiKey: string) => {
     try {
       saveComposioApiKey(apiKey)
-      // Restart gateway so it detects existing connected tools and creates the MCP server
-      restartGateway().catch((err) => {
-        console.warn('[composio] Gateway restart after API key save failed:', err)
-      })
       return { success: true }
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : 'Failed to save key' }
@@ -213,9 +220,89 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC.COMPOSIO_GET_STATUS, async (_event, connectionId: string) => {
     try {
-      return await composioGetStatus(connectionId)
+      const status = await composioGetStatus(connectionId)
+      // A newly-active connection changes the connected-apps list — drop the cache
+      // so the next agent turn and the next ConnectionsPage read pick it up.
+      if (status.status === 'active') {
+        invalidateConnectedAppsCache()
+      }
+      return status
     } catch (err) {
       return { status: 'failed', error: err instanceof Error ? err.message : 'Status check failed' }
+    }
+  })
+
+  ipcMain.handle(IPC.COMPOSIO_DISCONNECT, async (_event, toolkitSlug: string) => {
+    try {
+      const entityId = getComposioEntityId()
+      const result = await composioDisconnect(entityId, toolkitSlug)
+      return result
+    } catch (err) {
+      return {
+        success: false,
+        deleted: 0,
+        error: err instanceof Error ? err.message : 'Disconnect failed'
+      }
+    }
+  })
+
+  ipcMain.handle(IPC.COMPOSIO_GET_ACCOUNTS, async () => {
+    try {
+      const entityId = getComposioEntityId()
+      const accounts = await composioGetAccounts(entityId)
+      return { success: true, accounts }
+    } catch (err) {
+      return {
+        success: false,
+        accounts: [],
+        error: err instanceof Error ? err.message : 'Failed to get accounts'
+      }
+    }
+  })
+
+  ipcMain.handle(
+    IPC.COMPOSIO_SET_LABEL,
+    (_event, connectionId: string, label: string, customName?: string | null) => {
+      try {
+        if (!isValidLabel(label)) {
+          return { success: false, error: `Invalid label: ${label}` }
+        }
+        const ok = setConnectionLabel(connectionId, label as AccountLabel, customName)
+        if (!ok) {
+          return { success: false, error: 'Unknown connection' }
+        }
+        return { success: true }
+      } catch (err) {
+        return { success: false, error: err instanceof Error ? err.message : 'Set label failed' }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    IPC.COMPOSIO_SET_DEFAULT,
+    (_event, toolkit: string, connectionId: string | null) => {
+      try {
+        if (connectionId) {
+          setDefaultAccount(toolkit, connectionId)
+        } else {
+          removeDefaultAccount(toolkit)
+        }
+        return { success: true }
+      } catch (err) {
+        return { success: false, error: err instanceof Error ? err.message : 'Set default failed' }
+      }
+    }
+  )
+
+  ipcMain.handle(IPC.COMPOSIO_GET_DEFAULTS, () => {
+    try {
+      return { success: true, defaults: getAllDefaults() }
+    } catch (err) {
+      return {
+        success: false,
+        defaults: {},
+        error: err instanceof Error ? err.message : 'Get defaults failed'
+      }
     }
   })
 
@@ -234,6 +321,14 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.COMPOSIO_LIST_APPS, async () => {
     try {
       return await composioListApps()
+    } catch {
+      return []
+    }
+  })
+
+  ipcMain.handle(IPC.COMPOSIO_LIST_ACTIONS, async (_event, appSlug: string) => {
+    try {
+      return await composioListActions(appSlug)
     } catch {
       return []
     }
@@ -400,9 +495,20 @@ export function registerIpcHandlers(): void {
           .filter(Boolean)
           .join('\n') || '_None_'
 
+      const tags: string[] = []
+      if (entities.projects?.length)
+        tags.push(...entities.projects.map((p) => p.toLowerCase()))
+      if (entities.people?.length)
+        tags.push(
+          ...entities.people.slice(0, 3).map((p) => `person:${p.toLowerCase()}`)
+        )
+
       const captureContent = `---
 id: ${data.id}
 date: ${dateStr}
+type: capture
+status: active
+tags: [${tags.map((t) => `"${t}"`).join(', ')}]
 source: ${data.sourceType}
 title: ${data.title}
 ---
@@ -423,6 +529,68 @@ ${questionsMd}
 ${entitiesMd}
 `
       writeFileSync(join(inboxDir, `${data.id}-${data.sourceType}.md`), captureContent, 'utf-8')
+
+      // Route decisions to dedicated decisions/ directory
+      if (data.result?.decisions?.length > 0) {
+        const decisionsDir = join(app.getPath('userData'), 'attacca-kb', 'decisions')
+        if (!existsSync(decisionsDir)) mkdirSync(decisionsDir, { recursive: true })
+
+        for (const decision of data.result.decisions) {
+          const slug = decision
+            .slice(0, 40)
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .toLowerCase()
+            .replace(/[^a-z0-9 ]/g, '')
+            .trim()
+            .replace(/ +/g, '-')
+          const decisionFile = join(decisionsDir, `${dateStr}-${slug}.md`)
+          const decisionContent = `---
+date: ${dateStr}
+type: decision
+status: active
+tags: [${tags.map((t) => `"${t}"`).join(', ')}]
+source: ${data.sourceType || 'conversation'}
+---
+
+## Decision
+
+${decision}
+
+## Context
+
+From: ${data.title || 'Untitled capture'}
+Date: ${dateStr}
+`
+          writeFileSync(decisionFile, decisionContent, 'utf-8')
+
+          // Insert each decision as a separate memory with higher importance
+          const decisionMemId = `mem_decision_${data.id}_${slug.slice(0, 20)}`
+          insertMemory({
+            id: decisionMemId,
+            type: 'decision',
+            content: decision,
+            summary: decision.slice(0, 200),
+            embedding: null,
+            source_id: data.id,
+            tags: JSON.stringify(tags),
+            importance: 0.7,
+            created_at: data.timestamp,
+            superseded_by: null
+          })
+
+          // Generate embedding async for each decision memory
+          generateEmbedding(decision)
+            .then((emb) => {
+              if (emb) {
+                updateEmbedding(decisionMemId, float32ToBuffer(emb))
+              }
+            })
+            .catch(() => {
+              /* embedding backfill will catch this later */
+            })
+        }
+      }
 
       // Update CONTEXT.md
       const memoryDir = join(kbDir, 'memory')
@@ -482,14 +650,21 @@ ${entitiesMd}
         }
       }
 
-      writeFileSync(ctxPath, ctxContent, 'utf-8')
+      // Enforce 150-line cap — trim oldest content from the top
+      const ctxLines = ctxContent.split('\n')
+      if (ctxLines.length > 150) {
+        const trimmed = ctxLines.slice(ctxLines.length - 150).join('\n')
+        writeFileSync(ctxPath, trimmed, 'utf-8')
+      } else {
+        writeFileSync(ctxPath, ctxContent, 'utf-8')
+      }
 
       // Append to daily log
       const dailyDir = join(kbDir, 'daily')
       mkdirSync(dailyDir, { recursive: true })
       const dailyPath = join(dailyDir, `${dateStr}.md`)
       const dailyHeader = existsSync(dailyPath) ? '' : `# Daily Log — ${dateStr}\n\n`
-      const logEntry = `${dailyHeader}## ${timeStr} — Capture saved\nSource: ${data.sourceType}\nTitle: ${data.title}\nAction items: ${data.result.actionItems.length} | Decisions: ${data.result.decisions.length} | Open questions: ${data.result.openQuestions.length}\n\n`
+      const logEntry = `${dailyHeader}## ${timeStr} — ${data.sourceType} saved\nSource: ${data.sourceType}\nType: capture\nTitle: ${data.title}\nAction items: ${data.result.actionItems.length} | Decisions: ${data.result.decisions.length} | Open questions: ${data.result.openQuestions.length}\n\n`
       writeFileSync(
         dailyPath,
         existsSync(dailyPath) ? readFileSync(dailyPath, 'utf-8') + logEntry : logEntry,
@@ -518,31 +693,7 @@ ${entitiesMd}
         superseded_by: null
       })
 
-      // Also write as markdown to ~/.openclaw/workspace/memory/ so the agent can find it via filesystem
-      try {
-        const ocMemDir = join(homedir(), '.openclaw', 'workspace', 'memory')
-        if (!existsSync(ocMemDir)) mkdirSync(ocMemDir, { recursive: true })
-        const ts = new Date(data.timestamp)
-        const fileDateStr = ts.toISOString().slice(0, 10)
-        const fileTimeStr = ts.toISOString().slice(11, 16).replace(':', '')
-        const slug = data.result.summary
-          .slice(0, 40)
-          .normalize('NFD')
-          .replace(/[\u0300-\u036f]/g, '')
-          .toLowerCase()
-          .replace(/[^a-z0-9 ]/g, '')
-          .trim()
-          .replace(/ +/g, '-')
-          .slice(0, 40)
-        const memFilePath = join(ocMemDir, `${fileDateStr}-${fileTimeStr}-${slug}.md`)
-        writeFileSync(
-          memFilePath,
-          `# ${data.result.summary}\n\nDate: ${fileDateStr}\nType: capture\n\n${memContent}`,
-          'utf-8'
-        )
-      } catch {
-        /* non-critical */
-      }
+      // OpenClaw dual-write removed — single write to Attacca memory DB only
 
       // Generate embedding async — don't block the capture save
       generateEmbedding(`${data.result.summary}\n${memContent}`)
@@ -583,6 +734,58 @@ ${entitiesMd}
     )
     return { success: true }
   })
+
+  ipcMain.handle(IPC.KB_GET_PATH, () => {
+    return join(app.getPath('userData'), 'attacca-kb')
+  })
+
+  ipcMain.handle(IPC.KB_OPEN_FOLDER, async () => {
+    const kbPath = join(app.getPath('userData'), 'attacca-kb')
+    mkdirSync(kbPath, { recursive: true })
+    const { shell } = await import('electron')
+    shell.openPath(kbPath)
+    return { success: true }
+  })
+
+  ipcMain.handle(
+    IPC.KB_IMPORT_FILES,
+    async (_event, paths: string[]) => {
+      const { readdirSync, statSync } = await import('fs')
+      const kbDir = join(app.getPath('userData'), 'attacca-kb', 'inbox', 'imported')
+      mkdirSync(kbDir, { recursive: true })
+      const imported: Array<{ fileName: string; title: string }> = []
+
+      // Collect all .md files — input can be file paths or folder paths
+      const mdFiles: string[] = []
+      for (const p of paths) {
+        try {
+          if (statSync(p).isDirectory()) {
+            const entries = readdirSync(p).filter((f) => f.endsWith('.md') || f.endsWith('.txt'))
+            mdFiles.push(...entries.map((f) => join(p, f)))
+          } else if (p.endsWith('.md') || p.endsWith('.txt')) {
+            mdFiles.push(p)
+          }
+        } catch {
+          /* skip inaccessible paths */
+        }
+      }
+
+      for (const fp of mdFiles) {
+        try {
+          const fileName = fp.split(/[/\\]/).pop() ?? 'unknown.md'
+          const content = readFileSync(fp, 'utf-8')
+          const destPath = join(kbDir, fileName)
+          writeFileSync(destPath, content, 'utf-8')
+          const titleMatch = content.match(/^#\s+(.+)/m)
+          const title = titleMatch ? titleMatch[1].trim() : fileName.replace(/\.(md|txt)$/, '')
+          imported.push({ fileName, title })
+        } catch {
+          /* skip unreadable files */
+        }
+      }
+      return { success: true, imported }
+    }
+  )
 
   // ── Telemetry ──
   ipcMain.handle(IPC.TELEMETRY_SET_OPT_IN, (_event, optIn: boolean) => {
@@ -652,6 +855,27 @@ ${entitiesMd}
       return { success: true }
     }
   )
+
+  ipcMain.handle(IPC.PERMISSION_LIST_STANDING, () => {
+    try {
+      return { success: true, approvals: listStandingApprovals() }
+    } catch (err) {
+      return {
+        success: false,
+        approvals: [],
+        error: err instanceof Error ? err.message : 'List failed'
+      }
+    }
+  })
+
+  ipcMain.handle(IPC.PERMISSION_REVOKE_STANDING, (_event, actionName: string) => {
+    try {
+      const revoked = revokeStandingApproval(actionName)
+      return { success: true, revoked }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : 'Revoke failed' }
+    }
+  })
 
   // ── Memory ──
   ipcMain.handle(IPC.MEMORY_SEARCH, async (_event, query: string) => {
@@ -730,6 +954,50 @@ ${entitiesMd}
         success: true,
         traits: traits.map((t) => ({ key: t.key, value: t.value, confidence: t.confidence }))
       }
+    } catch (err) {
+      return { success: false, error: (err as Error).message }
+    }
+  })
+
+  // ── Agent Runtime ──
+  ipcMain.handle(
+    IPC.AGENT_CHAT_SEND,
+    async (_event, sessionKey: string, message: string, idempotencyKey: string) => {
+      try {
+        const { sendMessage } = await import('../runtime/agent')
+        await sendMessage(sessionKey, message, idempotencyKey)
+        return { success: true }
+      } catch (err) {
+        console.error('[agent] Chat send error:', err)
+        return { success: false, error: (err as Error).message }
+      }
+    }
+  )
+
+  ipcMain.handle(IPC.AGENT_CHAT_STOP, (_event, sessionKey: string) => {
+    try {
+      const { stopSession } = require('../runtime/agent') as typeof import('../runtime/agent')
+      stopSession(sessionKey)
+      return { success: true }
+    } catch (err) {
+      return { success: false, error: (err as Error).message }
+    }
+  })
+
+  ipcMain.handle(IPC.AGENT_SESSION_LIST, () => {
+    try {
+      const { listSessions } = require('../runtime/agent') as typeof import('../runtime/agent')
+      return { success: true, sessions: listSessions() }
+    } catch (err) {
+      return { success: false, error: (err as Error).message }
+    }
+  })
+
+  ipcMain.handle(IPC.AGENT_SESSION_CLEAR, (_event, sessionKey: string) => {
+    try {
+      const { clearSession } = require('../runtime/agent') as typeof import('../runtime/agent')
+      clearSession(sessionKey)
+      return { success: true }
     } catch (err) {
       return { success: false, error: (err as Error).message }
     }

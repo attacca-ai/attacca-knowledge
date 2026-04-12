@@ -56,6 +56,18 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
   const [toolConnecting, setToolConnecting] = useState<string | null>(null)
   const [toolError, setToolError] = useState<string | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const stopPolling = (): void => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current)
+      pollRef.current = null
+    }
+    if (pollTimeoutRef.current) {
+      clearTimeout(pollTimeoutRef.current)
+      pollTimeoutRef.current = null
+    }
+  }
 
   // Telemetry state
   const [telemetryOptIn, setTelemetryOptIn] = useState(false)
@@ -75,7 +87,7 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
   // Cleanup polling on unmount
   useEffect(() => {
     return () => {
-      if (pollRef.current) clearInterval(pollRef.current)
+      stopPolling()
     }
   }, [])
 
@@ -151,21 +163,16 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
       await window.api.app.openExternal(result.redirectUrl)
 
       const connectionId = result.connectionId
+      window.api.telemetry.emit('oauth.initiated', { toolId: tool })
       pollRef.current = setInterval(async () => {
         try {
           const status = await window.api.composio.getStatus(connectionId)
           if (status.status === 'active') {
-            if (pollRef.current) clearInterval(pollRef.current)
-            pollRef.current = null
+            stopPolling()
             setConnectedTools((prev) => [...new Set([...prev, tool])])
             setToolConnecting(null)
-            // Restart gateway so SKILL.md is regenerated with the new tool
-            window.api.gateway.restart().catch((err: unknown) => {
-              console.warn('[onboarding] Gateway restart after connect failed:', err)
-            })
           } else if (status.status === 'failed' || status.status === 'expired') {
-            if (pollRef.current) clearInterval(pollRef.current)
-            pollRef.current = null
+            stopPolling()
             setToolError(`Connection ${status.status}. Please try again.`)
             setToolConnecting(null)
           }
@@ -173,6 +180,15 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
           // Keep polling on network errors
         }
       }, 2000)
+      pollTimeoutRef.current = setTimeout(
+        () => {
+          stopPolling()
+          setToolError('Connection timed out after 5 minutes. Try again.')
+          setToolConnecting(null)
+          window.api.telemetry.emit('oauth.timeout', { toolId: tool })
+        },
+        5 * 60 * 1000
+      )
     } catch (err) {
       setToolError(err instanceof Error ? err.message : 'Connection failed')
       setToolConnecting(null)
@@ -187,11 +203,6 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
       telemetryOptIn
     })
     await window.api.onboarding.complete()
-    // Restart gateway so it picks up the new Composio API key + connected tools
-    // and creates the MCP server configuration
-    window.api.gateway.restart().catch((err: unknown) => {
-      console.warn('[onboarding] Gateway restart after onboarding failed:', err)
-    })
     onComplete()
   }
 
@@ -258,7 +269,7 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
               className="h-[3px] rounded-full transition-all"
               style={{
                 width: i === step ? 32 : 16,
-                background: i <= step ? '#5b7cf6' : '#232428'
+                background: i <= step ? 'var(--att-blue)' : 'var(--att-surface-raised)'
               }}
             />
           ))}
@@ -267,7 +278,7 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
         {/* Content */}
         <div
           className="rounded-[12px] p-6 min-h-[360px] flex flex-col"
-          style={{ background: '#151618', border: '1px solid #1f2024' }}
+          style={{ background: 'var(--att-surface)', border: '1px solid var(--att-divider)' }}
         >
           {/* Step 0: Welcome */}
           {step === 0 && (
@@ -275,8 +286,8 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
               <div className="text-[28px] font-light tracking-[-0.02em] mb-1">
                 {t('wizard.welcome.title')}
               </div>
-              <div className="text-[13px] text-[#5b7cf6] mb-4">{t('wizard.welcome.subtitle')}</div>
-              <div className="text-[12.5px] text-[#7a7d85] leading-[1.6] max-w-[400px]">
+              <div className="text-[13px] text-att-blue mb-4">{t('wizard.welcome.subtitle')}</div>
+              <div className="text-[12.5px] text-muted-foreground leading-[1.6] max-w-[400px]">
                 {t('wizard.welcome.description')}
               </div>
             </div>
@@ -286,11 +297,11 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
           {step === 1 && (
             <div className="flex-1 flex flex-col">
               <div className="text-[17px] font-light mb-1">{t('wizard.llm.title')}</div>
-              <div className="text-[12.5px] text-[#7a7d85] leading-[1.5] mb-5">
+              <div className="text-[12.5px] text-muted-foreground leading-[1.5] mb-5">
                 {t('wizard.llm.description')}
               </div>
 
-              <div className="text-[11px] text-[#4a4d55] mb-2">
+              <div className="text-[11px] text-muted-foreground/60 mb-2">
                 {t('wizard.llm.provider_label')}
               </div>
               <div className="flex gap-1.5 mb-4">
@@ -309,9 +320,9 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
                     }}
                     className="px-3 py-1.5 rounded-full text-[12px] border transition-all cursor-pointer"
                     style={{
-                      background: llmProvider === key ? 'rgba(91,124,246,.12)' : 'transparent',
-                      borderColor: llmProvider === key ? '#5b7cf6' : '#2a2b2f',
-                      color: llmProvider === key ? '#5b7cf6' : '#7a7d85',
+                      background: llmProvider === key ? 'color-mix(in srgb, var(--att-blue) 12%, transparent)' : 'transparent',
+                      borderColor: llmProvider === key ? 'var(--att-blue)' : '#2a2b2f',
+                      color: llmProvider === key ? 'var(--att-blue)' : '#7a7d85',
                       fontFamily: 'inherit'
                     }}
                   >
@@ -322,7 +333,7 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
 
               <button
                 onClick={() => window.api.app.openExternal(providerLinks[llmProvider])}
-                className="text-[11px] text-[#5b7cf6] hover:underline cursor-pointer mb-3 text-left"
+                className="text-[11px] text-att-blue hover:underline cursor-pointer mb-3 text-left"
                 style={{ background: 'none', border: 'none', padding: 0, fontFamily: 'inherit' }}
               >
                 {t(`wizard.llm.get_key_${llmProvider}`)}
@@ -330,8 +341,8 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
 
               {llmSaved ? (
                 <div className="flex items-center gap-2 py-3">
-                  <Check className="w-4 h-4 text-[#4caf82]" />
-                  <span className="text-[12px] text-[#4caf82]">{t('wizard.llm.success')}</span>
+                  <Check className="w-4 h-4 text-att-green" />
+                  <span className="text-[12px] text-att-green">{t('wizard.llm.success')}</span>
                 </div>
               ) : (
                 <div className="flex gap-2">
@@ -341,8 +352,8 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
                     value={llmKey}
                     onChange={(e) => setLlmKey(e.target.value)}
                     className="flex-1 rounded-[6px] px-3 py-2 text-[11px] text-[#e8e9eb] outline-none"
-                    style={{ background: '#1c1d20', border: '1px solid #2a2b2f', fontFamily: MONO }}
-                    onFocus={(e) => (e.currentTarget.style.borderColor = '#5b7cf6')}
+                    style={{ background: 'var(--att-surface-hover)', border: '1px solid #2a2b2f', fontFamily: MONO }}
+                    onFocus={(e) => (e.currentTarget.style.borderColor = 'var(--att-blue)')}
                     onBlur={(e) => (e.currentTarget.style.borderColor = '#2a2b2f')}
                   />
                   <button
@@ -366,9 +377,9 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
                 </div>
               )}
 
-              {llmError && <p className="mt-2 text-[11px] text-[#e05c5c]">{llmError}</p>}
+              {llmError && <p className="mt-2 text-[11px] text-att-red">{llmError}</p>}
               {!llmSaved && !llmError && (
-                <p className="mt-3 text-[10px] text-[#4a4d55]">{t('wizard.llm.required')}</p>
+                <p className="mt-3 text-[10px] text-muted-foreground/60">{t('wizard.llm.required')}</p>
               )}
             </div>
           )}
@@ -377,13 +388,13 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
           {step === 2 && (
             <div className="flex-1 flex flex-col">
               <div className="text-[17px] font-light mb-1">{t('wizard.composio.title')}</div>
-              <div className="text-[12.5px] text-[#7a7d85] leading-[1.5] mb-5">
+              <div className="text-[12.5px] text-muted-foreground leading-[1.5] mb-5">
                 {t('wizard.composio.description')}
               </div>
 
               <button
                 onClick={() => window.api.app.openExternal('https://composio.dev')}
-                className="text-[11px] text-[#5b7cf6] hover:underline cursor-pointer mb-3 text-left"
+                className="text-[11px] text-att-blue hover:underline cursor-pointer mb-3 text-left"
                 style={{ background: 'none', border: 'none', padding: 0, fontFamily: 'inherit' }}
               >
                 {t('wizard.composio.get_key')}
@@ -391,8 +402,8 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
 
               {composioSaved ? (
                 <div className="flex items-center gap-2 py-3">
-                  <Check className="w-4 h-4 text-[#4caf82]" />
-                  <span className="text-[12px] text-[#4caf82]">{t('wizard.composio.success')}</span>
+                  <Check className="w-4 h-4 text-att-green" />
+                  <span className="text-[12px] text-att-green">{t('wizard.composio.success')}</span>
                 </div>
               ) : (
                 <>
@@ -404,11 +415,11 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
                       onChange={(e) => setComposioKey(e.target.value)}
                       className="flex-1 rounded-[6px] px-3 py-2 text-[11px] text-[#e8e9eb] outline-none"
                       style={{
-                        background: '#1c1d20',
+                        background: 'var(--att-surface-hover)',
                         border: '1px solid #2a2b2f',
                         fontFamily: MONO
                       }}
-                      onFocus={(e) => (e.currentTarget.style.borderColor = '#5b7cf6')}
+                      onFocus={(e) => (e.currentTarget.style.borderColor = 'var(--att-blue)')}
                       onBlur={(e) => (e.currentTarget.style.borderColor = '#2a2b2f')}
                     />
                     <button
@@ -429,7 +440,7 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
                     </button>
                   </div>
                   {composioError && (
-                    <p className="mt-2 text-[11px] text-[#e05c5c]">{composioError}</p>
+                    <p className="mt-2 text-[11px] text-att-red">{composioError}</p>
                   )}
                 </>
               )}
@@ -440,16 +451,16 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
           {step === 3 && (
             <div className="flex-1 flex flex-col">
               <div className="text-[17px] font-light mb-1">{t('wizard.tools.title')}</div>
-              <div className="text-[12.5px] text-[#7a7d85] leading-[1.5] mb-4">
+              <div className="text-[12.5px] text-muted-foreground leading-[1.5] mb-4">
                 {t('wizard.tools.description')}
               </div>
 
               {!composioSaved ? (
                 <div
                   className="rounded-[8px] p-3.5"
-                  style={{ background: '#1c1d20', border: '1px solid #232428' }}
+                  style={{ background: 'var(--att-surface-hover)', border: '1px solid var(--att-surface-raised)' }}
                 >
-                  <div className="text-[12px] text-[#7a7d85] leading-[1.5]">
+                  <div className="text-[12px] text-muted-foreground leading-[1.5]">
                     {t('wizard.tools.no_composio')}
                   </div>
                 </div>
@@ -465,7 +476,7 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
                     ][]
                   ).map(([catKey, category]) => (
                     <div key={catKey}>
-                      <div className="text-[11px] text-[#4a4d55] mb-1.5 font-medium">
+                      <div className="text-[11px] text-muted-foreground/60 mb-1.5 font-medium">
                         {category.name}
                       </div>
                       <div className="grid grid-cols-2 gap-1.5">
@@ -482,9 +493,9 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
                               disabled={isConnected || isConnecting}
                               className="flex items-center justify-between rounded-[6px] px-3 py-2 text-[11px] border transition-colors cursor-pointer disabled:cursor-default"
                               style={{
-                                background: isConnected ? 'rgba(76,175,130,.08)' : '#1c1d20',
-                                borderColor: isConnected ? 'rgba(76,175,130,.25)' : '#2a2b2f',
-                                color: isConnected ? '#4caf82' : '#7a7d85',
+                                background: isConnected ? 'color-mix(in srgb, var(--att-green) 8%, transparent)' : 'var(--att-surface-hover)',
+                                borderColor: isConnected ? 'color-mix(in srgb, var(--att-green) 25%, transparent)' : '#2a2b2f',
+                                color: isConnected ? 'var(--att-green)' : '#7a7d85',
                                 fontFamily: 'inherit'
                               }}
                             >
@@ -503,7 +514,7 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
                 </div>
               )}
 
-              {toolError && <p className="mt-2 text-[11px] text-[#e05c5c]">{toolError}</p>}
+              {toolError && <p className="mt-2 text-[11px] text-att-red">{toolError}</p>}
             </div>
           )}
 
@@ -511,30 +522,30 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
           {step === 4 && (
             <div className="flex-1 flex flex-col">
               <div className="text-[17px] font-light mb-1">{t('wizard.telemetry.title')}</div>
-              <div className="text-[12.5px] text-[#7a7d85] leading-[1.5] mb-5">
+              <div className="text-[12.5px] text-muted-foreground leading-[1.5] mb-5">
                 {t('wizard.telemetry.description')}
               </div>
 
               <div
                 className="rounded-[8px] p-3.5 mb-3"
-                style={{ background: '#1c1d20', border: '1px solid #232428' }}
+                style={{ background: 'var(--att-surface-hover)', border: '1px solid var(--att-surface-raised)' }}
               >
-                <div className="text-[11px] text-[#4caf82] mb-1.5 font-medium">
+                <div className="text-[11px] text-att-green mb-1.5 font-medium">
                   {t('wizard.telemetry.what_collected')}
                 </div>
-                <div className="text-[11px] text-[#7a7d85] leading-[1.5]">
+                <div className="text-[11px] text-muted-foreground leading-[1.5]">
                   {t('wizard.telemetry.what_collected_items')}
                 </div>
               </div>
 
               <div
                 className="rounded-[8px] p-3.5 mb-5"
-                style={{ background: '#1c1d20', border: '1px solid #232428' }}
+                style={{ background: 'var(--att-surface-hover)', border: '1px solid var(--att-surface-raised)' }}
               >
-                <div className="text-[11px] text-[#e05c5c] mb-1.5 font-medium">
+                <div className="text-[11px] text-att-red mb-1.5 font-medium">
                   {t('wizard.telemetry.what_not_collected')}
                 </div>
-                <div className="text-[11px] text-[#7a7d85] leading-[1.5]">
+                <div className="text-[11px] text-muted-foreground leading-[1.5]">
                   {t('wizard.telemetry.what_not_collected_items')}
                 </div>
               </div>
@@ -547,9 +558,9 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
                   }}
                   className="flex-1 py-2.5 rounded-[8px] text-[12px] border cursor-pointer transition-colors"
                   style={{
-                    background: telemetryOptIn ? 'rgba(91,124,246,.12)' : 'transparent',
-                    borderColor: telemetryOptIn ? '#5b7cf6' : '#2a2b2f',
-                    color: telemetryOptIn ? '#5b7cf6' : '#7a7d85',
+                    background: telemetryOptIn ? 'color-mix(in srgb, var(--att-blue) 12%, transparent)' : 'transparent',
+                    borderColor: telemetryOptIn ? 'var(--att-blue)' : '#2a2b2f',
+                    color: telemetryOptIn ? 'var(--att-blue)' : '#7a7d85',
                     fontFamily: 'inherit'
                   }}
                 >
@@ -562,9 +573,9 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
                   }}
                   className="flex-1 py-2.5 rounded-[8px] text-[12px] border cursor-pointer transition-colors"
                   style={{
-                    background: !telemetryOptIn ? 'rgba(91,124,246,.12)' : 'transparent',
-                    borderColor: !telemetryOptIn ? '#5b7cf6' : '#2a2b2f',
-                    color: !telemetryOptIn ? '#5b7cf6' : '#7a7d85',
+                    background: !telemetryOptIn ? 'color-mix(in srgb, var(--att-blue) 12%, transparent)' : 'transparent',
+                    borderColor: !telemetryOptIn ? 'var(--att-blue)' : '#2a2b2f',
+                    color: !telemetryOptIn ? 'var(--att-blue)' : '#7a7d85',
                     fontFamily: 'inherit'
                   }}
                 >
@@ -581,17 +592,17 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
 
               <div className="flex flex-col gap-2 mb-6 text-left">
                 <div className="flex items-center gap-2">
-                  <Check className="w-3.5 h-3.5 text-[#4caf82]" />
-                  <span className="text-[12px] text-[#7a7d85]">
+                  <Check className="w-3.5 h-3.5 text-att-green" />
+                  <span className="text-[12px] text-muted-foreground">
                     {t('wizard.ready.llm_configured')}
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
                   <Check
                     className="w-3.5 h-3.5"
-                    style={{ color: composioSaved ? '#4caf82' : '#4a4d55' }}
+                    style={{ color: composioSaved ? 'var(--att-green)' : '#4a4d55' }}
                   />
-                  <span className="text-[12px] text-[#7a7d85]">
+                  <span className="text-[12px] text-muted-foreground">
                     {composioSaved
                       ? t('wizard.ready.composio_configured')
                       : t('wizard.ready.composio_skipped')}
@@ -600,9 +611,9 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
                 <div className="flex items-center gap-2">
                   <Check
                     className="w-3.5 h-3.5"
-                    style={{ color: connectedTools.length > 0 ? '#4caf82' : '#4a4d55' }}
+                    style={{ color: connectedTools.length > 0 ? 'var(--att-green)' : '#4a4d55' }}
                   />
-                  <span className="text-[12px] text-[#7a7d85]">
+                  <span className="text-[12px] text-muted-foreground">
                     {connectedTools.length > 0
                       ? t('wizard.ready.tools_connected', { count: connectedTools.length })
                       : t('wizard.ready.tools_skipped')}
@@ -611,9 +622,9 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
                 <div className="flex items-center gap-2">
                   <Check
                     className="w-3.5 h-3.5"
-                    style={{ color: telemetryOptIn ? '#4caf82' : '#4a4d55' }}
+                    style={{ color: telemetryOptIn ? 'var(--att-green)' : '#4a4d55' }}
                   />
-                  <span className="text-[12px] text-[#7a7d85]">
+                  <span className="text-[12px] text-muted-foreground">
                     {telemetryOptIn
                       ? t('wizard.ready.telemetry_on')
                       : t('wizard.ready.telemetry_off')}
@@ -625,7 +636,7 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
                 onClick={handleFinish}
                 className="px-6 py-2.5 rounded-[8px] text-[13px] cursor-pointer transition-colors"
                 style={{
-                  background: '#5b7cf6',
+                  background: 'var(--att-blue)',
                   color: '#fff',
                   border: 'none',
                   fontFamily: 'inherit'
@@ -649,7 +660,7 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
             {t('wizard.nav.back')}
           </button>
 
-          <span className="text-[10px] text-[#4a4d55]" style={{ fontFamily: MONO }}>
+          <span className="text-[10px] text-muted-foreground/60" style={{ fontFamily: MONO }}>
             {t('wizard.nav.step', { current: step + 1, total: TOTAL_STEPS })}
           </span>
 
@@ -661,7 +672,7 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
               style={{
                 background: 'none',
                 border: 'none',
-                color: '#5b7cf6',
+                color: 'var(--att-blue)',
                 fontFamily: 'inherit'
               }}
             >

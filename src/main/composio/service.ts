@@ -8,8 +8,15 @@ import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'fs'
 import { join, dirname } from 'path'
 import { app, safeStorage } from 'electron'
 import type { ComposioOAuthInitResult, ComposioConnectionStatus, ComposioApp } from './types'
-
-const CALLBACK_URL = 'https://attacca.app/oauth/callback'
+import {
+  loadConnections,
+  addConnection as storeAddConnection,
+  removeConnection as storeRemoveConnection,
+  type ConnectionLabel,
+  type AccountLabel
+} from './connections'
+import { pruneDefaults } from './defaults'
+import { getTelemetryCollector } from '../telemetry/collector'
 
 // Map frontend app slugs -> Composio toolkit slugs
 const APP_SLUG_MAP: Record<string, string> = {
@@ -52,6 +59,8 @@ export function saveComposioApiKey(apiKey: string): void {
   } else {
     writeFileSync(keyPath, apiKey, 'utf-8')
   }
+  // Drop any cached client or connected-apps list tied to the old key
+  resetClientCache()
 }
 
 export function loadComposioApiKey(): string | null {
@@ -96,6 +105,30 @@ async function getClient(): Promise<any> {
   return cachedClient
 }
 
+// ── Connected-apps cache ─────────────────────────────────────────
+
+interface ConnectedAppsCacheEntry {
+  apps: string[]
+  timestamp: number
+}
+
+const CONNECTED_APPS_TTL_MS = 60 * 1000
+const connectedAppsCache = new Map<string, ConnectedAppsCacheEntry>()
+
+export function invalidateConnectedAppsCache(entityId?: string): void {
+  if (entityId) {
+    connectedAppsCache.delete(entityId)
+  } else {
+    connectedAppsCache.clear()
+  }
+}
+
+function resetClientCache(): void {
+  cachedClient = null
+  cachedClientKey = null
+  connectedAppsCache.clear()
+}
+
 // ── OAuth ────────────────────────────────────────────────────────
 
 export async function initiateOAuth(
@@ -118,8 +151,7 @@ export async function initiateOAuth(
 
   const linkRes = await client.link.create({
     auth_config_id: authConfigId,
-    user_id: entityId,
-    callback_url: CALLBACK_URL
+    user_id: entityId
   } as any)
 
   const link = linkRes as any
@@ -142,7 +174,13 @@ export async function getConnectionStatus(connectionId: string): Promise<Composi
 }
 
 export async function getConnectedApps(entityId: string): Promise<string[]> {
-  console.log(`[composio] getConnectedApps entity=${entityId}`)
+  const cached = connectedAppsCache.get(entityId)
+  if (cached && Date.now() - cached.timestamp < CONNECTED_APPS_TTL_MS) {
+    console.log(`[composio] getConnectedApps entity=${entityId} (cache hit)`)
+    return cached.apps
+  }
+
+  console.log(`[composio] getConnectedApps entity=${entityId} (cache miss)`)
   const client = await getClient()
   const result = await client.connectedAccounts.list({ user_id: entityId } as any)
   const items: any[] = (result as any)?.items ?? []
@@ -156,7 +194,182 @@ export async function getConnectedApps(entityId: string): Promise<string[]> {
     )
   ]
   console.log(`[composio] Connected apps (${connected.length}):`, connected)
+  connectedAppsCache.set(entityId, { apps: connected, timestamp: Date.now() })
   return connected
+}
+
+export interface ConnectedAccount {
+  connectionId: string
+  toolkit: string
+  status: string
+}
+
+export interface ConnectedAccountWithLabel extends ConnectedAccount {
+  label: AccountLabel
+  customName: string | null
+}
+
+export async function getConnectedAccounts(entityId: string): Promise<ConnectedAccount[]> {
+  console.log(`[composio] getConnectedAccounts entity=${entityId}`)
+  const client = await getClient()
+  const result = await client.connectedAccounts.list({ user_id: entityId } as any)
+  const items: any[] = (result as any)?.items ?? []
+
+  return items
+    .filter((c) => (c.status ?? '').toUpperCase() === 'ACTIVE')
+    .map((c) => ({
+      connectionId: String(c.id ?? c.connected_account_id ?? ''),
+      toolkit: String(c.toolkit?.slug ?? c.appName ?? ''),
+      status: String(c.status ?? 'ACTIVE')
+    }))
+    .filter((c) => c.connectionId && c.toolkit)
+}
+
+/**
+ * Merge live Composio accounts with local labels from `composio-connections.json`.
+ *
+ * Side effect: for every active account that exists on Composio but NOT yet in
+ * `connections.json`, we auto-add it with `label: 'Work'`. This is the
+ * "rolling migration" path — the bulk migration also runs once at boot, but
+ * this catches accounts added out-of-band (e.g. via a future API or a manual
+ * Composio dashboard action).
+ */
+export async function getAccountsWithLabels(
+  entityId: string
+): Promise<ConnectedAccountWithLabel[]> {
+  const live = await getConnectedAccounts(entityId)
+  const localByConnId = new Map<string, ConnectionLabel>(
+    loadConnections().map((c) => [c.connectionId, c])
+  )
+
+  const result: ConnectedAccountWithLabel[] = []
+  for (const account of live) {
+    const existing = localByConnId.get(account.connectionId)
+    if (existing) {
+      result.push({
+        ...account,
+        label: existing.label,
+        customName: existing.customName
+      })
+      continue
+    }
+
+    // Auto-label missing accounts as 'Work'. Persist so future reads are stable.
+    const newLabel: ConnectionLabel = {
+      connectionId: account.connectionId,
+      toolkit: account.toolkit,
+      label: 'Work',
+      customName: null,
+      createdAt: Date.now()
+    }
+    try {
+      storeAddConnection(newLabel)
+      // M4: every rolling auto-label emits its own telemetry so the true
+      // migration footprint is observable even when the bulk migration at
+      // boot reports zero (because a previous read already labeled everything).
+      try {
+        getTelemetryCollector().emit('migration.rolling_autolabel', {
+          toolkit: account.toolkit,
+          label: newLabel.label
+        })
+      } catch {
+        /* telemetry best-effort */
+      }
+    } catch (err) {
+      console.warn('[composio] Failed to auto-label new connection:', err)
+    }
+    result.push({
+      ...account,
+      label: newLabel.label,
+      customName: newLabel.customName
+    })
+  }
+
+  return result
+}
+
+/**
+ * Run the one-time multi-account migration. Idempotent: safe to call on every
+ * boot. Returns the number of connections that were newly auto-labeled by
+ * this invocation (M2 — true delta, not total).
+ *
+ * Because `getAccountsWithLabels` also auto-labels as a side effect on every
+ * read, a rolling migration may have already happened before this function
+ * runs. In that case the delta is zero, which is the honest answer — every
+ * rolling-path auto-label is reported separately via `migration.rolling_autolabel`.
+ */
+export async function runMultiAccountMigration(entityId: string): Promise<number> {
+  try {
+    const before = new Set(loadConnections().map((c) => c.connectionId))
+    await getAccountsWithLabels(entityId)
+    const after = loadConnections()
+    let newlyLabeled = 0
+    for (const conn of after) {
+      if (!before.has(conn.connectionId)) newlyLabeled++
+    }
+    return newlyLabeled
+  } catch (err) {
+    console.error('[composio] Migration failed:', err)
+    return 0
+  }
+}
+
+/**
+ * Disconnect all connected accounts for a given toolkit slug (frontend or composio slug).
+ * Calls client.connectedAccounts.delete for each matching connection and invalidates
+ * the connected-apps cache on success.
+ */
+export async function disconnectAccount(
+  entityId: string,
+  toolkitSlug: string
+): Promise<{ success: boolean; deleted: number; error?: string }> {
+  console.log(`[composio] disconnectAccount entity=${entityId} toolkit=${toolkitSlug}`)
+  try {
+    const composioSlug = toComposioSlug(toolkitSlug)
+    const accounts = await getConnectedAccounts(entityId)
+    const targets = accounts.filter((a) => a.toolkit === composioSlug)
+
+    if (targets.length === 0) {
+      // Nothing to revoke upstream — still invalidate cache in case of drift
+      invalidateConnectedAppsCache(entityId)
+      return { success: true, deleted: 0 }
+    }
+
+    const client = await getClient()
+    let deleted = 0
+    for (const target of targets) {
+      await client.connectedAccounts.delete(target.connectionId as any)
+      // Remove the local label row alongside the upstream revoke so local and
+      // Composio states stay in sync (per DVR-8 in spec-b.md).
+      try {
+        storeRemoveConnection(target.connectionId)
+      } catch (err) {
+        console.warn('[composio] Failed to remove local label:', err)
+      }
+      deleted++
+    }
+    invalidateConnectedAppsCache(entityId)
+
+    // Prune any defaultAccounts entries that now point at revoked connections.
+    try {
+      const remaining = await getConnectedAccounts(entityId)
+      const liveIds = new Set(remaining.map((a) => a.connectionId))
+      const pruned = pruneDefaults(liveIds)
+      if (pruned > 0) {
+        console.log(`[composio] Pruned ${pruned} stale default-account entries`)
+      }
+    } catch {
+      // Best effort — next tool-call resolution will catch stale defaults anyway.
+    }
+
+    return { success: true, deleted }
+  } catch (err) {
+    return {
+      success: false,
+      deleted: 0,
+      error: err instanceof Error ? err.message : 'Disconnect failed'
+    }
+  }
 }
 
 // ── Tool Execution ───────────────────────────────────────────────
@@ -164,20 +377,34 @@ export async function getConnectedApps(entityId: string): Promise<string[]> {
 export async function proxyToolAction(
   entityId: string,
   actionName: string,
-  params: Record<string, unknown>
+  params: Record<string, unknown>,
+  connectedAccountId?: string
 ): Promise<unknown> {
   const client = await getClient()
-  return client.tools.execute(actionName, {
-    user_id: entityId,
+  // NOTE: the Composio SDK `tools.execute` validates its body against a zod
+  // schema that uses camelCase (`userId`, `connectedAccountId`, `arguments`).
+  // Snake_case fields are silently dropped by zod, which is why the pre-Spec-B
+  // code appeared to work for single-account users — Composio was falling back
+  // to a default when `userId` was missing. With multi-account, the missing
+  // `userId` meant the SDK picked an account non-deterministically. Always use
+  // camelCase here. The REST fallback at `executeActionDirect` uses snake_case
+  // because the v3 REST API body schema is different from the SDK schema.
+  const payload: Record<string, unknown> = {
+    userId: entityId,
     arguments: params
-  } as any)
+  }
+  if (connectedAccountId) {
+    payload.connectedAccountId = connectedAccountId
+  }
+  return client.tools.execute(actionName, payload as any)
 }
 
 export async function executeActionDirect(
   entityId: string,
   actionName: string,
   params: Record<string, unknown>,
-  version?: string
+  version?: string,
+  connectedAccountId?: string
 ): Promise<unknown> {
   const key = getApiKey()
   const resolvedVersion = version ?? getToolkitVersion(actionName)
@@ -185,6 +412,7 @@ export async function executeActionDirect(
   const url = `https://backend.composio.dev/api/v3/tools/execute/${encodeURIComponent(actionName)}`
   const body: Record<string, unknown> = { user_id: entityId, arguments: params }
   if (resolvedVersion) body.version = resolvedVersion
+  if (connectedAccountId) body.connected_account_id = connectedAccountId
   console.log(`[composio] executeActionDirect ${actionName} version=${resolvedVersion ?? 'none'}`)
 
   const res = await fetch(url, {

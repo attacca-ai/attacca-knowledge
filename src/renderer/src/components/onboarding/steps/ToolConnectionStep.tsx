@@ -50,6 +50,18 @@ export function ToolConnectionStep({
   const [connecting, setConnecting] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const stopPolling = (): void => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current)
+      pollRef.current = null
+    }
+    if (pollTimeoutRef.current) {
+      clearTimeout(pollTimeoutRef.current)
+      pollTimeoutRef.current = null
+    }
+  }
 
   // Load relay-reported Composio connections + local credential connections on mount
   useEffect(() => {
@@ -71,7 +83,7 @@ export function ToolConnectionStep({
   // Cleanup polling on unmount
   useEffect(() => {
     return () => {
-      if (pollRef.current) clearInterval(pollRef.current)
+      stopPolling()
     }
   }, [])
 
@@ -110,21 +122,16 @@ export function ToolConnectionStep({
 
       // Poll for completion
       const connectionId = result.connectionId
+      window.api.telemetry.emit('oauth.initiated', { toolId: tool })
       pollRef.current = setInterval(async () => {
         try {
           const status = await window.api.composio.getStatus(connectionId)
           if (status.status === 'active') {
-            if (pollRef.current) clearInterval(pollRef.current)
-            pollRef.current = null
+            stopPolling()
             addConnectedTool(tool)
             setConnecting(null)
-            // Restart gateway so SKILL.md is regenerated with the new tool
-            window.api.gateway.restart().catch((err: unknown) => {
-              console.warn('[onboarding] Gateway restart after connect failed:', err)
-            })
           } else if (status.status === 'failed' || status.status === 'expired') {
-            if (pollRef.current) clearInterval(pollRef.current)
-            pollRef.current = null
+            stopPolling()
             setError(`Connection ${status.status}. Please try again.`)
             setConnecting(null)
           }
@@ -132,6 +139,15 @@ export function ToolConnectionStep({
           // Keep polling on network errors
         }
       }, 2000)
+      pollTimeoutRef.current = setTimeout(
+        () => {
+          stopPolling()
+          setError('Connection timed out after 5 minutes. Try again.')
+          setConnecting(null)
+          window.api.telemetry.emit('oauth.timeout', { toolId: tool })
+        },
+        5 * 60 * 1000
+      )
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Connection failed')
       setConnecting(null)
@@ -161,7 +177,7 @@ export function ToolConnectionStep({
           </p>
         )}
         {canProceed && (
-          <p className="mb-6 text-sm text-green-600 dark:text-green-400">
+          <p className="mb-6 text-sm text-att-green">
             Requirements met! You can connect more tools or continue.
           </p>
         )}
@@ -196,7 +212,7 @@ export function ToolConnectionStep({
                       disabled={isConnected || isConnecting}
                       className={`flex items-center justify-between rounded-md border p-3 text-left text-sm transition-colors ${
                         isConnected
-                          ? 'border-green-500/30 bg-green-500/10'
+                          ? 'border-att-green/30 bg-att-green/10'
                           : 'border-border hover:border-muted-foreground/30'
                       }`}
                     >
@@ -208,7 +224,7 @@ export function ToolConnectionStep({
                       ) : isConnected ? (
                         <Badge
                           variant="outline"
-                          className="border-green-500/30 text-green-600 dark:text-green-400"
+                          className="border-att-green/30 text-att-green"
                         >
                           <Check className="mr-1 h-3 w-3" />
                           Connected

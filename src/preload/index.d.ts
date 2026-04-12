@@ -1,33 +1,4 @@
 export interface AttaccaAPI {
-  gateway: {
-    start: () => Promise<{ success: boolean }>
-    stop: () => Promise<{ success: boolean }>
-    restart: () => Promise<{ success: boolean }>
-    status: () => Promise<{
-      state: 'stopped' | 'starting' | 'running' | 'stopping' | 'error'
-      pid: number | null
-      restartCount: number
-      lastError: string | null
-      startedAt: number | null
-    }>
-    health: () => Promise<{
-      ok: boolean
-      latency: number | null
-      error: string | null
-      checkedAt: number
-    }>
-    getToken: () => Promise<{ token: string | null }>
-    onStateChanged: (
-      callback: (state: {
-        state: 'stopped' | 'starting' | 'running' | 'stopping' | 'error'
-        pid: number | null
-        restartCount: number
-        lastError: string | null
-        startedAt: number | null
-      }) => void
-    ) => () => void
-  }
-
   onboarding: {
     getState: () => Promise<OnboardingState | null>
     saveState: (state: OnboardingState) => Promise<void>
@@ -55,7 +26,7 @@ export interface AttaccaAPI {
     openExternal: (url: string) => Promise<void>
   }
 
-  agent: {
+  agentState: {
     getState: () => Promise<PersistedAgentState | null>
     setState: (state: PersistedAgentState) => Promise<void>
   }
@@ -113,10 +84,41 @@ export interface AttaccaAPI {
     listApps: () => Promise<
       Array<{ slug: string; name: string; categories: string[]; description: string }>
     >
+    listActions: (appSlug: string) => Promise<
+      Array<{ name: string; description: string }>
+    >
     callTool: (
       actionName: string,
       params: Record<string, unknown>
     ) => Promise<{ success: boolean; result?: unknown; error?: string }>
+    disconnect: (
+      toolkitSlug: string
+    ) => Promise<{ success: boolean; deleted: number; error?: string }>
+    getAccounts: () => Promise<{
+      success: boolean
+      accounts: Array<{
+        connectionId: string
+        toolkit: string
+        status: string
+        label: 'Work' | 'Personal' | 'Shared'
+        customName: string | null
+      }>
+      error?: string
+    }>
+    setLabel: (
+      connectionId: string,
+      label: string,
+      customName?: string | null
+    ) => Promise<{ success: boolean; error?: string }>
+    setDefault: (
+      toolkit: string,
+      connectionId: string | null
+    ) => Promise<{ success: boolean; error?: string }>
+    getDefaults: () => Promise<{
+      success: boolean
+      defaults: Record<string, string>
+      error?: string
+    }>
   }
 
   relay: {
@@ -169,6 +171,12 @@ export interface AttaccaAPI {
     }) => Promise<{ success: boolean }>
     readContext: () => Promise<string>
     appendDailyLog: (entry: string) => Promise<{ success: boolean }>
+    getPath: () => Promise<string>
+    openFolder: () => Promise<{ success: boolean }>
+    importFiles: (filePaths: string[]) => Promise<{
+      success: boolean
+      imported: Array<{ fileName: string; title: string }>
+    }>
   }
 
   memory: {
@@ -238,6 +246,14 @@ export interface AttaccaAPI {
       approved: boolean,
       standing: boolean
     ) => Promise<{ success: boolean }>
+    listStanding: () => Promise<{
+      success: boolean
+      approvals: Array<{ actionName: string; expiresAt: number; grantedAt: number }>
+      error?: string
+    }>
+    revokeStanding: (
+      actionName: string
+    ) => Promise<{ success: boolean; revoked?: boolean; error?: string }>
   }
 
   telemetry: {
@@ -258,6 +274,53 @@ export interface AttaccaAPI {
       lastFlush: string | null
       queueSize: number
     }>
+  }
+
+  agent: {
+    send: (
+      sessionKey: string,
+      message: string,
+      idempotencyKey: string
+    ) => Promise<{ success: boolean; error?: string }>
+    stop: (sessionKey: string) => Promise<{ success: boolean }>
+    listSessions: () => Promise<{
+      success: boolean
+      sessions?: Array<{
+        key: string
+        type: 'main' | 'feature'
+        messageCount: number
+        createdAt: number
+      }>
+    }>
+    clearSession: (sessionKey: string) => Promise<{ success: boolean }>
+    onStream: (
+      callback: (data: { sessionKey: string; delta: string; type: string }) => void
+    ) => () => void
+    onToolCall: (
+      callback: (data: {
+        sessionKey: string
+        toolName: string
+        toolInput: Record<string, unknown>
+      }) => void
+    ) => () => void
+    onToolResult: (
+      callback: (data: {
+        sessionKey: string
+        toolName: string
+        success: boolean
+        summary: string
+      }) => void
+    ) => () => void
+    onFinal: (
+      callback: (data: {
+        sessionKey: string
+        message: string
+        usage: { input_tokens: number; output_tokens: number }
+      }) => void
+    ) => () => void
+    onError: (
+      callback: (data: { sessionKey: string; error: string; partial?: string | null }) => void
+    ) => () => void
   }
 }
 
@@ -290,6 +353,10 @@ interface PersistedAgentState {
     tags: string[]
     mentionCount: number
     deadline?: string
+    quickAction?: { actionType: string; params: unknown; riskTier: string }
+    archived?: boolean
+    archiveNote?: string
+    archivedAt?: number
   }>
   taskQueue: Array<{
     id: string
@@ -330,12 +397,61 @@ interface PersistedAgentState {
     createdAt: number
     relatedThemeId?: string
   }>
+  threadMessages?: Record<string, Array<{ role: 'agent' | 'user'; text: string; ts: number }>>
+  activeThreadId?: string | null
   workflowLibrary?: Array<{
     id: string
     name: string
     description?: string
     status: 'active' | 'paused'
     runs: number
+  }>
+  transcriptHistory?: Array<{
+    id: string
+    fileName: string
+    status: 'processing' | 'completed' | 'failed'
+    startedAt: number
+    completedAt?: number
+    error?: string
+  }>
+  localTasks?: Array<{
+    id: string
+    description: string
+    status: 'pending' | 'in_progress' | 'completed' | 'failed'
+    createdAt: number
+    startedAt?: number
+    completedAt?: number
+    result?: string
+    error?: string
+    projectId?: string
+    sourceType?: 'capture' | 'theme' | 'thread' | 'manual' | 'clickup'
+    sourceId?: string
+  }>
+  taskChatMessages?: Record<string, Array<{ role: 'user' | 'agent'; text: string; ts: number }>>
+  projects?: Array<{
+    id: string
+    name: string
+    description: string
+    createdAt: number
+    status: 'active' | 'archived'
+    taskIds: string[]
+    contextFiles: Array<{
+      id: string
+      fileName: string
+      filePath: string
+      uploadedAt: number
+      sizeBytes: number
+    }>
+  }>
+  kbEntries?: Array<{
+    id: string
+    title: string
+    sourceType: 'capture' | 'transcript' | 'manual' | 'agent'
+    sourceId?: string
+    summary: string
+    savedAt: number
+    tags: string[]
+    folder?: string
   }>
 }
 

@@ -93,6 +93,18 @@ export function ConnectionsPage({
   const [disconnecting, setDisconnecting] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const stopPolling = (): void => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current)
+      pollRef.current = null
+    }
+    if (pollTimeoutRef.current) {
+      clearTimeout(pollTimeoutRef.current)
+      pollTimeoutRef.current = null
+    }
+  }
 
   // ActiveCollab dialog state
   const [acDialogOpen, setAcDialogOpen] = useState(false)
@@ -119,7 +131,7 @@ export function ConnectionsPage({
   // Cleanup polling on unmount
   useEffect(() => {
     return () => {
-      if (pollRef.current) clearInterval(pollRef.current)
+      stopPolling()
     }
   }, [])
 
@@ -150,23 +162,17 @@ export function ConnectionsPage({
       }
       await window.api.app.openExternal(result.redirectUrl)
       const connectionId = result.connectionId
+      window.api.telemetry.emit('oauth.initiated', { toolId: tool })
       pollRef.current = setInterval(async () => {
         try {
           const status = await window.api.composio.getStatus(connectionId)
           if (status.status === 'active') {
-            if (pollRef.current) clearInterval(pollRef.current)
-            pollRef.current = null
+            stopPolling()
             addConnectedTool(tool)
             setConnecting(null)
             window.api.telemetry.emit('tool.connected', { toolId: tool })
-            // Restart gateway so SKILL.md is regenerated with the new tool
-            console.log(`[connections] Tool connected: ${tool}, restarting gateway...`)
-            window.api.gateway.restart().catch((err: unknown) => {
-              console.warn('[connections] Gateway restart after connect failed:', err)
-            })
           } else if (status.status === 'failed' || status.status === 'expired') {
-            if (pollRef.current) clearInterval(pollRef.current)
-            pollRef.current = null
+            stopPolling()
             setError(t('connections.error_status', { status: status.status }))
             setConnecting(null)
           }
@@ -174,6 +180,15 @@ export function ConnectionsPage({
           // Keep polling on network errors
         }
       }, 2000)
+      pollTimeoutRef.current = setTimeout(
+        () => {
+          stopPolling()
+          setError(t('connections.error_timeout'))
+          setConnecting(null)
+          window.api.telemetry.emit('oauth.timeout', { toolId: tool })
+        },
+        5 * 60 * 1000
+      )
     } catch (err) {
       setError(err instanceof Error ? err.message : t('connections.error_failed'))
       setConnecting(null)
@@ -191,9 +206,6 @@ export function ConnectionsPage({
       if (result.success) {
         addConnectedTool('activecollab')
         window.api.telemetry.emit('tool.connected', { toolId: 'activecollab' })
-        window.api.gateway.restart().catch((err: unknown) => {
-          console.warn('[connections] Gateway restart after ActiveCollab connect failed:', err)
-        })
         setAcDialogOpen(false)
         setAcEmail('')
         setAcPassword('')
@@ -217,9 +229,13 @@ export function ConnectionsPage({
         if (result.success) disconnected = true
         else setError(result.error || t('connections.error_disconnect'))
       } else {
-        // Composio-managed tools — remove from local state
-        removeConnectedTool(tool)
-        disconnected = true
+        // Composio-managed tools — revoke upstream first, then update local state
+        const result = await window.api.composio.disconnect(tool)
+        if (result.success) {
+          disconnected = true
+        } else {
+          setError(result.error || t('connections.error_disconnect'))
+        }
       }
     } catch {
       setError(t('connections.error_disconnect'))
@@ -227,10 +243,6 @@ export function ConnectionsPage({
     if (disconnected) {
       removeConnectedTool(tool)
       window.api.telemetry.emit('tool.disconnected', { toolId: tool })
-      console.log(`[connections] Tool disconnected: ${tool}, restarting gateway...`)
-      window.api.gateway.restart().catch((err: unknown) => {
-        console.warn('[connections] Gateway restart after disconnect failed:', err)
-      })
     }
     setDisconnecting(null)
   }
@@ -244,18 +256,18 @@ export function ConnectionsPage({
   const availableCurated = ALL_CURATED_TOOLS.filter((t) => !connectedTools.includes(t))
 
   return (
-    <div className="flex flex-1 overflow-hidden bg-[#0e0f11]">
+    <div className="flex flex-1 overflow-hidden bg-background">
       {/* ── Main panel ── */}
-      <div className="flex flex-1 flex-col overflow-hidden border-r border-[#1f2024]">
+      <div className="flex flex-1 flex-col overflow-hidden border-r border-att-divider">
         {/* Header */}
-        <div className="shrink-0 border-b border-[#1f2024] px-8 py-6">
-          <div className="mb-[5px] font-mono text-[9px] uppercase tracking-[.12em] text-[#4a4d55]">
+        <div className="shrink-0 border-b border-att-divider px-8 py-6">
+          <div className="mb-[5px] font-mono text-[9px] uppercase tracking-[.12em] text-muted-foreground/60">
             {t('connections.breadcrumb')}
           </div>
-          <h1 className="mb-1 text-[20px] font-light tracking-[-0.01em] text-[#e8e9eb]">
+          <h1 className="mb-1 text-[20px] font-light tracking-[-0.01em] text-foreground">
             {t('connections.title')}
           </h1>
-          <p className="max-w-[480px] text-[12.5px] leading-[1.5] text-[#7a7d85]">
+          <p className="max-w-[480px] text-[12.5px] leading-[1.5] text-muted-foreground">
             {t('connections.desc')}
           </p>
         </div>
@@ -266,7 +278,7 @@ export function ConnectionsPage({
           style={{ scrollbarWidth: 'thin', scrollbarColor: '#2a2b2f transparent' }}
         >
           {error && (
-            <div className="mb-4 max-w-[600px] rounded-md border border-[rgba(224,92,92,.3)] bg-[rgba(224,92,92,.1)] px-3 py-2 text-sm text-[#e05c5c]">
+            <div className="mb-4 max-w-[600px] rounded-md border border-att-red/30 bg-att-red/10 px-3 py-2 text-sm text-att-red">
               {error}
             </div>
           )}
@@ -290,6 +302,7 @@ export function ConnectionsPage({
                       isDisconnecting={disconnecting === tool}
                       onConnect={() => handleConnect(tool)}
                       onDisconnect={() => handleDisconnect(tool)}
+                      onAddAccount={() => handleConnect(tool)}
                     />
                   )
                 })}
@@ -429,9 +442,9 @@ export function ConnectionsPage({
 
 function SectionLabel({ children }: { children: React.ReactNode }): React.JSX.Element {
   return (
-    <div className="mb-[10px] flex items-center gap-2 font-mono text-[9px] uppercase tracking-[.12em] text-[#4a4d55]">
+    <div className="mb-[10px] flex items-center gap-2 font-mono text-[9px] uppercase tracking-[.12em] text-muted-foreground/60">
       {children}
-      <span className="h-px flex-1 bg-[#1f2024]" />
+      <span className="h-px flex-1 bg-att-divider" />
     </div>
   )
 }

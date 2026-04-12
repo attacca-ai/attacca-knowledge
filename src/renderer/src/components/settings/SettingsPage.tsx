@@ -10,6 +10,7 @@ import { useTranslation } from '@/i18n'
 import { BYOKGuide } from './BYOKGuide'
 import { TelemetryDataCategories } from './TelemetryDataCategories'
 import { TelemetryViewer } from './TelemetryViewer'
+import { StandingApprovalsSection } from './StandingApprovalsSection'
 import { SystemHealth } from './SystemHealth'
 
 // ── Mono font shorthand ──────────────────────────────────────
@@ -37,39 +38,39 @@ function getTrustExtra(t: (key: string) => string) {
   return {
     cautious: {
       tag: t('settings.trust.tag.cautious'),
-      tagCls: 'bg-[rgba(76,175,130,.1)] text-[#4caf82]',
+      tagCls: 'bg-att-green/10 text-att-green',
       scenario: t('settings.trust.scenario.cautious'),
       risks: [
         {
           label: t('settings.trust.risk.low_silent'),
-          cls: 'bg-[rgba(76,175,130,.1)] text-[#4caf82]'
+          cls: 'bg-att-green/10 text-att-green'
         },
         {
           label: t('settings.trust.risk.mid_confirm'),
-          cls: 'bg-[rgba(212,168,67,.1)] text-[#d4a843]'
+          cls: 'bg-att-orange/10 text-att-orange'
         },
         {
           label: t('settings.trust.risk.high_block'),
-          cls: 'bg-[rgba(224,92,92,.1)] text-[#e05c5c]'
+          cls: 'bg-att-red/10 text-att-red'
         }
       ]
     },
     balanced: {
       tag: t('settings.trust.tag.balanced'),
-      tagCls: 'bg-[rgba(91,124,246,.12)] text-[#5b7cf6]',
+      tagCls: 'bg-att-blue/12 text-att-blue',
       scenario: t('settings.trust.scenario.balanced'),
       risks: [
         {
           label: t('settings.trust.risk.low_silent'),
-          cls: 'bg-[rgba(76,175,130,.1)] text-[#4caf82]'
+          cls: 'bg-att-green/10 text-att-green'
         },
         {
           label: t('settings.trust.risk.mid_notify'),
-          cls: 'bg-[rgba(212,168,67,.1)] text-[#d4a843]'
+          cls: 'bg-att-orange/10 text-att-orange'
         },
         {
           label: t('settings.trust.risk.high_block'),
-          cls: 'bg-[rgba(224,92,92,.1)] text-[#e05c5c]'
+          cls: 'bg-att-red/10 text-att-red'
         }
       ]
     },
@@ -80,15 +81,15 @@ function getTrustExtra(t: (key: string) => string) {
       risks: [
         {
           label: t('settings.trust.risk.low_silent'),
-          cls: 'bg-[rgba(76,175,130,.1)] text-[#4caf82]'
+          cls: 'bg-att-green/10 text-att-green'
         },
         {
           label: t('settings.trust.risk.mid_silent'),
-          cls: 'bg-[rgba(212,168,67,.1)] text-[#d4a843]'
+          cls: 'bg-att-orange/10 text-att-orange'
         },
         {
           label: t('settings.trust.risk.high_countdown'),
-          cls: 'bg-[rgba(224,92,92,.1)] text-[#e05c5c]'
+          cls: 'bg-att-red/10 text-att-red'
         }
       ]
     }
@@ -122,13 +123,13 @@ function SectionHeader({
   return (
     <div className="mb-5">
       <div
-        className="text-[9px] uppercase tracking-[.12em] text-[#4a4d55] mb-1.5"
+        className="text-[9px] uppercase tracking-[.12em] text-muted-foreground/60 mb-1.5"
         style={{ fontFamily: MONO }}
       >
         {eyebrow}
       </div>
-      <div className="text-[17px] font-light text-[#e8e9eb] tracking-[-0.01em] mb-1.5">{title}</div>
-      <div className="text-[12.5px] text-[#7a7d85] leading-[1.55] max-w-[480px]">{desc}</div>
+      <div className="text-[17px] font-light text-foreground tracking-[-0.01em] mb-1.5">{title}</div>
+      <div className="text-[12.5px] text-muted-foreground leading-[1.55] max-w-[480px]">{desc}</div>
     </div>
   )
 }
@@ -274,7 +275,6 @@ export function SettingsPage(): React.JSX.Element {
       setSaving(true)
       const provider = LLM_PROVIDERS[selectedProvider]
       await window.api.llm.saveConfig(selectedProvider, provider.defaultModel, apiKey)
-      await window.api.gateway.restart()
       setApiKeyHint('****' + apiKey.slice(-4))
       setApiKey('')
       setFeedback({ type: 'success', message: t('settings.byok.success_saved') })
@@ -319,16 +319,16 @@ export function SettingsPage(): React.JSX.Element {
       {/* ── Left nav ── */}
       <div
         className="w-[200px] flex-shrink-0 flex flex-col py-5 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-        style={{ borderRight: '1px solid #1f2024' }}
+        style={{ borderRight: '1px solid var(--att-divider)' }}
       >
-        <div className="px-4 mb-5 text-[16px] font-light text-[#e8e9eb] tracking-[-0.01em]">
+        <div className="px-4 mb-5 text-[16px] font-light text-foreground tracking-[-0.01em]">
           {t('settings.title')}
         </div>
 
         {/* Group: Behavior */}
         <div className="mb-1 px-4">
           <div
-            className="text-[8.5px] uppercase tracking-[.12em] text-[#4a4d55] mb-1"
+            className="text-[8.5px] uppercase tracking-[.12em] text-muted-foreground/60 mb-1"
             style={{ fontFamily: MONO }}
           >
             {t('settings.group.behavior')}
@@ -342,24 +342,24 @@ export function SettingsPage(): React.JSX.Element {
               onClick={() => scrollToSection(s.id)}
               className="mx-2.5 flex items-center gap-2 px-2 py-[7px] rounded-[6px] text-[12px] cursor-pointer transition-all text-left"
               style={{
-                background: activeSection === s.id ? 'rgba(91,124,246,.12)' : 'transparent',
-                color: activeSection === s.id ? '#5b7cf6' : '#7a7d85'
+                background: activeSection === s.id ? 'color-mix(in srgb, var(--att-blue) 12%, transparent)' : 'transparent',
+                color: activeSection === s.id ? 'var(--att-blue)' : '#7a7d85'
               }}
             >
               <div
                 className="w-1.5 h-1.5 rounded-full flex-shrink-0 transition-colors"
-                style={{ background: activeSection === s.id ? '#5b7cf6' : '#4a4d55' }}
+                style={{ background: activeSection === s.id ? 'var(--att-blue)' : '#4a4d55' }}
               />
               {s.label}
             </button>
           ))}
 
-        <div className="mx-4 my-2.5 h-px" style={{ background: '#1f2024' }} />
+        <div className="mx-4 my-2.5 h-px" style={{ background: 'var(--att-divider)' }} />
 
         {/* Group: Advanced */}
         <div className="mb-1 px-4">
           <div
-            className="text-[8.5px] uppercase tracking-[.12em] text-[#4a4d55] mb-1"
+            className="text-[8.5px] uppercase tracking-[.12em] text-muted-foreground/60 mb-1"
             style={{ fontFamily: MONO }}
           >
             {t('settings.group.advanced')}
@@ -373,13 +373,13 @@ export function SettingsPage(): React.JSX.Element {
               onClick={() => scrollToSection(s.id)}
               className="mx-2.5 flex items-center gap-2 px-2 py-[7px] rounded-[6px] text-[12px] cursor-pointer transition-all text-left"
               style={{
-                background: activeSection === s.id ? 'rgba(91,124,246,.12)' : 'transparent',
-                color: activeSection === s.id ? '#5b7cf6' : '#7a7d85'
+                background: activeSection === s.id ? 'color-mix(in srgb, var(--att-blue) 12%, transparent)' : 'transparent',
+                color: activeSection === s.id ? 'var(--att-blue)' : '#7a7d85'
               }}
             >
               <div
                 className="w-1.5 h-1.5 rounded-full flex-shrink-0 transition-colors"
-                style={{ background: activeSection === s.id ? '#5b7cf6' : '#4a4d55' }}
+                style={{ background: activeSection === s.id ? 'var(--att-blue)' : '#4a4d55' }}
               />
               {s.label}
             </button>
@@ -421,15 +421,15 @@ export function SettingsPage(): React.JSX.Element {
                   onClick={() => setTrustProfile(key)}
                   className="relative overflow-hidden rounded-[10px] cursor-pointer transition-all"
                   style={{
-                    background: '#151618',
-                    border: `1.5px solid ${selected ? '#5b7cf6' : '#1f2024'}`
+                    background: 'var(--att-surface)',
+                    border: `1.5px solid ${selected ? 'var(--att-blue)' : 'var(--att-divider)'}`
                   }}
                 >
                   {/* Top blue bar when selected */}
                   {selected && (
                     <div
                       className="absolute top-0 left-0 right-0 h-[2px]"
-                      style={{ background: '#5b7cf6' }}
+                      style={{ background: 'var(--att-blue)' }}
                     />
                   )}
 
@@ -439,13 +439,13 @@ export function SettingsPage(): React.JSX.Element {
                     <div
                       className="w-4 h-4 rounded-full border-2 flex-shrink-0 flex items-center justify-center transition-all"
                       style={{
-                        borderColor: selected ? '#5b7cf6' : '#2a2b2f',
-                        background: selected ? '#5b7cf6' : 'transparent'
+                        borderColor: selected ? 'var(--att-blue)' : '#2a2b2f',
+                        background: selected ? 'var(--att-blue)' : 'transparent'
                       }}
                     >
                       {selected && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
                     </div>
-                    <div className="flex-1 text-[13.5px] font-medium text-[#e8e9eb]">
+                    <div className="flex-1 text-[13.5px] font-medium text-foreground">
                       {t(`settings.trust.profile.label.${key}`)}
                     </div>
                     <span
@@ -462,23 +462,23 @@ export function SettingsPage(): React.JSX.Element {
                   </div>
 
                   {/* Description */}
-                  <div className="text-[12px] text-[#7a7d85] leading-[1.45] px-4 pb-3.5 pl-[44px]">
+                  <div className="text-[12px] text-muted-foreground leading-[1.45] px-4 pb-3.5 pl-[44px]">
                     {t(`settings.trust.profile.desc.${key}`)}
                   </div>
 
                   {/* Scenario */}
                   <div
                     className="mx-4 mb-3.5 ml-[44px] rounded-[6px] p-2.5 flex gap-2.5 items-start"
-                    style={{ background: '#1c1d20', border: '1px solid #1f2024' }}
+                    style={{ background: 'var(--att-surface-hover)', border: '1px solid var(--att-divider)' }}
                   >
                     <span
-                      className="text-[8px] text-[#4a4d55] flex-shrink-0 mt-0.5 tracking-[.06em] whitespace-nowrap"
+                      className="text-[8px] text-muted-foreground/60 flex-shrink-0 mt-0.5 tracking-[.06em] whitespace-nowrap"
                       style={{ fontFamily: MONO }}
                     >
                       {t('settings.trust.example_label')}
                     </span>
                     <div
-                      className="text-[11.5px] text-[#7a7d85] leading-[1.45]"
+                      className="text-[11.5px] text-muted-foreground leading-[1.45]"
                       dangerouslySetInnerHTML={{ __html: extra.scenario }}
                     />
                   </div>
@@ -513,9 +513,9 @@ export function SettingsPage(): React.JSX.Element {
             {/* Morning briefing */}
             <div
               className="rounded-lg p-3"
-              style={{ background: '#151618', border: '1px solid #1f2024' }}
+              style={{ background: 'var(--att-surface)', border: '1px solid var(--att-divider)' }}
             >
-              <div className="text-[11px] text-[#4a4d55] mb-1.5">
+              <div className="text-[11px] text-muted-foreground/60 mb-1.5">
                 {t('settings.rhythm.morning')}
               </div>
               <div className="flex items-center justify-between">
@@ -526,16 +526,16 @@ export function SettingsPage(): React.JSX.Element {
                     onChange={(e) => settings.setSetting('morningBriefingTime', e.target.value)}
                     onBlur={() => setEditingTime(null)}
                     autoFocus
-                    className="text-[14px] text-[#e8e9eb] bg-transparent outline-none border-b border-[#5b7cf6]"
+                    className="text-[14px] text-foreground bg-transparent outline-none border-b border-att-blue"
                   />
                 ) : (
-                  <span className="text-[14px] text-[#e8e9eb]">
+                  <span className="text-[14px] text-foreground">
                     {formatTime(settings.morningBriefingTime)}
                   </span>
                 )}
                 <button
                   onClick={() => setEditingTime('morning')}
-                  className="text-[9px] text-[#4a4d55] px-2 py-1 rounded border border-transparent hover:border-[#2a2b2f] hover:text-[#7a7d85] transition-all"
+                  className="text-[9px] text-muted-foreground/60 px-2 py-1 rounded border border-transparent hover:border-att-divider hover:text-muted-foreground transition-all"
                   style={{ fontFamily: MONO }}
                 >
                   {t('settings.rhythm.edit')}
@@ -546,9 +546,9 @@ export function SettingsPage(): React.JSX.Element {
             {/* EOD summary */}
             <div
               className="rounded-lg p-3"
-              style={{ background: '#151618', border: '1px solid #1f2024' }}
+              style={{ background: 'var(--att-surface)', border: '1px solid var(--att-divider)' }}
             >
-              <div className="text-[11px] text-[#4a4d55] mb-1.5">{t('settings.rhythm.eod')}</div>
+              <div className="text-[11px] text-muted-foreground/60 mb-1.5">{t('settings.rhythm.eod')}</div>
               <div className="flex items-center justify-between">
                 {editingTime === 'eod' ? (
                   <input
@@ -557,16 +557,16 @@ export function SettingsPage(): React.JSX.Element {
                     onChange={(e) => settings.setSetting('eodSummaryTime', e.target.value)}
                     onBlur={() => setEditingTime(null)}
                     autoFocus
-                    className="text-[14px] text-[#e8e9eb] bg-transparent outline-none border-b border-[#5b7cf6]"
+                    className="text-[14px] text-foreground bg-transparent outline-none border-b border-att-blue"
                   />
                 ) : (
-                  <span className="text-[14px] text-[#e8e9eb]">
+                  <span className="text-[14px] text-foreground">
                     {formatTime(settings.eodSummaryTime)}
                   </span>
                 )}
                 <button
                   onClick={() => setEditingTime('eod')}
-                  className="text-[9px] text-[#4a4d55] px-2 py-1 rounded border border-transparent hover:border-[#2a2b2f] hover:text-[#7a7d85] transition-all"
+                  className="text-[9px] text-muted-foreground/60 px-2 py-1 rounded border border-transparent hover:border-att-divider hover:text-muted-foreground transition-all"
                   style={{ fontFamily: MONO }}
                 >
                   {t('settings.rhythm.edit')}
@@ -577,9 +577,9 @@ export function SettingsPage(): React.JSX.Element {
             {/* Take Over summary interval */}
             <div
               className="rounded-lg p-3"
-              style={{ background: '#151618', border: '1px solid #1f2024' }}
+              style={{ background: 'var(--att-surface)', border: '1px solid var(--att-divider)' }}
             >
-              <div className="text-[11px] text-[#4a4d55] mb-1.5">
+              <div className="text-[11px] text-muted-foreground/60 mb-1.5">
                 {t('settings.rhythm.takeover_interval')}
               </div>
               <div className="flex items-center justify-between">
@@ -601,16 +601,16 @@ export function SettingsPage(): React.JSX.Element {
                     fontFamily: 'inherit'
                   }}
                 >
-                  <option value="1" style={{ background: '#232428' }}>
+                  <option value="1" style={{ background: 'var(--att-surface-raised)' }}>
                     {t('settings.rhythm.every_hour')}
                   </option>
-                  <option value="2" style={{ background: '#232428' }}>
+                  <option value="2" style={{ background: 'var(--att-surface-raised)' }}>
                     {t('settings.rhythm.every_2h')}
                   </option>
-                  <option value="3" style={{ background: '#232428' }}>
+                  <option value="3" style={{ background: 'var(--att-surface-raised)' }}>
                     {t('settings.rhythm.every_3h')}
                   </option>
-                  <option value="4" style={{ background: '#232428' }}>
+                  <option value="4" style={{ background: 'var(--att-surface-raised)' }}>
                     {t('settings.rhythm.every_4h')}
                   </option>
                 </select>
@@ -620,9 +620,9 @@ export function SettingsPage(): React.JSX.Element {
             {/* Take Over auto-disable */}
             <div
               className="rounded-lg p-3"
-              style={{ background: '#151618', border: '1px solid #1f2024' }}
+              style={{ background: 'var(--att-surface)', border: '1px solid var(--att-divider)' }}
             >
-              <div className="text-[11px] text-[#4a4d55] mb-1.5">
+              <div className="text-[11px] text-muted-foreground/60 mb-1.5">
                 {t('settings.rhythm.takeover_disable')}
               </div>
               <div className="flex items-center justify-between">
@@ -645,7 +645,7 @@ export function SettingsPage(): React.JSX.Element {
                   }}
                 >
                   {[4, 5, 6, 7, 8, 9, 10, 11, 12].map((h) => (
-                    <option key={h} value={String(h)} style={{ background: '#232428' }}>
+                    <option key={h} value={String(h)} style={{ background: 'var(--att-surface-raised)' }}>
                       {t('settings.rhythm.hours', { h })}
                     </option>
                   ))}
@@ -656,18 +656,18 @@ export function SettingsPage(): React.JSX.Element {
             {/* Folder watch — full width */}
             <div
               className="col-span-2 rounded-lg p-3 flex items-start gap-3"
-              style={{ background: '#151618', border: '1px solid #1f2024' }}
+              style={{ background: 'var(--att-surface)', border: '1px solid var(--att-divider)' }}
             >
               <div className="flex-1">
-                <div className="text-[13px] text-[#e8e9eb] mb-1">
+                <div className="text-[13px] text-foreground mb-1">
                   {t('settings.rhythm.folder_watch')}
                 </div>
-                <div className="text-[11.5px] text-[#4a4d55] leading-[1.4]">
+                <div className="text-[11.5px] text-muted-foreground/60 leading-[1.4]">
                   {t('settings.rhythm.folder_watch_desc')}
                 </div>
                 {settings.folderWatchEnabled && settings.folderWatchPath && (
                   <div
-                    className="text-[10px] text-[#5b7cf6] mt-1.5 flex items-center gap-1.5 cursor-pointer hover:underline"
+                    className="text-[10px] text-att-blue mt-1.5 flex items-center gap-1.5 cursor-pointer hover:underline"
                     onClick={handleSelectFolder}
                   >
                     <FolderOpen className="w-3 h-3" />
@@ -677,7 +677,7 @@ export function SettingsPage(): React.JSX.Element {
                 {settings.folderWatchEnabled && !settings.folderWatchPath && (
                   <button
                     onClick={handleSelectFolder}
-                    className="mt-1.5 text-[10px] text-[#5b7cf6] underline cursor-pointer bg-transparent border-0 p-0"
+                    className="mt-1.5 text-[10px] text-att-blue underline cursor-pointer bg-transparent border-0 p-0"
                     style={{ fontFamily: MONO }}
                   >
                     {t('settings.rhythm.select_folder')}
@@ -693,7 +693,7 @@ export function SettingsPage(): React.JSX.Element {
               >
                 <div
                   className="w-[34px] h-[19px] rounded-[10px] relative transition-colors"
-                  style={{ background: settings.folderWatchEnabled ? '#4caf82' : '#232428' }}
+                  style={{ background: settings.folderWatchEnabled ? 'var(--att-green)' : 'var(--att-surface-raised)' }}
                 >
                   <div
                     className="absolute w-[15px] h-[15px] rounded-full bg-white top-[2px] transition-all"
@@ -707,14 +707,14 @@ export function SettingsPage(): React.JSX.Element {
 
         {/* ══ Avanzado divider ══ */}
         <div className="flex items-center gap-3 max-w-[620px] mb-12 mt-4">
-          <div className="flex-1 h-px" style={{ background: '#1f2024' }} />
+          <div className="flex-1 h-px" style={{ background: 'var(--att-divider)' }} />
           <span
-            className="text-[9px] text-[#4a4d55] uppercase tracking-[.1em] whitespace-nowrap"
+            className="text-[9px] text-muted-foreground/60 uppercase tracking-[.1em] whitespace-nowrap"
             style={{ fontFamily: MONO }}
           >
             {t('settings.advanced_divider')}
           </span>
-          <div className="flex-1 h-px" style={{ background: '#1f2024' }} />
+          <div className="flex-1 h-px" style={{ background: 'var(--att-divider)' }} />
         </div>
 
         {/* ══ §3 Uso del agente (Usage) ══ */}
@@ -727,26 +727,26 @@ export function SettingsPage(): React.JSX.Element {
 
           <div
             className="rounded-[10px] p-4"
-            style={{ background: '#151618', border: '1px solid #1f2024' }}
+            style={{ background: 'var(--att-surface)', border: '1px solid var(--att-divider)' }}
           >
             <div className="flex items-start justify-between">
               <div>
                 <div className="flex items-center gap-2 mb-1">
                   <div
                     className="w-2 h-2 rounded-full"
-                    style={{ background: '#4caf82', boxShadow: '0 0 5px #4caf82' }}
+                    style={{ background: 'var(--att-green)', boxShadow: '0 0 5px var(--att-green)' }}
                   />
-                  <span className="text-[13px] text-[#e8e9eb]">{t('settings.usage.normal')}</span>
+                  <span className="text-[13px] text-foreground">{t('settings.usage.normal')}</span>
                 </div>
-                <div className="text-[9px] text-[#4a4d55]" style={{ fontFamily: MONO }}>
+                <div className="text-[9px] text-muted-foreground/60" style={{ fontFamily: MONO }}>
                   {t('settings.usage.requests', { count: requestCount })}
                 </div>
               </div>
               <div className="text-right">
-                <div className="text-[20px] font-light text-[#e8e9eb]" style={{ fontFamily: MONO }}>
+                <div className="text-[20px] font-light text-foreground" style={{ fontFamily: MONO }}>
                   ${costUsd.toFixed(2)}
                 </div>
-                <div className="text-[10px] text-[#4a4d55]" style={{ fontFamily: MONO }}>
+                <div className="text-[10px] text-muted-foreground/60" style={{ fontFamily: MONO }}>
                   {t('settings.usage.cost')}
                 </div>
               </div>
@@ -764,15 +764,15 @@ export function SettingsPage(): React.JSX.Element {
 
           <div
             className="rounded-[10px] p-4"
-            style={{ background: '#151618', border: '1px solid #1f2024' }}
+            style={{ background: 'var(--att-surface)', border: '1px solid var(--att-divider)' }}
           >
             {/* Toggle row */}
             <div className="flex items-start gap-3">
               <div className="flex-1">
-                <div className="text-[13px] text-[#e8e9eb] mb-1">
+                <div className="text-[13px] text-foreground mb-1">
                   {t('settings.byok.toggle_label')}
                 </div>
-                <div className="text-[11.5px] text-[#4a4d55] leading-[1.4]">
+                <div className="text-[11.5px] text-muted-foreground/60 leading-[1.4]">
                   {settings.byokEnabled
                     ? t('settings.byok.enabled_desc')
                     : t('settings.byok.disabled_desc')}
@@ -784,7 +784,7 @@ export function SettingsPage(): React.JSX.Element {
               >
                 <div
                   className="w-[34px] h-[19px] rounded-[10px] relative transition-colors"
-                  style={{ background: settings.byokEnabled ? '#5b7cf6' : '#232428' }}
+                  style={{ background: settings.byokEnabled ? 'var(--att-blue)' : 'var(--att-surface-raised)' }}
                 >
                   <div
                     className="absolute w-[15px] h-[15px] rounded-full bg-white top-[2px] transition-all"
@@ -796,8 +796,8 @@ export function SettingsPage(): React.JSX.Element {
 
             {/* Expanded when enabled */}
             {settings.byokEnabled && (
-              <div className="mt-4 pt-4" style={{ borderTop: '1px solid #1f2024' }}>
-                <div className="text-[11px] text-[#4a4d55] mb-2">
+              <div className="mt-4 pt-4" style={{ borderTop: '1px solid var(--att-divider)' }}>
+                <div className="text-[11px] text-muted-foreground/60 mb-2">
                   {t('settings.byok.provider_q')}
                 </div>
 
@@ -818,9 +818,9 @@ export function SettingsPage(): React.JSX.Element {
                       className="px-3 py-1.5 rounded-full text-[12px] border transition-all cursor-pointer"
                       style={{
                         background:
-                          selectedProvider === key ? 'rgba(91,124,246,.12)' : 'transparent',
-                        borderColor: selectedProvider === key ? '#5b7cf6' : '#2a2b2f',
-                        color: selectedProvider === key ? '#5b7cf6' : '#7a7d85',
+                          selectedProvider === key ? 'color-mix(in srgb, var(--att-blue) 12%, transparent)' : 'transparent',
+                        borderColor: selectedProvider === key ? 'var(--att-blue)' : '#2a2b2f',
+                        color: selectedProvider === key ? 'var(--att-blue)' : '#7a7d85',
                         fontFamily: 'inherit'
                       }}
                     >
@@ -832,7 +832,7 @@ export function SettingsPage(): React.JSX.Element {
                 <BYOKGuide provider={selectedProvider} />
 
                 {apiKeyHint && (
-                  <p className="text-[11px] text-[#4a4d55] mb-2" style={{ fontFamily: MONO }}>
+                  <p className="text-[11px] text-muted-foreground/60 mb-2" style={{ fontFamily: MONO }}>
                     {t('settings.byok.current_key', { hint: apiKeyHint })}
                   </p>
                 )}
@@ -848,13 +848,13 @@ export function SettingsPage(): React.JSX.Element {
                     }
                     value={apiKey}
                     onChange={(e) => setApiKey(e.target.value)}
-                    className="flex-1 rounded-[6px] px-3 py-2 text-[11px] text-[#e8e9eb] outline-none transition-colors"
+                    className="flex-1 rounded-[6px] px-3 py-2 text-[11px] text-foreground outline-none transition-colors"
                     style={{
-                      background: '#1c1d20',
+                      background: 'var(--att-surface-hover)',
                       border: '1px solid #2a2b2f',
                       fontFamily: MONO
                     }}
-                    onFocus={(e) => (e.currentTarget.style.borderColor = '#5b7cf6')}
+                    onFocus={(e) => (e.currentTarget.style.borderColor = 'var(--att-blue)')}
                     onBlur={(e) => (e.currentTarget.style.borderColor = '#2a2b2f')}
                   />
                   <button
@@ -869,8 +869,8 @@ export function SettingsPage(): React.JSX.Element {
                     }}
                     onMouseEnter={(e) => {
                       if (!testing && !saving && apiKey.trim()) {
-                        e.currentTarget.style.borderColor = '#5b7cf6'
-                        e.currentTarget.style.color = '#5b7cf6'
+                        e.currentTarget.style.borderColor = 'var(--att-blue)'
+                        e.currentTarget.style.color = 'var(--att-blue)'
                       }
                     }}
                     onMouseLeave={(e) => {
@@ -890,7 +890,7 @@ export function SettingsPage(): React.JSX.Element {
                 {feedback && (
                   <p
                     className="mt-2 text-[11px]"
-                    style={{ color: feedback.type === 'success' ? '#4caf82' : '#e05c5c' }}
+                    style={{ color: feedback.type === 'success' ? 'var(--att-green)' : 'var(--att-red)' }}
                   >
                     {feedback.message}
                   </p>
@@ -910,7 +910,7 @@ export function SettingsPage(): React.JSX.Element {
                 {t('settings.composio.desc')}{' '}
                 <button
                   onClick={() => window.api.app.openExternal('https://composio.dev')}
-                  className="text-[#5b7cf6] hover:underline cursor-pointer"
+                  className="text-att-blue hover:underline cursor-pointer"
                   style={{ background: 'none', border: 'none', padding: 0, font: 'inherit' }}
                 >
                   {t('settings.composio.get_key')}
@@ -921,10 +921,10 @@ export function SettingsPage(): React.JSX.Element {
 
           <div
             className="rounded-[10px] p-4"
-            style={{ background: '#151618', border: '1px solid #1f2024' }}
+            style={{ background: 'var(--att-surface)', border: '1px solid var(--att-divider)' }}
           >
             {composioKeyHint && (
-              <p className="text-[11px] text-[#4a4d55] mb-2" style={{ fontFamily: MONO }}>
+              <p className="text-[11px] text-muted-foreground/60 mb-2" style={{ fontFamily: MONO }}>
                 {t('settings.composio.current_key', { hint: composioKeyHint })}
               </p>
             )}
@@ -939,13 +939,13 @@ export function SettingsPage(): React.JSX.Element {
                 }
                 value={composioKey}
                 onChange={(e) => setComposioKey(e.target.value)}
-                className="flex-1 rounded-[6px] px-3 py-2 text-[11px] text-[#e8e9eb] outline-none transition-colors"
+                className="flex-1 rounded-[6px] px-3 py-2 text-[11px] text-foreground outline-none transition-colors"
                 style={{
-                  background: '#1c1d20',
+                  background: 'var(--att-surface-hover)',
                   border: '1px solid #2a2b2f',
                   fontFamily: MONO
                 }}
-                onFocus={(e) => (e.currentTarget.style.borderColor = '#5b7cf6')}
+                onFocus={(e) => (e.currentTarget.style.borderColor = 'var(--att-blue)')}
                 onBlur={(e) => (e.currentTarget.style.borderColor = '#2a2b2f')}
               />
               <button
@@ -960,8 +960,8 @@ export function SettingsPage(): React.JSX.Element {
                 }}
                 onMouseEnter={(e) => {
                   if (!savingComposio && composioKey.trim()) {
-                    e.currentTarget.style.borderColor = '#5b7cf6'
-                    e.currentTarget.style.color = '#5b7cf6'
+                    e.currentTarget.style.borderColor = 'var(--att-blue)'
+                    e.currentTarget.style.color = 'var(--att-blue)'
                   }
                 }}
                 onMouseLeave={(e) => {
@@ -977,14 +977,14 @@ export function SettingsPage(): React.JSX.Element {
             {composioFeedback && (
               <p
                 className="mt-2 text-[11px]"
-                style={{ color: composioFeedback.type === 'success' ? '#4caf82' : '#e05c5c' }}
+                style={{ color: composioFeedback.type === 'success' ? 'var(--att-green)' : 'var(--att-red)' }}
               >
                 {composioFeedback.message}
               </p>
             )}
 
             {!composioKeyHint && (
-              <p className="mt-3 text-[11px] text-[#4a4d55] leading-[1.4]">
+              <p className="mt-3 text-[11px] text-muted-foreground/60 leading-[1.4]">
                 {t('settings.composio.no_key_hint')}
               </p>
             )}
@@ -1001,14 +1001,14 @@ export function SettingsPage(): React.JSX.Element {
 
           <div
             className="rounded-[10px] overflow-hidden"
-            style={{ background: '#151618', border: '1px solid #1f2024' }}
+            style={{ background: 'var(--att-surface)', border: '1px solid var(--att-divider)' }}
           >
             <div className="flex items-start gap-3 p-4">
               <div className="flex-1">
-                <div className="text-[13px] text-[#e8e9eb] mb-1">
+                <div className="text-[13px] text-foreground mb-1">
                   {t('settings.telemetry.toggle_label')}
                 </div>
-                <div className="text-[11.5px] text-[#4a4d55] leading-[1.4]">
+                <div className="text-[11.5px] text-muted-foreground/60 leading-[1.4]">
                   {t('settings.telemetry.toggle_desc')}
                 </div>
               </div>
@@ -1016,7 +1016,7 @@ export function SettingsPage(): React.JSX.Element {
             </div>
             <div
               className="flex items-center gap-2 px-4 py-2.5"
-              style={{ borderTop: '1px solid #1f2024' }}
+              style={{ borderTop: '1px solid var(--att-divider)' }}
             >
               <TelemetryDataCategories />
               <button
@@ -1029,8 +1029,8 @@ export function SettingsPage(): React.JSX.Element {
                   fontFamily: 'inherit'
                 }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.borderColor = '#5b7cf6'
-                  e.currentTarget.style.color = '#5b7cf6'
+                  e.currentTarget.style.borderColor = 'var(--att-blue)'
+                  e.currentTarget.style.color = 'var(--att-blue)'
                 }}
                 onMouseLeave={(e) => {
                   e.currentTarget.style.borderColor = '#2a2b2f'
@@ -1049,8 +1049,8 @@ export function SettingsPage(): React.JSX.Element {
                   fontFamily: 'inherit'
                 }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.borderColor = '#e05c5c'
-                  e.currentTarget.style.color = '#e05c5c'
+                  e.currentTarget.style.borderColor = 'var(--att-red)'
+                  e.currentTarget.style.color = 'var(--att-red)'
                 }}
                 onMouseLeave={(e) => {
                   e.currentTarget.style.borderColor = '#2a2b2f'
@@ -1061,6 +1061,20 @@ export function SettingsPage(): React.JSX.Element {
               </button>
             </div>
           </div>
+        </section>
+
+        {/* ══ Standing approvals ══ */}
+        <section
+          id="s-standing-approvals"
+          className="max-w-[620px] mb-12"
+          style={{ scrollMarginTop: 32 }}
+        >
+          <SectionHeader
+            eyebrow="Permissions"
+            title="Standing approvals"
+            desc="Medium-risk actions you approved with 'Don't ask again'. Only persisted on the Balanced trust profile. Expire after 30 days. Cleared automatically when you change your trust profile."
+          />
+          <StandingApprovalsSection />
         </section>
 
         {/* ══ §7 System Health ══ */}

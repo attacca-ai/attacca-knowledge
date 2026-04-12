@@ -1,21 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
 const api = {
-  // Gateway
-  gateway: {
-    start: () => ipcRenderer.invoke('gateway:start'),
-    stop: () => ipcRenderer.invoke('gateway:stop'),
-    restart: () => ipcRenderer.invoke('gateway:restart'),
-    status: () => ipcRenderer.invoke('gateway:status'),
-    health: () => ipcRenderer.invoke('gateway:health'),
-    getToken: () => ipcRenderer.invoke('gateway:get-token'),
-    onStateChanged: (callback: (state: unknown) => void) => {
-      const handler = (_event: unknown, state: unknown): void => callback(state)
-      ipcRenderer.on('event:gateway-state-changed', handler)
-      return () => ipcRenderer.removeListener('event:gateway-state-changed', handler)
-    }
-  },
-
   // Onboarding
   onboarding: {
     getState: () => ipcRenderer.invoke('onboarding:get-state'),
@@ -41,8 +26,8 @@ const api = {
     openExternal: (url: string) => ipcRenderer.invoke('app:open-external', url)
   },
 
-  // Agent state persistence
-  agent: {
+  // Agent state persistence (legacy — used by agent-store for persisted state)
+  agentState: {
     getState: () => ipcRenderer.invoke('agent:get-state'),
     setState: (state: unknown) => ipcRenderer.invoke('agent:set-state', state)
   },
@@ -76,8 +61,16 @@ const api = {
     getStatus: (connectionId: string) => ipcRenderer.invoke('composio:get-status', connectionId),
     getConnected: () => ipcRenderer.invoke('composio:get-connected'),
     listApps: () => ipcRenderer.invoke('composio:list-apps'),
+    listActions: (appSlug: string) => ipcRenderer.invoke('composio:list-actions', appSlug),
     callTool: (actionName: string, params: Record<string, unknown>) =>
-      ipcRenderer.invoke('composio:call-tool', actionName, params)
+      ipcRenderer.invoke('composio:call-tool', actionName, params),
+    disconnect: (toolkitSlug: string) => ipcRenderer.invoke('composio:disconnect', toolkitSlug),
+    getAccounts: () => ipcRenderer.invoke('composio:get-accounts'),
+    setLabel: (connectionId: string, label: string, customName?: string | null) =>
+      ipcRenderer.invoke('composio:set-label', connectionId, label, customName ?? null),
+    setDefault: (toolkit: string, connectionId: string | null) =>
+      ipcRenderer.invoke('composio:set-default', toolkit, connectionId),
+    getDefaults: () => ipcRenderer.invoke('composio:get-defaults')
   },
 
   // Relay (remaining — moved to local in Phase 3)
@@ -94,7 +87,10 @@ const api = {
   kb: {
     saveCapture: (data: unknown) => ipcRenderer.invoke('kb:save-capture', data),
     readContext: () => ipcRenderer.invoke('kb:read-context'),
-    appendDailyLog: (entry: string) => ipcRenderer.invoke('kb:append-daily-log', entry)
+    appendDailyLog: (entry: string) => ipcRenderer.invoke('kb:append-daily-log', entry),
+    getPath: () => ipcRenderer.invoke('kb:get-path'),
+    openFolder: () => ipcRenderer.invoke('kb:open-folder'),
+    importFiles: (filePaths: string[]) => ipcRenderer.invoke('kb:import-files', filePaths)
   },
 
   // Memory
@@ -138,7 +134,10 @@ const api = {
       return () => ipcRenderer.removeListener('event:permission-request', handler)
     },
     resolve: (requestId: string, approved: boolean, standing: boolean) =>
-      ipcRenderer.invoke('permission:resolve', requestId, approved, standing)
+      ipcRenderer.invoke('permission:resolve', requestId, approved, standing),
+    listStanding: () => ipcRenderer.invoke('permission:list-standing'),
+    revokeStanding: (actionName: string) =>
+      ipcRenderer.invoke('permission:revoke-standing', actionName)
   },
 
   // Telemetry
@@ -150,6 +149,69 @@ const api = {
       ipcRenderer.invoke('telemetry:emit', eventType, payload),
     getQueue: () => ipcRenderer.invoke('telemetry:get-queue'),
     getStatus: () => ipcRenderer.invoke('telemetry:get-status')
+  },
+
+  // Agent Runtime (new — Anthropic-native, replaces gateway for chat)
+  agent: {
+    send: (sessionKey: string, message: string, idempotencyKey: string) =>
+      ipcRenderer.invoke('agent:chat:send', sessionKey, message, idempotencyKey),
+    stop: (sessionKey: string) => ipcRenderer.invoke('agent:chat:stop', sessionKey),
+    listSessions: () => ipcRenderer.invoke('agent:session:list'),
+    clearSession: (sessionKey: string) =>
+      ipcRenderer.invoke('agent:session:clear', sessionKey),
+    onStream: (
+      callback: (data: { sessionKey: string; delta: string; type: string }) => void
+    ) => {
+      const handler = (_event: unknown, data: Parameters<typeof callback>[0]): void =>
+        callback(data)
+      ipcRenderer.on('event:agent:stream', handler)
+      return () => ipcRenderer.removeListener('event:agent:stream', handler)
+    },
+    onToolCall: (
+      callback: (data: {
+        sessionKey: string
+        toolName: string
+        toolInput: Record<string, unknown>
+      }) => void
+    ) => {
+      const handler = (_event: unknown, data: Parameters<typeof callback>[0]): void =>
+        callback(data)
+      ipcRenderer.on('event:agent:tool-call', handler)
+      return () => ipcRenderer.removeListener('event:agent:tool-call', handler)
+    },
+    onToolResult: (
+      callback: (data: {
+        sessionKey: string
+        toolName: string
+        success: boolean
+        summary: string
+      }) => void
+    ) => {
+      const handler = (_event: unknown, data: Parameters<typeof callback>[0]): void =>
+        callback(data)
+      ipcRenderer.on('event:agent:tool-result', handler)
+      return () => ipcRenderer.removeListener('event:agent:tool-result', handler)
+    },
+    onFinal: (
+      callback: (data: {
+        sessionKey: string
+        message: string
+        usage: { input_tokens: number; output_tokens: number }
+      }) => void
+    ) => {
+      const handler = (_event: unknown, data: Parameters<typeof callback>[0]): void =>
+        callback(data)
+      ipcRenderer.on('event:agent:final', handler)
+      return () => ipcRenderer.removeListener('event:agent:final', handler)
+    },
+    onError: (
+      callback: (data: { sessionKey: string; error: string; partial?: string | null }) => void
+    ) => {
+      const handler = (_event: unknown, data: Parameters<typeof callback>[0]): void =>
+        callback(data)
+      ipcRenderer.on('event:agent:error', handler)
+      return () => ipcRenderer.removeListener('event:agent:error', handler)
+    }
   }
 }
 

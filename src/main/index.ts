@@ -3,14 +3,15 @@ import { electronApp, optimizer } from '@electron-toolkit/utils'
 import { createMainWindow, destroyMainWindow, getMainWindow } from './window/main-window'
 import { createTray, destroyTray } from './tray/tray'
 import { registerIpcHandlers } from './ipc/handlers'
-import { startGateway, stopGateway } from './gateway/lifecycle'
-import { startComposioServer, stopComposioServer } from './composio/server'
+import { invalidateConnectedAppsCache, runMultiAccountMigration } from './composio/service'
+import { getComposioEntityId } from './identity/user-identity'
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
+import { join, dirname } from 'path'
 import { ensureUsageTables } from './usage/tracker'
 import { registerAllTasks } from './scheduler/tasks'
 import { stopAll as stopScheduler } from './scheduler'
 import { initTelemetryCollector, getTelemetryCollector } from './telemetry/collector'
 import { getMemoryDb, closeMemoryDb } from './memory/db'
-import { startMemoryServer, stopMemoryServer } from './memory/server'
 
 // Single instance lock
 const gotTheLock = app.requestSingleInstanceLock()
@@ -31,6 +32,13 @@ if (!gotTheLock) {
 
     app.on('browser-window-created', (_, window) => {
       optimizer.watchWindowShortcuts(window)
+    })
+
+    // When the main window regains focus (user returning from an external OAuth
+    // browser tab), drop the connected-apps cache so the next read reflects any
+    // connection made out-of-band.
+    app.on('browser-window-focus', () => {
+      invalidateConnectedAppsCache()
     })
 
     // Initialize telemetry collector
@@ -55,10 +63,7 @@ if (!gotTheLock) {
     // Initialize memory database (creates tables if needed)
     getMemoryDb()
 
-    // Start local memory server for agent skill access
-    startMemoryServer()
-      .then((port) => console.log(`[main] Memory server on port ${port}`))
-      .catch((err) => console.error('[main] Memory server failed:', err))
+    // Memory server removed — memory tools execute directly via SQLite
 
     // Initialize usage tracking tables
     ensureUsageTables()
@@ -66,18 +71,10 @@ if (!gotTheLock) {
     // Register background scheduler tasks
     registerAllTasks()
 
-    // Start local Composio server for agent tool calls
-    startComposioServer()
-      .then((port) => console.log(`[main] Composio server on port ${port}`))
-      .catch((err) => console.error('[main] Composio server failed:', err))
-
-    // Start OpenClaw gateway
-    try {
-      await startGateway()
-      console.log('[main] OpenClaw gateway started')
-    } catch (err) {
-      console.error('[main] Failed to start OpenClaw gateway:', err)
-    }
+    // One-time multi-account migration (Spec B PR B2). Idempotent — gated by
+    // settings.migrationsApplied.multi_account_v1. Runs in the background so
+    // app boot isn't blocked on a Composio round-trip.
+    void runOneTimeMigrations()
   })
 
   // Keep app running when all windows are closed (tray mode)
@@ -92,6 +89,41 @@ if (!gotTheLock) {
   })
 }
 
+async function runOneTimeMigrations(): Promise<void> {
+  try {
+    const settingsPath = join(app.getPath('userData'), 'settings.json')
+    let settings: Record<string, any> = {}
+    if (existsSync(settingsPath)) {
+      try {
+        settings = JSON.parse(readFileSync(settingsPath, 'utf-8'))
+      } catch {
+        settings = {}
+      }
+    }
+    const migrationsApplied = (settings.migrationsApplied ?? {}) as Record<string, boolean>
+    if (migrationsApplied.multi_account_v1) {
+      return
+    }
+
+    const entityId = getComposioEntityId()
+    const count = await runMultiAccountMigration(entityId)
+    console.log(`[migration] multi_account_v1: auto-labeled ${count} existing connections as Work`)
+
+    settings.migrationsApplied = { ...migrationsApplied, multi_account_v1: true }
+    const dir = dirname(settingsPath)
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+    writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8')
+
+    try {
+      getTelemetryCollector().emit('migration.multi_account_v1', { autoLabeled: count })
+    } catch {
+      /* telemetry is best-effort */
+    }
+  } catch (err) {
+    console.error('[migration] multi_account_v1 failed:', err)
+  }
+}
+
 let isQuitting = false
 
 async function quitApp(): Promise<void> {
@@ -100,15 +132,7 @@ async function quitApp(): Promise<void> {
 
   console.log('[main] Quitting application...')
 
-  try {
-    await stopGateway()
-  } catch (err) {
-    console.error('[main] Error stopping gateway:', err)
-  }
-
   stopScheduler()
-  stopComposioServer()
-  stopMemoryServer()
   closeMemoryDb()
   destroyTray()
   destroyMainWindow()
