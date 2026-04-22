@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { useAgentStore, type AgentTask, type Project } from '@/stores/agent-store'
+import { useTaskStore, type AgentTask } from '@/stores/task-store'
+import { useProjectStore, type Project } from '@/stores/project-store'
 import { useTranslation } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { Loader2, RefreshCw, ExternalLink, ChevronRight, AlertCircle, Plus, Send, CheckCircle2, Circle, Clock } from 'lucide-react'
@@ -88,12 +89,12 @@ function formatDate(dateStr: string | null): string {
 export function TasksView(): React.JSX.Element {
   const { t } = useTranslation()
   const [isClickUpConnectedState, setIsClickUpConnectedState] = useState(false)
-  const localTasks = useAgentStore((s) => s.localTasks)
-  const addLocalTask = useAgentStore((s) => s.addLocalTask)
-  const updateLocalTask = useAgentStore((s) => s.updateLocalTask)
-  const projects = useAgentStore((s) => s.projects)
-  const addProject = useAgentStore((s) => s.addProject)
-  const addTaskToProject = useAgentStore((s) => s.addTaskToProject)
+  const localTasks = useTaskStore((s) => s.localTasks)
+  const addLocalTask = useTaskStore((s) => s.addLocalTask)
+  const updateLocalTask = useTaskStore((s) => s.updateLocalTask)
+  const projects = useProjectStore((s) => s.projects)
+  const addProject = useProjectStore((s) => s.addProject)
+  const addTaskToProject = useProjectStore((s) => s.addTaskToProject)
   const isClickUpConnected = isClickUpConnectedState
 
   useEffect(() => {
@@ -487,9 +488,11 @@ function LocalTaskDetail({
   onUpdate: (id: string, update: Partial<AgentTask>) => void
 }): React.JSX.Element {
   const taskId = task?.id ?? ''
-  const chatMessages = useAgentStore((s) => s.taskChatMessages[taskId] ?? [])
-  const addChatMessage = useAgentStore((s) => s.addTaskChatMessage)
-  const project = useAgentStore((s) => task?.projectId ? s.projects.find((p) => p.id === task.projectId) : undefined)
+  const chatMessages = useTaskStore((s) => s.taskChatMessages[taskId] ?? [])
+  const addChatMessage = useTaskStore((s) => s.addTaskChatMessage)
+  const project = useProjectStore((s) =>
+    task?.projectId ? s.projects.find((p) => p.id === task.projectId) : undefined
+  )
   const [chatInput, setChatInput] = useState('')
   const [sending, setSending] = useState(false)
   const pendingRef = useRef<string | null>(null)
@@ -645,9 +648,9 @@ function LocalTaskDetail({
 // ── ClickUp Task Detail ──────────────────────────────────────────────────────
 
 function ClickUpTaskDetail({ task }: { task: ClickUpTask }): React.JSX.Element | null {
-  const addChatMessage = useAgentStore((s) => s.addTaskChatMessage)
+  const addChatMessage = useTaskStore((s) => s.addTaskChatMessage)
   const taskKey = `cu_${task?.id ?? 'none'}`
-  const chatMessages = useAgentStore((s) => s.taskChatMessages[taskKey] ?? [])
+  const chatMessages = useTaskStore((s) => s.taskChatMessages[taskKey] ?? [])
   const [comments, setComments] = useState<ClickUpComment[]>([])
   const [loadingComments, setLoadingComments] = useState(false)
   const [chatInput, setChatInput] = useState('')

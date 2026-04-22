@@ -1,12 +1,13 @@
 import { useState } from 'react'
-import { useAgentStore } from '@/stores/agent-store'
+import { useTaskStore } from '@/stores/task-store'
+import { useActivityStore } from '@/stores/activity-store'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { ListTodo, Plus, Loader2, Clock } from 'lucide-react'
 
 export function TaskQueue(): React.JSX.Element {
-  const { currentTask, taskQueue, addTask, isProcessing } = useAgentStore()
+  const { currentTask, taskQueue, addTask, isProcessing } = useTaskStore()
   const [newTaskInput, setNewTaskInput] = useState('')
   const [adding, setAdding] = useState(false)
   const [showInput, setShowInput] = useState(false)
@@ -23,7 +24,7 @@ export function TaskQueue(): React.JSX.Element {
       await window.api.agent.send('main', prompt, crypto.randomUUID())
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      useAgentStore.getState().addActivity({
+      useActivityStore.getState().addActivity({
         type: 'error',
         description: `Failed to send task to agent: ${msg}`
       })

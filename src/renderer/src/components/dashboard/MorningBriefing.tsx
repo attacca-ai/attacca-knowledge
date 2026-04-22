@@ -1,4 +1,4 @@
-import { useAgentStore } from '@/stores/agent-store'
+import { useTodayStore } from '@/stores/today-store'
 import { Sun, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useState } from 'react'
@@ -8,7 +8,7 @@ const BRIEFING_PROMPT =
 const BRIEFING_TIMEOUT_MS = 120_000
 
 export function MorningBriefing(): React.JSX.Element {
-  const { morningBriefing, briefingDate, setMorningBriefing } = useAgentStore()
+  const { morningBriefing, briefingDate, setMorningBriefing } = useTodayStore()
   const [loading, setLoading] = useState(false)
 
   const today = new Date().toISOString().split('T')[0]

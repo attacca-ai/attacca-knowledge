@@ -8,18 +8,32 @@ import { SettingsPage } from '@/components/settings/SettingsPage'
 import { CaptureView } from '@/components/features/CaptureView'
 import { TasksView } from '@/components/features/TasksView'
 import { KnowledgeBasePage } from '@/components/features/KnowledgeBasePage'
-import { useAgentStore } from '@/stores/agent-store'
+import { useActivityStore } from '@/stores/activity-store'
+import { useCaptureStore } from '@/stores/capture-store'
+import { useProjectStore } from '@/stores/project-store'
+import { useTaskStore } from '@/stores/task-store'
+import { useTodayStore } from '@/stores/today-store'
+import { useVaultStore } from '@/stores/vault-store'
 import { useAgent } from '@/hooks/useAgent'
 
 export function AppShell(): React.JSX.Element {
   const [activeView, setActiveView] = useState<SidebarView>('dashboard')
   const prevViewRef = useRef<SidebarView>('dashboard')
   const lastMessageRef = useRef<string | null>(null)
-  const { addActivity, completeTask, failTask, hydrate } = useAgentStore()
+  const addActivity = useActivityStore((s) => s.addActivity)
+  const completeTask = useTaskStore((s) => s.completeTask)
+  const failTask = useTaskStore((s) => s.failTask)
 
-  // Restore persisted state on mount (runs once, never unmounts)
+  // Restore persisted state across every split store on mount (runs once).
   useEffect(() => {
-    hydrate()
+    void Promise.all([
+      useActivityStore.getState().hydrate(),
+      useCaptureStore.getState().hydrate(),
+      useProjectStore.getState().hydrate(),
+      useTaskStore.getState().hydrate(),
+      useTodayStore.getState().hydrate(),
+      useVaultStore.getState().hydrate()
+    ])
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Cross-component navigation via custom events
@@ -61,7 +75,7 @@ export function AppShell(): React.JSX.Element {
         lastMessageRef.current = text
         addActivity({ type: 'message', description: text })
       }
-      const task = useAgentStore.getState().currentTask
+      const task = useTaskStore.getState().currentTask
       if (task) completeTask(task.id, lastMessageRef.current ?? undefined)
       lastMessageRef.current = null
     })
@@ -69,7 +83,7 @@ export function AppShell(): React.JSX.Element {
     const unsubError = window.api.agent.onError((data) => {
       const errorMsg = data.error || 'An error occurred'
       addActivity({ type: 'error', description: errorMsg })
-      const task = useAgentStore.getState().currentTask
+      const task = useTaskStore.getState().currentTask
       if (task) failTask(task.id, errorMsg)
     })
 

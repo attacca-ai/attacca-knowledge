@@ -1,5 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { useAgentStore, type CaptureEntry } from '@/stores/agent-store'
+import { useActivityStore } from '@/stores/activity-store'
+import { useCaptureStore, type CaptureEntry } from '@/stores/capture-store'
+import { useTaskStore } from '@/stores/task-store'
+import { useTodayStore } from '@/stores/today-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { Loader2, OctagonX, Archive, Trash2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -49,20 +52,18 @@ export function CapturePanel({
   captureRef?: React.RefObject<HTMLTextAreaElement | null>
 }): React.JSX.Element {
   const { t } = useTranslation()
-  const {
-    activityFeed,
-    rawCaptures,
-    addTask,
-    addRawCapture,
-    addThread,
-    closeThread,
-    updateThreadNote,
-    updateCaptureNote,
-    setCaptureConfirmation,
-    deleteCapture,
-    archiveCapture,
-    emergencyStop
-  } = useAgentStore()
+  const activityFeed = useActivityStore((s) => s.activityFeed)
+  const rawCaptures = useCaptureStore((s) => s.rawCaptures)
+  const addRawCapture = useCaptureStore((s) => s.addRawCapture)
+  const updateCaptureNote = useCaptureStore((s) => s.updateCaptureNote)
+  const setCaptureConfirmation = useCaptureStore((s) => s.setCaptureConfirmation)
+  const deleteCapture = useCaptureStore((s) => s.deleteCapture)
+  const archiveCapture = useCaptureStore((s) => s.archiveCapture)
+  const addTask = useTaskStore((s) => s.addTask)
+  const emergencyStop = useTaskStore((s) => s.emergencyStop)
+  const addThread = useTodayStore((s) => s.addThread)
+  const closeThread = useTodayStore((s) => s.closeThread)
+  const updateThreadNote = useTodayStore((s) => s.updateThreadNote)
   const userTimezone = useSettingsStore((s) => s.userTimezone)
 
   const [text, setText] = useState('')
@@ -143,7 +144,7 @@ export function CapturePanel({
           }
           if (Array.isArray(parsed.resolvedThreadIds)) {
             // Validate: only accept IDs that actually exist in the current thread list
-            const currentThreadIds = new Set(useAgentStore.getState().threads.map((t) => t.id))
+            const currentThreadIds = new Set(useTodayStore.getState().threads.map((t) => t.id))
             resolvedIds = parsed.resolvedThreadIds.filter((id) => currentThreadIds.has(id))
           }
           if (parsed.pendingConfirmation) pendingConfirmation = parsed.pendingConfirmation
@@ -187,7 +188,7 @@ export function CapturePanel({
 
     // Add capture entry (agentNote starts null, sessionKey stored for confirmation flow)
     addRawCapture({ text: trimmed, type, sourceType: 'landscape-chat', agentNote: null, sessionKey })
-    const currentCaptures = useAgentStore.getState().rawCaptures
+    const currentCaptures = useCaptureStore.getState().rawCaptures
     const captureId = currentCaptures[0]?.id ?? null
     pendingCaptureIdRef.current = captureId
 
@@ -207,7 +208,7 @@ export function CapturePanel({
     pendingSessionKeyRef.current = sessionKey
 
     // Include open threads so the agent can close the ones this capture resolves
-      const openThreads = useAgentStore.getState().threads
+      const openThreads = useTodayStore.getState().threads
       const threadContext =
         openThreads.length > 0
           ? `\n\nHilos abiertos (preguntas que el agente sostiene):\n${openThreads.map((t) => `  - id: "${t.id}", esperando: "${t.holdingNote}"`).join('\n')}\n`

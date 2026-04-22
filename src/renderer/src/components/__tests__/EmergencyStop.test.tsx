@@ -1,21 +1,21 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, act } from '@testing-library/react'
 import { EmergencyStop } from '../dashboard/EmergencyStop'
-import { useAgentStore } from '../../stores/agent-store'
+import { useTaskStore } from '../../stores/task-store'
 import { installMockApi, cleanupMockApi } from '../../../../../tests/helpers'
 
 describe('EmergencyStop', () => {
   beforeEach(() => {
     installMockApi()
     vi.useFakeTimers()
-    useAgentStore.setState({
+    useTaskStore.setState({
       currentTask: null,
       taskQueue: [],
-      activityFeed: [],
+      localTasks: [],
+      taskChatMessages: {},
       isProcessing: false,
       usageLimitReached: false,
-      morningBriefing: null,
-      briefingDate: null
+      emergencyStoppedAt: null
     })
   })
 
@@ -42,8 +42,8 @@ describe('EmergencyStop', () => {
     fireEvent.click(screen.getByRole('button'))
     fireEvent.click(screen.getByRole('button'))
 
-    expect(useAgentStore.getState().currentTask).toBeNull()
-    expect(useAgentStore.getState().isProcessing).toBe(false)
+    expect(useTaskStore.getState().currentTask).toBeNull()
+    expect(useTaskStore.getState().isProcessing).toBe(false)
     expect(window.api.agent.stop).toHaveBeenCalledWith('main')
   })
 

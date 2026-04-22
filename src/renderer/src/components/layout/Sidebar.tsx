@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Settings } from 'lucide-react'
-import { useAgentStore } from '@/stores/agent-store'
+import { useCaptureStore } from '@/stores/capture-store'
+import { useTaskStore } from '@/stores/task-store'
 import { cn } from '@/lib/utils'
 import { useTranslation } from '@/i18n'
 
@@ -164,8 +165,8 @@ function NavItem({
 export function Sidebar({ activeView, onViewChange }: SidebarProps): React.JSX.Element {
   const [collapsed, setCollapsed] = useState(false)
   const { t } = useTranslation()
-  const rawCapturesCount = useAgentStore((s) => s.rawCapturesCount)
-  const isProcessing = useAgentStore((s) => s.isProcessing)
+  const rawCapturesCount = useCaptureStore((s) => s.rawCapturesCount)
+  const isProcessing = useTaskStore((s) => s.isProcessing)
 
   const agentStatus = isProcessing ? 'working' : 'watching'
 

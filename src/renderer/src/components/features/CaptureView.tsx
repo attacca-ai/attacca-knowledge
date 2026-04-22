@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { useAgentStore } from '@/stores/agent-store'
+import { useCaptureStore } from '@/stores/capture-store'
+import { useTaskStore } from '@/stores/task-store'
+import { useVaultStore } from '@/stores/vault-store'
 import { Upload, Link, MessageSquare, Check, Clock, X, Send, ListTodo, FileText } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useTranslation } from '@/i18n'
@@ -125,9 +127,9 @@ function SourcePill({
 
 export function CaptureView(): React.JSX.Element {
   const { t } = useTranslation()
-  const rawCaptures = useAgentStore((s) => s.rawCaptures)
-  const addLocalTask = useAgentStore((s) => s.addLocalTask)
-  const addKBEntry = useAgentStore((s) => s.addKBEntry)
+  const rawCaptures = useCaptureStore((s) => s.rawCaptures)
+  const addLocalTask = useTaskStore((s) => s.addLocalTask)
+  const addKBEntry = useVaultStore((s) => s.addEntry)
 
   const [captureState, setCaptureState] = useState<CaptureState>('idle')
   const [sourceType, setSourceType] = useState<SourceType>('text')

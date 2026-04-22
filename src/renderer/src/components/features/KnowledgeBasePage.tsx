@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { useAgentStore, type KBEntry } from '@/stores/agent-store'
+import { useVaultStore, type VaultNode as KBEntry } from '@/stores/vault-store'
 import {
   FolderOpen,
   FileText,
@@ -34,7 +34,9 @@ const SOURCE_BADGE: Record<KBEntry['sourceType'], { label: string; color: string
 type ViewState = 'list' | 'detail'
 
 export function KnowledgeBasePage(): React.JSX.Element {
-  const { kbEntries, deleteKBEntry, addKBEntry } = useAgentStore()
+  const kbEntries = useVaultStore((s) => s.entries)
+  const deleteKBEntry = useVaultStore((s) => s.deleteEntry)
+  const addKBEntry = useVaultStore((s) => s.addEntry)
   const [viewState, setViewState] = useState<ViewState>('list')
   const [selectedEntry, setSelectedEntry] = useState<KBEntry | null>(null)
   const [filter, setFilter] = useState('')

@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react'
-import { useAgentStore } from '@/stores/agent-store'
+import { useTaskStore } from '@/stores/task-store'
 import { OctagonX } from 'lucide-react'
 
 export function EmergencyStop(): React.JSX.Element {
-  const emergencyStop = useAgentStore((s) => s.emergencyStop)
+  const emergencyStop = useTaskStore((s) => s.emergencyStop)
   const [confirming, setConfirming] = useState(false)
 
   // Auto-cancel confirmation after 3 seconds

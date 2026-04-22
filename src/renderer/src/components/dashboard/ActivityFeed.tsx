@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { useAgentStore, type ActivityEntry } from '@/stores/agent-store'
+import { useActivityStore, type ActivityEntry } from '@/stores/activity-store'
 import { Activity, AlertCircle, CheckCircle, Wrench, MessageSquare, Info } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -21,7 +21,7 @@ function formatTime(ts: number): string {
 }
 
 export function ActivityFeed(): React.JSX.Element {
-  const activityFeed = useAgentStore((s) => s.activityFeed)
+  const activityFeed = useActivityStore((s) => s.activityFeed)
   const scrollRef = useRef<HTMLDivElement>(null)
 
   // Auto-scroll to bottom on new entries

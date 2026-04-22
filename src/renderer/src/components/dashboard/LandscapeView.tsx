@@ -1,10 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import {
-  useAgentStore,
+  useTodayStore,
   type AgentThread,
   type LandscapeTheme,
   type MorningLandscape
-} from '@/stores/agent-store'
+} from '@/stores/today-store'
+import { useTaskStore } from '@/stores/task-store'
+import { useCaptureStore } from '@/stores/capture-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { ArrowLeft, ArrowUp, Loader2, RefreshCw, X, ListTodo, ArchiveX } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -165,12 +167,12 @@ function ThreadChatPanel({
   thread: AgentThread
   onBack: () => void
 }): React.JSX.Element {
-  const messages = useAgentStore((s) => s.threadMessages[thread.id] ?? [])
-  const addThreadMessage = useAgentStore((s) => s.addThreadMessage)
+  const messages = useTodayStore((s) => s.threadMessages[thread.id] ?? [])
+  const addThreadMessage = useTodayStore((s) => s.addThreadMessage)
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const pendingSessionKeyRef = useRef<string | null>(null)
-  const { updateThreadNote, closeThread } = useAgentStore()
+  const { updateThreadNote, closeThread } = useTodayStore()
 
   // Seed the initial holding note message for each thread that has no messages yet.
   // Per-thread guard — uses messages.length for the active thread so switching
@@ -325,9 +327,9 @@ export function LandscapeView(): React.JSX.Element {
     setThreads,
     setActiveThreadId,
     closeThread,
-    addLocalTask,
     archiveTheme
-  } = useAgentStore()
+  } = useTodayStore()
+  const addLocalTask = useTaskStore((s) => s.addLocalTask)
   // External integrations removed in Phase 0 Life OS pivot — no connected
   // tools anywhere. Keep the local variable name so downstream code using
   // `liveTools`/`connectedTools` as an input to the landscape prompt still
@@ -374,14 +376,15 @@ export function LandscapeView(): React.JSX.Element {
     const liveTools = connectedTools
 
     // Build context from store state at call time (avoids stale closure issues)
-    const storeState = useAgentStore.getState()
-    const recentCaptureLines = storeState.rawCaptures
+    const captureState = useCaptureStore.getState()
+    const todayState = useTodayStore.getState()
+    const recentCaptureLines = captureState.rawCaptures
       .slice(0, 5)
       .map((c) => `  [${c.type}] "${c.text}"`)
-    const openThreadLines = storeState.threads
+    const openThreadLines = todayState.threads
       .slice(0, 3)
       .map((t) => `  "${t.title}": ${t.holdingNote}`)
-    const archivedThemeLines = storeState.themes
+    const archivedThemeLines = todayState.themes
       .filter((t) => t.archived)
       .slice(0, 10)
       .map((t) => `  - "${t.title}"${t.archiveNote ? ` (reason: ${t.archiveNote})` : ''}`)
@@ -461,8 +464,7 @@ export function LandscapeView(): React.JSX.Element {
               }))
             // Merge: keep manually-added threads (id not starting with "thread_briefing_")
             // and replace all briefing-generated ones with the fresh set.
-            const storeState = useAgentStore.getState()
-            const manualThreads = storeState.threads.filter(
+            const manualThreads = useTodayStore.getState().threads.filter(
               (t) => !t.id.startsWith('thread_briefing_')
             )
             setThreads([...manualThreads, ...freshThreads])
@@ -493,7 +495,7 @@ export function LandscapeView(): React.JSX.Element {
   useEffect(() => {
     if (hasAutoTriggeredRef.current) return
 
-    const landscape = useAgentStore.getState().morningLandscape
+    const landscape = useTodayStore.getState().morningLandscape
     const isStale = !landscape || Date.now() - landscape.generatedAt > LANDSCAPE_REFRESH_MS
     if (isStale) {
       hasAutoTriggeredRef.current = true
