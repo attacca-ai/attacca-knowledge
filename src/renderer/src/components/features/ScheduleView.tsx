@@ -1,13 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { gatewayClient } from '@/lib/gateway-client'
-import { useGatewayStore } from '@/stores/gateway-store'
 import { useOnboardingStore } from '@/stores/onboarding-store'
 import { normalizeComposioSlugs } from '@/lib/constants'
 import { useAgentStore } from '@/stores/agent-store'
 import { useSettingsStore } from '@/stores/settings-store'
-import { cn, extractMessageText } from '@/lib/utils'
+import { cn } from '@/lib/utils'
 import { ChevronLeft, ChevronRight, ArrowUp, Square } from 'lucide-react'
-import type { OcEvent } from '@/types/gateway'
 import { t as tStatic } from '@/i18n'
 
 // ── Local types ──────────────────────────────────────────────────────────────
@@ -59,23 +56,23 @@ const DAY_END_HOUR = 24
 const HOURS = Array.from({ length: DAY_END_HOUR - DAY_START_HOUR }, (_, i) => DAY_START_HOUR + i)
 
 const EVENT_TYPE_CLASSES: Record<EventType, string> = {
-  meeting: 'bg-[rgba(91,124,246,.12)] border-l-2 border-[#5b7cf6]',
-  focus: 'bg-[rgba(76,175,130,.1)] border-l-2 border-[#4caf82]',
-  personal: 'bg-[rgba(155,114,245,.12)] border-l-2 border-[#9b72f5]',
-  flagged: 'bg-[rgba(212,168,67,.1)] border-l-2 border-[#d4a843]'
+  meeting: 'bg-att-blue/12 border-l-2 border-att-blue',
+  focus: 'bg-att-green/10 border-l-2 border-att-green',
+  personal: 'bg-att-purple/12 border-l-2 border-att-purple',
+  flagged: 'bg-att-orange/10 border-l-2 border-att-orange'
 }
 
 const CHIP_ICON_CLASSES: Record<string, string> = {
-  warn: 'bg-[rgba(212,168,67,.1)] text-[#d4a843]',
-  plus: 'bg-[rgba(76,175,130,.1)] text-[#4caf82]',
-  move: 'bg-[rgba(91,124,246,.12)] text-[#5b7cf6]',
-  send: 'bg-[rgba(155,114,245,.12)] text-[#9b72f5]'
+  warn: 'bg-att-orange/10 text-att-orange',
+  plus: 'bg-att-green/10 text-att-green',
+  move: 'bg-att-blue/12 text-att-blue',
+  send: 'bg-att-purple/12 text-att-purple'
 }
 
 const RISK_CLASSES: Record<string, string> = {
   low: '',
-  mid: 'bg-[rgba(212,168,67,.1)] text-[#d4a843]',
-  high: 'bg-[rgba(224,92,92,.1)] text-[#e05c5c]'
+  mid: 'bg-att-orange/10 text-att-orange',
+  high: 'bg-att-red/10 text-att-red'
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -302,7 +299,6 @@ function hashTodayEvents(events: CalEvent[]): string {
 // ── Main component ────────────────────────────────────────────────────────────
 
 export function ScheduleView(): React.JSX.Element {
-  const connectionState = useGatewayStore((s) => s.connectionState)
   const scheduleChatHistory = useAgentStore((s) => s.scheduleChatHistory)
   const setScheduleChatHistory = useAgentStore((s) => s.setScheduleChatHistory)
   const setScheduleReadCache = useAgentStore((s) => s.setScheduleReadCache)
@@ -388,10 +384,9 @@ export function ScheduleView(): React.JSX.Element {
   // ── Generate schedule read ──────────────────────────────────────────────────
   const generateScheduleRead = useCallback(
     async (loadedEvents: CalEvent[]) => {
-      if (connectionState !== 'connected') return
       setScheduleRead(null)
       setGeneratingRead(true)
-      const sessionKey = `agent:main:schedule-read-${crypto.randomUUID()}`
+      const sessionKey = `schedule-read-${crypto.randomUUID()}`
       pendingReadSessionRef.current = sessionKey
 
       const todayDate = startOfDay(new Date())
@@ -434,17 +429,13 @@ export function ScheduleView(): React.JSX.Element {
         `Máximo 3 sugerencias enfocadas en productividad. Prioriza resolver conflictos si los hay.`
 
       try {
-        await gatewayClient.rpc('chat.send', {
-          sessionKey,
-          message: prompt,
-          idempotencyKey: sessionKey
-        })
+        await window.api.agent.send(sessionKey, prompt, sessionKey)
       } catch {
         setGeneratingRead(false)
         pendingReadSessionRef.current = null
       }
     },
-    [connectionState, baseDate, userTimezone]
+    [baseDate, userTimezone]
   )
 
   // ── Fetch calendar events ──────────────────────────────────────────────────
@@ -452,7 +443,6 @@ export function ScheduleView(): React.JSX.Element {
   // (used after chat actions where the user already has agent context)
   const fetchEvents = useCallback(
     async (opts?: { skipRead?: boolean }) => {
-      if (connectionState !== 'connected') return
       setLoadingEvents(true)
       try {
         const timeMin = baseDate.toISOString()
@@ -557,23 +547,17 @@ export function ScheduleView(): React.JSX.Element {
         setLoadingEvents(false)
       }
     },
-    [connectionState, baseDate, activeCalendars, generateScheduleRead, setScheduleReadCache]
+    [baseDate, activeCalendars, generateScheduleRead, setScheduleReadCache]
   )
 
   useEffect(() => {
     void fetchEvents()
   }, [fetchEvents])
 
-  // ── Gateway event listener ─────────────────────────────────────────────────
+  // ── Agent event listener ───────────────────────────────────────────────────
   useEffect(() => {
-    const handler = (ev: OcEvent): void => {
-      if (ev.event !== 'chat') return
-      const payload = (ev.payload ?? {}) as Record<string, unknown>
-      if (payload.state !== 'final') return
-      const sk = payload.sessionKey as string
-      const rawText = extractMessageText(
-        payload.message as Parameters<typeof extractMessageText>[0]
-      )
+    const unsub = window.api.agent.onFinal((data) => {
+      const { sessionKey: sk, message: rawText } = data
       const jsonMatch = rawText.match(/\{[\s\S]*\}/)
 
       // Schedule read response
@@ -624,24 +608,23 @@ export function ScheduleView(): React.JSX.Element {
         // Refresh events (free) but skip LLM re-analysis — user already has agent context
         void fetchEvents({ skipRead: true })
       }
-    }
+    })
 
-    gatewayClient.on('*', handler)
-    return () => gatewayClient.off('*', handler)
+    return unsub
   }, [fetchEvents, setScheduleChatHistory])
 
   // ── Chat send ──────────────────────────────────────────────────────────────
   const handleSend = useCallback(
     async (text?: string) => {
       const userText = (text ?? chatInput).trim()
-      if (!userText || sending || executing || connectionState !== 'connected') return
+      if (!userText || sending || executing) return
       setChatInput('')
 
       const userMsg = { id: crypto.randomUUID(), role: 'user' as const, text: userText }
       setScheduleChatHistory([...useAgentStore.getState().scheduleChatHistory, userMsg])
       setSending(true)
 
-      const sessionKey = `agent:main:schedule-chat-${crypto.randomUUID()}`
+      const sessionKey = `schedule-chat-${crypto.randomUUID()}`
       pendingChatSessionRef.current = sessionKey
 
       const weekContext = Array.from({ length: 7 }, (_, i) => {
@@ -685,11 +668,7 @@ export function ScheduleView(): React.JSX.Element {
         `proposedChange SOLO si propones UN cambio concreto al calendario. Si no, usa null. Nunca propongas más de un cambio a la vez.`
 
       try {
-        await gatewayClient.rpc('chat.send', {
-          sessionKey,
-          message: prompt,
-          idempotencyKey: sessionKey
-        })
+        await window.api.agent.send(sessionKey, prompt, sessionKey)
       } catch {
         setSending(false)
         pendingChatSessionRef.current = null
@@ -699,7 +678,7 @@ export function ScheduleView(): React.JSX.Element {
       chatInput,
       sending,
       executing,
-      connectionState,
+
       events,
       baseDate,
       userTimezone,
@@ -714,7 +693,7 @@ export function ScheduleView(): React.JSX.Element {
     const change = pendingChange
     setPendingChange(null)
 
-    const sessionKey = `agent:main:schedule-confirm-${crypto.randomUUID()}`
+    const sessionKey = `schedule-confirm-${crypto.randomUUID()}`
     pendingChatSessionRef.current = sessionKey
 
     const prompt =
@@ -725,11 +704,7 @@ export function ScheduleView(): React.JSX.Element {
       `Responde SOLO con JSON válido: {"text":"Confirmación breve de lo que ejecutaste."}`
 
     try {
-      await gatewayClient.rpc('chat.send', {
-        sessionKey,
-        message: prompt,
-        idempotencyKey: sessionKey
-      })
+      await window.api.agent.send(sessionKey, prompt, sessionKey)
     } catch {
       setExecuting(false)
       pendingChatSessionRef.current = null
@@ -790,9 +765,9 @@ export function ScheduleView(): React.JSX.Element {
   return (
     <div className="flex flex-1 overflow-hidden">
       {/* ══════════════════════════════ LEFT: TIMELINE ══════════════════════════════ */}
-      <div className="flex flex-1 flex-col overflow-hidden border-r border-[#1f2024]">
+      <div className="flex flex-1 flex-col overflow-hidden border-r border-att-divider">
         {/* Header */}
-        <div className="flex shrink-0 items-start justify-between border-b border-[#1f2024] px-6 py-[18px]">
+        <div className="flex shrink-0 items-start justify-between border-b border-att-divider px-6 py-[18px]">
           <div>
             <p className="mb-1 font-mono text-[9px] uppercase tracking-[.12em] text-muted-foreground/40">
               {`${visibleDays[0].getDate()} ${MONTH_NAMES[visibleDays[0].getMonth()]} – ${visibleDays[6].getDate()} ${MONTH_NAMES[visibleDays[6].getMonth()]} ${visibleDays[6].getFullYear()}`}
@@ -827,19 +802,19 @@ export function ScheduleView(): React.JSX.Element {
           <div className="flex items-center gap-[10px]">
             <button
               onClick={goToThisWeek}
-              className="rounded border border-[#2a2b2f] px-[10px] py-[5px] font-mono text-[9px] uppercase tracking-[.06em] text-muted-foreground transition-colors hover:border-[#5b7cf6] hover:bg-[rgba(91,124,246,.12)] hover:text-[#5b7cf6]"
+              className="rounded border border-att-divider px-[10px] py-[5px] font-mono text-[9px] uppercase tracking-[.06em] text-muted-foreground transition-colors hover:border-att-blue hover:bg-att-blue/12 hover:text-att-blue"
             >
               hoy
             </button>
             <button
               onClick={() => setBaseDate(new Date(baseDate.getTime() - 7 * 86400000))}
-              className="flex h-7 w-7 items-center justify-center rounded border border-[#2a2b2f] text-muted-foreground transition-colors hover:border-muted-foreground hover:text-foreground"
+              className="flex h-7 w-7 items-center justify-center rounded border border-att-divider text-muted-foreground transition-colors hover:border-muted-foreground hover:text-foreground"
             >
               <ChevronLeft className="h-3 w-3" />
             </button>
             <button
               onClick={() => setBaseDate(new Date(baseDate.getTime() + 7 * 86400000))}
-              className="flex h-7 w-7 items-center justify-center rounded border border-[#2a2b2f] text-muted-foreground transition-colors hover:border-muted-foreground hover:text-foreground"
+              className="flex h-7 w-7 items-center justify-center rounded border border-att-divider text-muted-foreground transition-colors hover:border-muted-foreground hover:text-foreground"
             >
               <ChevronRight className="h-3 w-3" />
             </button>
@@ -848,18 +823,18 @@ export function ScheduleView(): React.JSX.Element {
 
         {/* Day column headers */}
         <div
-          className="grid shrink-0 border-b border-[#1f2024]"
+          className="grid shrink-0 border-b border-att-divider"
           style={{ gridTemplateColumns: '48px repeat(7, 1fr)' }}
         >
           <div className="py-2" />
           {visibleDays.map((day) => {
             const isToday = isSameDay(day, today)
             return (
-              <div key={day.toISOString()} className="border-l border-[#1f2024] px-4 py-2">
+              <div key={day.toISOString()} className="border-l border-att-divider px-4 py-2">
                 <p
                   className={cn(
                     'font-mono text-[9px] uppercase tracking-[.1em]',
-                    isToday ? 'text-[#5b7cf6]' : 'text-muted-foreground/40'
+                    isToday ? 'text-att-blue' : 'text-muted-foreground/40'
                   )}
                 >
                   {DAY_NAMES[day.getDay()]}
@@ -868,7 +843,7 @@ export function ScheduleView(): React.JSX.Element {
                 <p
                   className={cn(
                     'text-[18px] font-light leading-[1.2]',
-                    isToday ? 'text-[#5b7cf6]' : 'text-muted-foreground'
+                    isToday ? 'text-att-blue' : 'text-muted-foreground'
                   )}
                 >
                   {day.getDate()}
@@ -910,7 +885,7 @@ export function ScheduleView(): React.JSX.Element {
                     <div
                       key={`${day.toISOString()}-${hour}`}
                       className={cn(
-                        'relative border-l border-t border-[#1f2024]',
+                        'relative border-l border-t border-att-divider',
                         hour === DAY_START_HOUR && 'border-t-0'
                       )}
                       style={{ height: HOUR_HEIGHT }}
@@ -927,7 +902,7 @@ export function ScheduleView(): React.JSX.Element {
                               'absolute overflow-hidden rounded-[5px] px-2 transition-all hover:brightness-110',
                               isShort ? 'py-[3px]' : 'py-[6px]',
                               EVENT_TYPE_CLASSES[event.type],
-                              event.hasConflict && 'ring-1 ring-[#e05c5c]/40'
+                              event.hasConflict && 'ring-1 ring-att-red/40'
                             )}
                             style={eventStyle(event)}
                           >
@@ -941,13 +916,13 @@ export function ScheduleView(): React.JSX.Element {
                                   {formatTime(event.start)}–{formatTime(event.end)}
                                 </span>
                                 {event.hasConflict && (
-                                  <span className="shrink-0 font-mono text-[8px] text-[#e05c5c]">
+                                  <span className="shrink-0 font-mono text-[8px] text-att-red">
                                     ⚠
                                   </span>
                                 )}
                                 {event.source === 'outlook' && (
                                   <span
-                                    className="shrink-0 h-[6px] w-[6px] rounded-full bg-[#d4a843]"
+                                    className="shrink-0 h-[6px] w-[6px] rounded-full bg-att-orange"
                                     title="Outlook"
                                   />
                                 )}
@@ -960,13 +935,13 @@ export function ScheduleView(): React.JSX.Element {
                                     {event.title}
                                   </p>
                                   {event.hasConflict && (
-                                    <span className="mt-[1px] shrink-0 font-mono text-[8px] text-[#e05c5c]">
+                                    <span className="mt-[1px] shrink-0 font-mono text-[8px] text-att-red">
                                       ⚠
                                     </span>
                                   )}
                                   {event.source === 'outlook' && (
                                     <span
-                                      className="mt-[1px] shrink-0 h-[6px] w-[6px] rounded-full bg-[#d4a843]"
+                                      className="mt-[1px] shrink-0 h-[6px] w-[6px] rounded-full bg-att-orange"
                                       title="Outlook"
                                     />
                                   )}
@@ -975,7 +950,7 @@ export function ScheduleView(): React.JSX.Element {
                                   {formatTime(event.start)}–{formatTime(event.end)}
                                 </p>
                                 {event.flagNote && (
-                                  <p className="mt-[3px] font-mono text-[8px] text-[#d4a843]">
+                                  <p className="mt-[3px] font-mono text-[8px] text-att-orange">
                                     {event.flagNote}
                                   </p>
                                 )}
@@ -985,7 +960,7 @@ export function ScheduleView(): React.JSX.Element {
                                       ev.stopPropagation()
                                       handleSuggestReschedule(event)
                                     }}
-                                    className="mt-[4px] font-mono text-[8px] text-[#e05c5c]/60 transition-colors hover:text-[#e05c5c]"
+                                    className="mt-[4px] font-mono text-[8px] text-att-red/60 transition-colors hover:text-att-red"
                                   >
                                     Reorganizar →
                                   </button>
@@ -1004,8 +979,8 @@ export function ScheduleView(): React.JSX.Element {
                             className="pointer-events-none absolute left-0 right-0 z-10"
                             style={{ top: nowTop - (hour - DAY_START_HOUR) * HOUR_HEIGHT }}
                           >
-                            <div className="relative h-px bg-[#5b7cf6]">
-                              <div className="absolute -left-[4px] -top-[3px] h-[7px] w-[7px] rounded-full bg-[#5b7cf6]" />
+                            <div className="relative h-px bg-att-blue">
+                              <div className="absolute -left-[4px] -top-[3px] h-[7px] w-[7px] rounded-full bg-att-blue" />
                             </div>
                           </div>
                         )}
@@ -1021,7 +996,7 @@ export function ScheduleView(): React.JSX.Element {
       {/* ══════════════════════════════ RIGHT: AGENT PANEL ══════════════════════════════ */}
       <div className="flex w-80 shrink-0 flex-col bg-background">
         {/* Lectura del día */}
-        <div className="shrink-0 border-b border-[#1f2024] px-[18px] py-[18px]">
+        <div className="shrink-0 border-b border-att-divider px-[18px] py-[18px]">
           <p className="mb-2 font-mono text-[9px] uppercase tracking-[.1em] text-muted-foreground/40">
             Lectura del día
           </p>
@@ -1035,15 +1010,11 @@ export function ScheduleView(): React.JSX.Element {
                 {scheduleRead.message}
               </p>
               {scheduleRead.question && (
-                <p className="mt-[10px] border-l-2 border-[#2a2b2f] pl-[10px] text-[12px] italic leading-[1.5] text-muted-foreground">
+                <p className="mt-[10px] border-l-2 border-att-divider pl-[10px] text-[12px] italic leading-[1.5] text-muted-foreground">
                   {scheduleRead.question}
                 </p>
               )}
             </>
-          ) : connectionState !== 'connected' ? (
-            <p className="text-[13px] font-light leading-[1.6] text-muted-foreground/50">
-              Conectando al agente…
-            </p>
           ) : (
             <p className="text-[13px] font-light leading-[1.6] text-muted-foreground/50">
               Sin lectura disponible.
@@ -1053,13 +1024,13 @@ export function ScheduleView(): React.JSX.Element {
 
         {/* Suggested actions */}
         {scheduleRead && scheduleRead.suggestedActions.length > 0 && (
-          <div className="flex shrink-0 flex-col gap-[6px] border-b border-[#1f2024] px-[18px] py-3">
+          <div className="flex shrink-0 flex-col gap-[6px] border-b border-att-divider px-[18px] py-3">
             {scheduleRead.suggestedActions.map((action, i) => (
               <button
                 key={i}
                 onClick={() => void handleSend(action.prompt)}
-                disabled={sending || executing || connectionState !== 'connected'}
-                className="flex items-center gap-2 rounded border border-[#2a2b2f] bg-[#151618] px-[10px] py-2 text-left text-[11.5px] text-muted-foreground transition-all hover:border-[#5b7cf6] hover:bg-[rgba(91,124,246,.12)] hover:text-foreground disabled:opacity-40"
+                disabled={sending || executing}
+                className="flex items-center gap-2 rounded border border-att-divider bg-att-surface px-[10px] py-2 text-left text-[11.5px] text-muted-foreground transition-all hover:border-att-blue hover:bg-att-blue/12 hover:text-foreground disabled:opacity-40"
               >
                 <span
                   className={cn(
@@ -1106,7 +1077,7 @@ export function ScheduleView(): React.JSX.Element {
               pendingChange &&
               msg === scheduleChatHistory[scheduleChatHistory.length - 1] ? (
                 <>
-                  <div className="max-w-[240px] rounded-[10px_10px_10px_3px] border border-[#1f2024] bg-[#1c1d20] px-3 py-2 text-[12px] leading-[1.5] text-muted-foreground">
+                  <div className="max-w-[240px] rounded-[10px_10px_10px_3px] border border-att-divider bg-att-surface-hover px-3 py-2 text-[12px] leading-[1.5] text-muted-foreground">
                     {msg.text}
                   </div>
                   <ProposedCard
@@ -1121,8 +1092,8 @@ export function ScheduleView(): React.JSX.Element {
                   className={cn(
                     'max-w-[240px] rounded-[10px] px-3 py-2 text-[12px] leading-[1.5]',
                     msg.role === 'user'
-                      ? 'rounded-[10px_10px_3px_10px] bg-[#232428] text-foreground'
-                      : 'rounded-[10px_10px_10px_3px] border border-[#1f2024] bg-[#1c1d20] text-muted-foreground'
+                      ? 'rounded-[10px_10px_3px_10px] bg-att-surface-raised text-foreground'
+                      : 'rounded-[10px_10px_10px_3px] border border-att-divider bg-att-surface-hover text-muted-foreground'
                   )}
                 >
                   {msg.text}
@@ -1145,7 +1116,7 @@ export function ScheduleView(): React.JSX.Element {
 
           {(sending || executing) && (
             <div className="flex justify-start">
-              <div className="rounded-[10px_10px_10px_3px] border border-[#1f2024] bg-[#1c1d20] px-3 py-2">
+              <div className="rounded-[10px_10px_10px_3px] border border-att-divider bg-att-surface-hover px-3 py-2">
                 <span className="animate-pulse text-[11px] text-muted-foreground/50">
                   {executing ? 'ejecutando…' : 'pensando…'}
                 </span>
@@ -1157,8 +1128,8 @@ export function ScheduleView(): React.JSX.Element {
         </div>
 
         {/* Input */}
-        <div className="shrink-0 border-t border-[#1f2024] px-4 py-3">
-          <div className="flex items-center gap-2 rounded-lg border border-[#2a2b2f] bg-[#151618] px-3 py-2 transition-colors focus-within:border-[#5b7cf6]/50">
+        <div className="shrink-0 border-t border-att-divider px-4 py-3">
+          <div className="flex items-center gap-2 rounded-lg border border-att-divider bg-att-surface px-3 py-2 transition-colors focus-within:border-att-blue/50">
             <input
               value={chatInput}
               onChange={(e) => setChatInput(e.target.value)}
@@ -1169,15 +1140,15 @@ export function ScheduleView(): React.JSX.Element {
                 }
               }}
               placeholder='"Mueve mi reunion a las 2 PM al lunes"'
-              disabled={sending || executing || connectionState !== 'connected'}
+              disabled={sending || executing}
               className="flex-1 bg-transparent text-[12.5px] text-foreground outline-none placeholder:text-muted-foreground/40 disabled:opacity-50"
             />
             <button
               onClick={() => void handleSend()}
               disabled={
-                !chatInput.trim() || sending || executing || connectionState !== 'connected'
+                !chatInput.trim() || sending || executing
               }
-              className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded bg-[#5b7cf6] transition-opacity hover:opacity-85 disabled:opacity-40"
+              className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded bg-att-blue transition-opacity hover:opacity-85 disabled:opacity-40"
             >
               <ArrowUp className="h-3 w-3 text-white" />
             </button>
@@ -1185,15 +1156,15 @@ export function ScheduleView(): React.JSX.Element {
         </div>
 
         {/* Emergency */}
-        <div className="flex shrink-0 items-center justify-between border-t border-[#1f2024] px-4 py-2">
+        <div className="flex shrink-0 items-center justify-between border-t border-att-divider px-4 py-2">
           <button
             onClick={emergencyStop}
-            className="flex items-center gap-[6px] rounded border border-[rgba(224,92,92,.3)] px-[10px] py-[5px] font-mono text-[9px] tracking-[.06em] text-[#e05c5c] transition-all hover:border-[#e05c5c] hover:bg-[rgba(224,92,92,.1)]"
+            className="flex items-center gap-[6px] rounded border border-att-red/30 px-[10px] py-[5px] font-mono text-[9px] tracking-[.06em] text-att-red transition-all hover:border-att-red hover:bg-att-red/10"
           >
             <Square className="h-[9px] w-[9px] fill-current" />
             Parar agente
           </button>
-          <span className="font-mono text-[9px] text-muted-foreground/30">OpenClaw · local</span>
+          <span className="font-mono text-[9px] text-muted-foreground/30">Attacca · local</span>
         </div>
       </div>
     </div>
@@ -1216,27 +1187,27 @@ function ProposedCard({
   onCancel
 }: ProposedCardProps): React.JSX.Element {
   return (
-    <div className="max-w-[260px] rounded-lg border border-[#2a2b2f] bg-[#151618] px-3 py-[10px]">
-      <p className="mb-[6px] font-mono text-[8px] uppercase tracking-[.08em] text-[#5b7cf6]">
+    <div className="max-w-[260px] rounded-lg border border-att-divider bg-att-surface px-3 py-[10px]">
+      <p className="mb-[6px] font-mono text-[8px] uppercase tracking-[.08em] text-att-blue">
         Cambio propuesto · {change.risk}-risk
       </p>
       <p className="mb-2 text-[11.5px] leading-[1.5] text-muted-foreground">
         Actualizar <strong className="font-medium text-foreground">{change.title}</strong>
       </p>
       <p className="font-mono text-[10px] text-muted-foreground/50 line-through">{change.from}</p>
-      <p className="font-mono text-[10px] text-[#4caf82]">{change.to}</p>
+      <p className="font-mono text-[10px] text-att-green">{change.to}</p>
       <div className="mt-[10px] flex gap-[6px]">
         <button
           onClick={onConfirm}
           disabled={executing}
-          className="flex-1 rounded bg-[#5b7cf6] py-[5px] text-[11px] font-medium text-white disabled:opacity-50"
+          className="flex-1 rounded bg-att-blue py-[5px] text-[11px] font-medium text-white disabled:opacity-50"
         >
           {executing ? 'Ejecutando…' : 'Confirmar'}
         </button>
         <button
           onClick={onCancel}
           disabled={executing}
-          className="rounded border border-[#2a2b2f] px-[10px] py-[5px] text-[11px] text-muted-foreground/50 transition-colors hover:border-[#e05c5c] hover:text-[#e05c5c] disabled:opacity-40"
+          className="rounded border border-att-divider px-[10px] py-[5px] text-[11px] text-muted-foreground/50 transition-colors hover:border-att-red hover:text-att-red disabled:opacity-40"
         >
           Cancelar
         </button>

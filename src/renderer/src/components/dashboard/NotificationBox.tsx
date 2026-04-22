@@ -5,10 +5,10 @@ import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 
 const TYPE_CONFIG: Record<AppNotification['type'], { icon: React.ReactNode; color: string }> = {
-  info: { icon: <Info className="h-3 w-3" />, color: 'text-blue-500' },
-  warning: { icon: <AlertTriangle className="h-3 w-3" />, color: 'text-yellow-500' },
-  'action-taken': { icon: <CheckCircle className="h-3 w-3" />, color: 'text-green-500' },
-  'approval-needed': { icon: <ShieldAlert className="h-3 w-3" />, color: 'text-red-500' }
+  info: { icon: <Info className="h-3 w-3" />, color: 'text-att-blue' },
+  warning: { icon: <AlertTriangle className="h-3 w-3" />, color: 'text-att-orange' },
+  'action-taken': { icon: <CheckCircle className="h-3 w-3" />, color: 'text-att-green' },
+  'approval-needed': { icon: <ShieldAlert className="h-3 w-3" />, color: 'text-att-red' }
 }
 
 function formatTimeAgo(ts: number): string {

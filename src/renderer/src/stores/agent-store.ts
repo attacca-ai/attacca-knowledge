@@ -9,6 +9,15 @@ export interface AgentTask {
   completedAt?: number
   result?: string
   error?: string
+  projectId?: string
+  sourceType?: 'capture' | 'theme' | 'thread' | 'manual' | 'clickup'
+  sourceId?: string
+}
+
+export interface TaskChatMessage {
+  role: 'user' | 'agent'
+  text: string
+  ts: number
 }
 
 export interface ActivityEntry {
@@ -35,6 +44,9 @@ export interface LandscapeTheme {
   mentionCount: number
   deadline?: string
   quickAction?: { actionType: string; params: unknown; riskTier: string }
+  archived?: boolean
+  archiveNote?: string
+  archivedAt?: number
 }
 
 export interface AgentThread {
@@ -50,8 +62,10 @@ export interface CaptureEntry {
   id: string
   text: string
   type: 'thought' | 'action' | 'question'
+  sourceType?: 'text' | 'url' | 'file' | 'transcript' | 'landscape-chat'
   timestamp: number
   agentNote: string | null
+  archived?: boolean
   sessionKey?: string // session key used to send this capture (for confirmation flow)
   pendingConfirmation?: string // if set, agent is waiting for user to confirm/cancel this action
   linkedThemeId?: string
@@ -78,12 +92,56 @@ export interface ScheduleReadCache {
   eventsHash: string
 }
 
+export interface TranscriptRecord {
+  id: string
+  fileName: string
+  status: 'processing' | 'completed' | 'failed'
+  startedAt: number
+  completedAt?: number
+  error?: string
+}
+
+export interface KBEntry {
+  id: string
+  title: string
+  sourceType: 'capture' | 'transcript' | 'manual' | 'agent'
+  sourceId?: string
+  summary: string
+  savedAt: number
+  tags: string[]
+  folder?: string
+}
+
+export interface ProjectFile {
+  id: string
+  fileName: string
+  filePath: string
+  uploadedAt: number
+  sizeBytes: number
+}
+
+export interface Project {
+  id: string
+  name: string
+  description: string
+  createdAt: number
+  status: 'active' | 'archived'
+  taskIds: string[]
+  contextFiles: ProjectFile[]
+}
+
 export interface LibraryEntry {
   id: string
   name: string
   description?: string
   status: 'active' | 'paused'
   runs: number
+}
+
+export interface ThreadMessage {
+  role: 'agent' | 'user'
+  text: string
+  ts: number
 }
 
 interface AgentStore {
@@ -95,6 +153,8 @@ interface AgentStore {
   morningLandscape: MorningLandscape | null
   themes: LandscapeTheme[]
   threads: AgentThread[]
+  threadMessages: Record<string, ThreadMessage[]>
+  activeThreadId: string | null
   rawCaptures: CaptureEntry[]
   rawCapturesCount: number
   isProcessing: boolean
@@ -102,10 +162,22 @@ interface AgentStore {
   morningBriefing: string | null
   briefingDate: string | null
   workflowLibrary: LibraryEntry[]
+  transcriptHistory: TranscriptRecord[]
+  localTasks: AgentTask[]
+  taskChatMessages: Record<string, TaskChatMessage[]>
+  projects: Project[]
+  kbEntries: KBEntry[]
   emergencyStoppedAt: number | null
 
   hydrate: () => Promise<void>
   addTask: (description: string) => void
+  addLocalTask: (task: Omit<AgentTask, 'id' | 'createdAt' | 'status'>) => string
+  updateLocalTask: (id: string, update: Partial<AgentTask>) => void
+  addTaskChatMessage: (taskId: string, message: TaskChatMessage) => void
+  addProject: (project: Omit<Project, 'id' | 'createdAt' | 'status' | 'taskIds' | 'contextFiles'>) => string
+  updateProject: (id: string, update: Partial<Project>) => void
+  addTaskToProject: (projectId: string, taskId: string) => void
+  addProjectFile: (projectId: string, file: ProjectFile) => void
   completeTask: (taskId: string, result?: string) => void
   failTask: (taskId: string, error: string) => void
   addActivity: (entry: Omit<ActivityEntry, 'id' | 'timestamp'>) => void
@@ -117,20 +189,30 @@ interface AgentStore {
   setScheduleReadCache: (data: ScheduleReadCache) => void
   setMorningLandscape: (data: MorningLandscape) => void
   setThemes: (themes: LandscapeTheme[]) => void
+  archiveTheme: (id: string, note?: string) => void
   setThreads: (threads: AgentThread[]) => void
   addThread: (t: Omit<AgentThread, 'id' | 'createdAt'>) => string
   closeThread: (id: string) => void
   updateThreadNote: (id: string, holdingNote: string) => void
+  setActiveThreadId: (id: string | null) => void
+  addThreadMessage: (threadId: string, message: ThreadMessage) => void
   addRawCapture: (e: Omit<CaptureEntry, 'id' | 'timestamp'>) => void
   updateCaptureNote: (id: string, agentNote: string) => void
   setCaptureConfirmation: (id: string, pendingConfirmation: string | null) => void
   setWorkflowLibrary: (library: LibraryEntry[]) => void
   addWorkflow: (entry: LibraryEntry) => void
   updateWorkflowRuns: (name: string) => void
+  addTranscriptRecord: (record: Omit<TranscriptRecord, 'id' | 'startedAt'>) => string
+  updateTranscriptRecord: (id: string, update: Partial<Pick<TranscriptRecord, 'status' | 'completedAt' | 'error'>>) => void
+  deleteCapture: (id: string) => void
+  archiveCapture: (id: string) => void
+  addKBEntry: (entry: Omit<KBEntry, 'id' | 'savedAt'>) => string
+  deleteKBEntry: (id: string) => void
 }
 
 const MAX_ACTIVITY_ENTRIES = 100
 const MAX_SCHEDULE_CHAT_ENTRIES = 100
+const RAW_CAPTURES_LIMIT = 200
 
 let taskIdCounter = 0
 let activityIdCounter = 0
@@ -140,7 +222,7 @@ let threadIdCounter = 0
 export const useAgentStore = create<AgentStore>((set, get) => {
   function persist(): void {
     const s = get()
-    window.api.agent.setState({
+    window.api.agentState.setState({
       morningBriefing: s.morningBriefing,
       briefingDate: s.briefingDate,
       morningLandscape: s.morningLandscape,
@@ -149,9 +231,16 @@ export const useAgentStore = create<AgentStore>((set, get) => {
       taskQueue: s.taskQueue,
       activityFeed: s.activityFeed.slice(-MAX_ACTIVITY_ENTRIES),
       scheduleChatHistory: s.scheduleChatHistory.slice(-MAX_SCHEDULE_CHAT_ENTRIES),
-      rawCaptures: s.rawCaptures.slice(0, 100),
+      rawCaptures: s.rawCaptures.slice(0, RAW_CAPTURES_LIMIT),
       threads: s.threads.slice(0, 100),
-      workflowLibrary: s.workflowLibrary
+      threadMessages: s.threadMessages,
+      activeThreadId: s.activeThreadId,
+      workflowLibrary: s.workflowLibrary,
+      transcriptHistory: s.transcriptHistory.slice(0, 50),
+      localTasks: s.localTasks.slice(0, 200),
+      taskChatMessages: s.taskChatMessages,
+      projects: s.projects.slice(0, 100),
+      kbEntries: s.kbEntries.slice(0, 500)
     })
   }
 
@@ -164,9 +253,16 @@ export const useAgentStore = create<AgentStore>((set, get) => {
     morningLandscape: null,
     themes: [],
     threads: [],
+    threadMessages: {},
+    activeThreadId: null,
     rawCaptures: [],
     rawCapturesCount: 0,
     workflowLibrary: [],
+    transcriptHistory: [],
+    localTasks: [],
+    taskChatMessages: {},
+    projects: [],
+    kbEntries: [],
     isProcessing: false,
     usageLimitReached: false,
     morningBriefing: null,
@@ -175,7 +271,7 @@ export const useAgentStore = create<AgentStore>((set, get) => {
 
     hydrate: async () => {
       try {
-        const saved = await window.api.agent.getState()
+        const saved = await window.api.agentState.getState()
         if (saved) {
           // Re-seed ID counters to avoid collisions after hydration
           const savedCaptures: CaptureEntry[] = saved.rawCaptures ?? []
@@ -213,7 +309,14 @@ export const useAgentStore = create<AgentStore>((set, get) => {
             scheduleChatHistory: saved.scheduleChatHistory ?? [],
             rawCaptures: savedCaptures,
             threads: savedThreads,
-            workflowLibrary: workflows
+            threadMessages: saved.threadMessages ?? {},
+            activeThreadId: saved.activeThreadId ?? null,
+            workflowLibrary: workflows,
+            transcriptHistory: saved.transcriptHistory ?? [],
+            localTasks: saved.localTasks ?? [],
+            taskChatMessages: saved.taskChatMessages ?? {},
+            projects: saved.projects ?? [],
+            kbEntries: saved.kbEntries ?? []
           })
         }
       } catch {
@@ -401,6 +504,15 @@ export const useAgentStore = create<AgentStore>((set, get) => {
       persist()
     },
 
+    archiveTheme: (id, note) => {
+      set((s) => ({
+        themes: s.themes.map((t) =>
+          t.id === id ? { ...t, archived: true, archiveNote: note, archivedAt: Date.now() } : t
+        )
+      }))
+      persist()
+    },
+
     setThreads: (threads) => {
       set({ threads })
       persist()
@@ -418,7 +530,29 @@ export const useAgentStore = create<AgentStore>((set, get) => {
     },
 
     closeThread: (id) => {
-      set((s) => ({ threads: s.threads.filter((t) => t.id !== id) }))
+      set((s) => {
+        const { [id]: _, ...rest } = s.threadMessages
+        return {
+          threads: s.threads.filter((t) => t.id !== id),
+          threadMessages: rest,
+          activeThreadId: s.activeThreadId === id ? null : s.activeThreadId
+        }
+      })
+      persist()
+    },
+
+    setActiveThreadId: (id) => {
+      set({ activeThreadId: id })
+      persist()
+    },
+
+    addThreadMessage: (threadId, message) => {
+      set((s) => ({
+        threadMessages: {
+          ...s.threadMessages,
+          [threadId]: [...(s.threadMessages[threadId] ?? []), message]
+        }
+      }))
       persist()
     },
 
@@ -436,7 +570,7 @@ export const useAgentStore = create<AgentStore>((set, get) => {
         timestamp: Date.now()
       }
       set((s) => ({
-        rawCaptures: [entry, ...s.rawCaptures].slice(0, 200),
+        rawCaptures: [entry, ...s.rawCaptures].slice(0, RAW_CAPTURES_LIMIT),
         rawCapturesCount: s.rawCapturesCount + (e.agentNote === null ? 1 : 0)
       }))
       persist()
@@ -475,6 +609,120 @@ export const useAgentStore = create<AgentStore>((set, get) => {
           e.name === name ? { ...e, runs: e.runs + 1 } : e
         )
       }))
+      persist()
+    },
+
+    addTranscriptRecord: (record) => {
+      const id = `transcript_${Date.now()}`
+      const full: TranscriptRecord = { ...record, id, startedAt: Date.now() }
+      set((s) => ({
+        transcriptHistory: [full, ...s.transcriptHistory].slice(0, 50)
+      }))
+      persist()
+      return id
+    },
+
+    updateTranscriptRecord: (id, update) => {
+      set((s) => ({
+        transcriptHistory: s.transcriptHistory.map((r) =>
+          r.id === id ? { ...r, ...update } : r
+        )
+      }))
+      persist()
+    },
+
+    deleteCapture: (id) => {
+      set((s) => ({
+        rawCaptures: s.rawCaptures.filter((c) => c.id !== id),
+        rawCapturesCount: Math.max(0, s.rawCapturesCount - (s.rawCaptures.find((c) => c.id === id && !c.agentNote) ? 1 : 0))
+      }))
+      persist()
+    },
+
+    archiveCapture: (id) => {
+      set((s) => ({
+        rawCaptures: s.rawCaptures.map((c) =>
+          c.id === id ? { ...c, archived: true } : c
+        )
+      }))
+      persist()
+    },
+
+    addLocalTask: (task) => {
+      const id = `ltask_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+      const full: AgentTask = { ...task, id, status: 'pending', createdAt: Date.now() }
+      set((s) => ({ localTasks: [full, ...s.localTasks] }))
+      persist()
+      return id
+    },
+
+    updateLocalTask: (id, update) => {
+      set((s) => ({
+        localTasks: s.localTasks.map((t) => (t.id === id ? { ...t, ...update } : t))
+      }))
+      persist()
+    },
+
+    addTaskChatMessage: (taskId, message) => {
+      set((s) => ({
+        taskChatMessages: {
+          ...s.taskChatMessages,
+          [taskId]: [...(s.taskChatMessages[taskId] ?? []), message]
+        }
+      }))
+      persist()
+    },
+
+    addProject: (project) => {
+      const id = `proj_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+      const full: Project = { ...project, id, createdAt: Date.now(), status: 'active', taskIds: [], contextFiles: [] }
+      set((s) => ({ projects: [full, ...s.projects] }))
+      persist()
+      return id
+    },
+
+    updateProject: (id, update) => {
+      set((s) => ({
+        projects: s.projects.map((p) => (p.id === id ? { ...p, ...update } : p))
+      }))
+      persist()
+    },
+
+    addTaskToProject: (projectId, taskId) => {
+      set((s) => ({
+        projects: s.projects.map((p) =>
+          p.id === projectId && !p.taskIds.includes(taskId)
+            ? { ...p, taskIds: [...p.taskIds, taskId] }
+            : p
+        ),
+        localTasks: s.localTasks.map((t) =>
+          t.id === taskId ? { ...t, projectId } : t
+        )
+      }))
+      persist()
+    },
+
+    addProjectFile: (projectId, file) => {
+      set((s) => ({
+        projects: s.projects.map((p) =>
+          p.id === projectId
+            ? { ...p, contextFiles: [...p.contextFiles, file] }
+            : p
+        )
+      }))
+      persist()
+    },
+
+    addKBEntry: (entry) => {
+      const id = `kb_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+      const full: KBEntry = { ...entry, id, savedAt: Date.now() }
+      set((s) => ({ kbEntries: [full, ...s.kbEntries] }))
+      persist()
+      return id
+    },
+
+    deleteKBEntry: (id) => {
+      set((s) => ({ kbEntries: s.kbEntries.filter((e) => e.id !== id) }))
       persist()
     }
   }

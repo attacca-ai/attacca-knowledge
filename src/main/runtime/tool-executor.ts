@@ -19,6 +19,7 @@ import { getTelemetryCollector } from '../telemetry/collector'
 import { markToolkitLoaded, getLoadedToolkits } from './sessions'
 import type { AccountLabel } from '../composio/connections'
 import { classifyComposioAction } from '../../shared/risk-classifier'
+import { getProvider } from '../integrations/registry'
 
 export interface ToolExecutionResult {
   success: boolean
@@ -46,9 +47,51 @@ export async function executeTool(
     return { success: false, error: `Unknown tool: ${toolName}` }
   }
 
-  const entityId = getComposioEntityId()
   const toolkit = extractToolkit(composioAction)
   const toolkitSlug = normalizeToolkitSlug(composioAction.split('_')[0] ?? '')
+
+  // Direct provider takes priority over Composio when registered
+  const directProvider = getProvider(toolkitSlug)
+  if (directProvider) {
+    const directArgs: Record<string, unknown> = { ...toolInput }
+    delete directArgs.connectionId
+
+    try {
+      const approved = await checkPermission(composioAction, directArgs)
+      if (!approved) {
+        getTelemetryCollector().emit('agent.tool_call.failed', {
+          actionName: composioAction,
+          toolkit,
+          errorCategory: 'permission_denied'
+        })
+        return { success: false, error: 'Action requires approval. The user denied or did not respond in time.' }
+      }
+    } catch (err) {
+      console.error('[tool-executor] Permission check error:', err)
+      return { success: false, error: 'Permission check failed.' }
+    }
+
+    try {
+      const result = await directProvider.executeAction(composioAction, directArgs)
+      getTelemetryCollector().emit('agent.tool_call.succeeded', {
+        actionName: composioAction,
+        toolkit,
+        method: 'direct'
+      })
+      return { success: true, result }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error(`[tool-executor] Direct provider ${toolkitSlug} failed:`, msg)
+      getTelemetryCollector().emit('agent.tool_call.failed', {
+        actionName: composioAction,
+        toolkit,
+        errorCategory: 'direct_provider_error'
+      })
+      return { success: false, error: msg }
+    }
+  }
+
+  const entityId = getComposioEntityId()
 
   // Extract explicit connectionId from the agent's tool input (optional). If the
   // agent passed `connectionId` as a parameter, honor it regardless of defaults.
@@ -193,9 +236,20 @@ async function executeInternalTool(
   try {
     if (toolName === 'list_available_toolkits') {
       try {
-        const entityId = getComposioEntityId()
-        const connected = await getConnectedApps(entityId)
-        const toolkits = connected.map((slug) => {
+        // Merge direct providers + Composio connected apps
+        const { getDirectConnectedSlugs } = require('../integrations/registry') as typeof import('../integrations/registry')
+        const directSlugs = await getDirectConnectedSlugs()
+
+        let composioSlugs: string[] = []
+        try {
+          const entityId = getComposioEntityId()
+          composioSlugs = await getConnectedApps(entityId)
+        } catch {
+          // Composio may not be configured — that's OK
+        }
+
+        const allSlugs = [...new Set([...directSlugs, ...composioSlugs])]
+        const toolkits = allSlugs.map((slug) => {
           const key = normalizeToolkitSlug(slug)
           const summary = TOOLKIT_SUMMARIES[key]
           return {
@@ -222,29 +276,37 @@ async function executeInternalTool(
 
       const normalized = normalizeToolkitSlug(slug)
 
-      // Verify the toolkit is actually connected
-      try {
-        const entityId = getComposioEntityId()
-        const connected = await getConnectedApps(entityId)
-        const connectedNormalized = connected.map(normalizeToolkitSlug)
+      // Verify the toolkit is actually connected (direct providers OR Composio)
+      const directProvider = getProvider(normalized)
+      let isDirectConnected = false
+      if (directProvider) {
+        try { isDirectConnected = await directProvider.hasConnections() } catch { /* */ }
+      }
 
-        if (!connectedNormalized.includes(normalized)) {
+      if (!isDirectConnected) {
+        try {
+          const entityId = getComposioEntityId()
+          const connected = await getConnectedApps(entityId)
+          const connectedNormalized = connected.map(normalizeToolkitSlug)
+
+          if (!connectedNormalized.includes(normalized)) {
+            return {
+              success: true,
+              result: {
+                ok: false,
+                error: 'Toolkit not connected',
+                connectedToolkits: connectedNormalized
+              }
+            }
+          }
+        } catch {
           return {
             success: true,
             result: {
               ok: false,
-              error: 'Toolkit not connected',
-              connectedToolkits: connectedNormalized
+              error: 'Could not verify connected toolkits',
+              connectedToolkits: []
             }
-          }
-        }
-      } catch {
-        return {
-          success: true,
-          result: {
-            ok: false,
-            error: 'Could not verify connected toolkits',
-            connectedToolkits: []
           }
         }
       }

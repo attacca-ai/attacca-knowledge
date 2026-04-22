@@ -4,11 +4,11 @@ import { Activity, AlertCircle, CheckCircle, Wrench, MessageSquare, Info } from 
 import { cn } from '@/lib/utils'
 
 const TYPE_CONFIG: Record<ActivityEntry['type'], { icon: React.ReactNode; color: string }> = {
-  info: { icon: <Info className="h-3 w-3" />, color: 'text-blue-500' },
-  action: { icon: <CheckCircle className="h-3 w-3" />, color: 'text-green-500' },
+  info: { icon: <Info className="h-3 w-3" />, color: 'text-att-blue' },
+  action: { icon: <CheckCircle className="h-3 w-3" />, color: 'text-att-green' },
   tool_call: { icon: <Wrench className="h-3 w-3" />, color: 'text-purple-500' },
-  tool_result: { icon: <CheckCircle className="h-3 w-3" />, color: 'text-green-500' },
-  error: { icon: <AlertCircle className="h-3 w-3" />, color: 'text-red-500' },
+  tool_result: { icon: <CheckCircle className="h-3 w-3" />, color: 'text-att-green' },
+  error: { icon: <AlertCircle className="h-3 w-3" />, color: 'text-att-red' },
   message: { icon: <MessageSquare className="h-3 w-3" />, color: 'text-foreground' }
 }
 

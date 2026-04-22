@@ -1,7 +1,5 @@
 import { useState } from 'react'
 import { useAgentStore } from '@/stores/agent-store'
-import { gatewayClient } from '@/lib/gateway-client'
-import { useGatewayStore } from '@/stores/gateway-store'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -9,7 +7,6 @@ import { ListTodo, Plus, Loader2, Clock } from 'lucide-react'
 
 export function TaskQueue(): React.JSX.Element {
   const { currentTask, taskQueue, addTask, isProcessing } = useAgentStore()
-  const connectionState = useGatewayStore((s) => s.connectionState)
   const [newTaskInput, setNewTaskInput] = useState('')
   const [adding, setAdding] = useState(false)
   const [showInput, setShowInput] = useState(false)
@@ -21,33 +18,14 @@ export function TaskQueue(): React.JSX.Element {
     setAdding(true)
     addTask(prompt)
 
-    // If connected, send to gateway
-    if (connectionState === 'connected') {
-      console.log('[task] Sending chat.send to gateway:', prompt)
-      try {
-        await gatewayClient.rpc('chat.send', {
-          sessionKey: 'agent:main:main',
-          message: prompt,
-          idempotencyKey: crypto.randomUUID()
-        })
-        console.log('[task] chat.send sent successfully')
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        console.error('[task] chat.send failed:', msg)
-        useAgentStore.getState().addActivity({
-          type: 'error',
-          description: `Failed to send task to agent: ${msg}`
-        })
-      }
-    } else {
-      console.warn(
-        '[task] Gateway not connected (state:',
-        connectionState,
-        ') — task queued locally'
-      )
+    // Send to agent
+    try {
+      await window.api.agent.send('main', prompt, crypto.randomUUID())
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
       useAgentStore.getState().addActivity({
         type: 'error',
-        description: `Agent not connected — task queued but not sent (gateway state: ${connectionState})`
+        description: `Failed to send task to agent: ${msg}`
       })
     }
 

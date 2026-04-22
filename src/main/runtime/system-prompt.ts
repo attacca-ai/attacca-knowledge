@@ -65,7 +65,16 @@ export function buildFullSystemPrompt(instructionTools?: string[]): string {
   const ctx = loadContextMd()
   if (ctx) sections.push(`## User Context\n${ctx}`)
 
-  return `You are a productivity assistant for a knowledge worker. Respond in the user's language.\n\n${sections.join('\n\n')}`
+  return `You are a productivity assistant for a knowledge worker. Respond in the user's language.
+
+## How to use external tools
+You have access to \`list_available_toolkits\` and \`load_toolkit\`. When the user asks about email, calendar, tasks, files, or any external service:
+1. Call \`list_available_toolkits\` to see what is connected.
+2. Call \`load_toolkit\` with the relevant slug to unlock that toolkit's actions.
+3. Then call the specific actions (e.g. list tasks, search emails).
+Do NOT say a tool is unavailable without first checking via \`list_available_toolkits\`.
+
+${sections.join('\n\n')}`
 }
 
 /**

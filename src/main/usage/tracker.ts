@@ -17,6 +17,7 @@ export function ensureUsageTables(): void {
     CREATE TABLE IF NOT EXISTS request_logs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       model TEXT NOT NULL,
+      type TEXT DEFAULT 'chat',
       input_tokens INTEGER NOT NULL,
       output_tokens INTEGER NOT NULL,
       cache_write_tokens INTEGER DEFAULT 0,
@@ -42,7 +43,8 @@ export function trackRequest(
   inputTokens: number,
   outputTokens: number,
   cacheWriteTokens = 0,
-  cacheReadTokens = 0
+  cacheReadTokens = 0,
+  type: string = 'chat'
 ): void {
   const db = getMemoryDb()
   const cost = calculateCost(model, inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens)
@@ -52,10 +54,10 @@ export function trackRequest(
     // Log the individual request
     db.prepare(
       `
-      INSERT INTO request_logs (model, input_tokens, output_tokens, cache_write_tokens, cache_read_tokens, cost_usd)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO request_logs (model, type, input_tokens, output_tokens, cache_write_tokens, cache_read_tokens, cost_usd)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `
-    ).run(model, inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens, cost)
+    ).run(model, type, inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens, cost)
 
     // Upsert monthly aggregate (single statement, no read-then-write)
     db.prepare(

@@ -95,6 +95,11 @@ export function ConnectionsPage({
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // ClickUp token dialog state
+  const [clickUpDialogOpen, setClickUpDialogOpen] = useState(false)
+  const [clickUpToken, setClickUpToken] = useState('')
+  const [clickUpConnecting, setClickUpConnecting] = useState(false)
+
   const stopPolling = (): void => {
     if (pollRef.current) {
       clearInterval(pollRef.current)
@@ -135,9 +140,34 @@ export function ConnectionsPage({
     }
   }, [])
 
+  const handleClickUpConnect = async (): Promise<void> => {
+    if (!clickUpToken.trim()) return
+    setClickUpConnecting(true)
+    setError(null)
+    try {
+      const result = await window.api.clickup.connect(clickUpToken.trim())
+      if (result.success) {
+        addConnectedTool('clickup')
+        window.api.telemetry.emit('tool.connected', { toolId: 'clickup' })
+        setClickUpDialogOpen(false)
+        setClickUpToken('')
+      } else {
+        setError(result.error || t('connections.error_clickup'))
+      }
+    } catch {
+      setError(t('connections.error_clickup'))
+    }
+    setClickUpConnecting(false)
+  }
+
   const handleConnect = async (tool: string): Promise<void> => {
     if (tool === 'activecollab') {
       setAcDialogOpen(true)
+      return
+    }
+
+    if (tool === 'clickup') {
+      setClickUpDialogOpen(true)
       return
     }
 
@@ -224,7 +254,11 @@ export function ConnectionsPage({
     setError(null)
     let disconnected = false
     try {
-      if (tool === 'activecollab') {
+      if (tool === 'clickup') {
+        const result = await window.api.clickup.disconnect()
+        if (result.success) disconnected = true
+        else setError(result.error || t('connections.error_disconnect'))
+      } else if (tool === 'activecollab') {
         const result = await window.api.activecollab.disconnect()
         if (result.success) disconnected = true
         else setError(result.error || t('connections.error_disconnect'))
@@ -350,6 +384,44 @@ export function ConnectionsPage({
         onConnectTool={handleConnect}
         onNavigateToCustomTools={onNavigateToCustomTools}
       />
+
+      {/* ClickUp token dialog */}
+      <Dialog open={clickUpDialogOpen} onOpenChange={setClickUpDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('connections.clickup.title')}</DialogTitle>
+            <DialogDescription>{t('connections.clickup.description')}</DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-3 py-2">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="clickup-token">{t('connections.clickup.labelToken')}</Label>
+              <Input
+                id="clickup-token"
+                type="password"
+                value={clickUpToken}
+                onChange={(e) => setClickUpToken(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleClickUpConnect() }}
+                placeholder="pk_..."
+              />
+            </div>
+            <button
+              onClick={() => window.api.app.openExternal('https://app.clickup.com/settings/apps')}
+              className="text-left text-[11px] text-att-blue hover:underline"
+            >
+              {t('connections.clickup.openSettings')}
+            </button>
+          </div>
+          <DialogFooter>
+            <Button
+              onClick={handleClickUpConnect}
+              disabled={clickUpConnecting || !clickUpToken.trim()}
+            >
+              {clickUpConnecting ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
+              {t('connections.clickup.connect')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* ActiveCollab dialog */}
       <Dialog open={acDialogOpen} onOpenChange={setAcDialogOpen}>

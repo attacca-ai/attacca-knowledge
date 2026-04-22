@@ -9,7 +9,7 @@ export function OfflineBanner(): React.JSX.Element | null {
   if (isOnline) return null
 
   return (
-    <div className="flex shrink-0 items-center justify-center gap-2 bg-yellow-500/10 px-4 py-2 text-sm text-yellow-700 dark:text-yellow-400">
+    <div className="flex shrink-0 items-center justify-center gap-2 bg-att-orange/10 px-4 py-2 text-sm text-att-orange">
       <WifiOff className="h-4 w-4" />
       <span>{t('offline.message')}</span>
     </div>

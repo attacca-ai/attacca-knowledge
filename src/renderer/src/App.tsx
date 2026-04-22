@@ -2,7 +2,6 @@ import { useEffect } from 'react'
 import { useAppStore } from '@/stores/app-store'
 import { useOnboardingStore } from '@/stores/onboarding-store'
 import { useSettingsStore } from '@/stores/settings-store'
-import { useGateway } from '@/hooks/useGateway'
 import { useOnlineStatus } from '@/hooks/useOnlineStatus'
 import { SetupWizard } from '@/components/onboarding/SetupWizard'
 import { AppShell } from '@/components/layout/AppShell'
@@ -13,8 +12,6 @@ function App(): React.JSX.Element {
   const setVersion = useAppStore((s) => s.setVersion)
   const { loadState } = useOnboardingStore()
 
-  // Initialize gateway connection
-  useGateway()
   useOnlineStatus()
 
   // Check onboarding state on mount

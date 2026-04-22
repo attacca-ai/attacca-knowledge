@@ -40,6 +40,11 @@ export const IPC = {
   COMPOSIO_SET_DEFAULT: 'composio:set-default',
   COMPOSIO_GET_DEFAULTS: 'composio:get-defaults',
 
+  // Direct integrations
+  CLICKUP_CONNECT: 'clickup:connect',
+  CLICKUP_DISCONNECT: 'clickup:disconnect',
+  CLICKUP_STATUS: 'clickup:status',
+
   // Relay (remaining — moved to local in Phase 3)
   RELAY_GET_USAGE: 'relay:get-usage',
   RELAY_LLM_COMPLETION: 'relay:llm-completion',

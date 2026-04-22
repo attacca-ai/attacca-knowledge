@@ -1,9 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { gatewayClient } from '@/lib/gateway-client'
-import { useGatewayStore } from '@/stores/gateway-store'
-import type { OcEvent } from '@/types/gateway'
-import { Upload, Link, FileText, MessageSquare, Check, Clock, X, Send } from 'lucide-react'
-import { cn, extractMessageText } from '@/lib/utils'
+import { useAgentStore } from '@/stores/agent-store'
+import { Upload, Link, FileText, MessageSquare, Check, Clock, X, Send, ListTodo } from 'lucide-react'
+import { cn } from '@/lib/utils'
 import { useTranslation } from '@/i18n'
 import { TranscriptUpload } from './TranscriptUpload'
 
@@ -18,12 +16,17 @@ interface ActionItem {
   checked: boolean
 }
 
+type CaptureCategory = 'task' | 'knowledge' | 'decision'
+
 interface CaptureResult {
+  category: CaptureCategory
   summary: string
   actionItems: ActionItem[]
   decisions: string[]
   openQuestions: string[]
   keyPoints: string[]
+  concepts?: string[]
+  takeaways?: string[]
   entities: {
     people: string[]
     projects: string[]
@@ -110,8 +113,8 @@ function SourcePill({
       className={cn(
         'flex items-center gap-1.5 rounded-[6px] border px-2.5 py-1.5 text-[11px] font-medium transition-all duration-[100ms]',
         active
-          ? 'border-[#5b7cf6] bg-[rgba(91,124,246,.12)] text-[#5b7cf6]'
-          : 'border-[#2a2b2f] bg-transparent text-[#7a7d85] hover:border-[#3a3b3f] hover:text-foreground'
+          ? 'border-att-blue bg-att-blue/12 text-att-blue'
+          : 'border-att-divider bg-transparent text-muted-foreground hover:border-att-surface-raised hover:text-foreground'
       )}
     >
       {icon}
@@ -124,7 +127,9 @@ function SourcePill({
 
 export function CaptureView(): React.JSX.Element {
   const { t } = useTranslation()
-  const connectionState = useGatewayStore((s) => s.connectionState)
+  const rawCaptures = useAgentStore((s) => s.rawCaptures)
+  const addLocalTask = useAgentStore((s) => s.addLocalTask)
+  const addKBEntry = useAgentStore((s) => s.addKBEntry)
 
   const [captureState, setCaptureState] = useState<CaptureState>('idle')
   const [sourceType, setSourceType] = useState<SourceType>('text')
@@ -188,17 +193,10 @@ export function CaptureView(): React.JSX.Element {
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [chatMessages, chatLoading])
 
-  // Gateway event listener — registered once
+  // Agent event listener — registered once
   useEffect(() => {
-    const handler = (ev: OcEvent): void => {
-      if (ev.event !== 'chat') return
-      const payload = (ev.payload ?? {}) as Record<string, unknown>
-      if (payload.state !== 'final') return
-
-      const sessionKey = payload.sessionKey as string | undefined
-      const rawText = extractMessageText(
-        payload.message as Parameters<typeof extractMessageText>[0]
-      )
+    const unsub = window.api.agent.onFinal((data) => {
+      const { sessionKey, message: rawText } = data
 
       // Chat Q&A response
       if (sessionKey && sessionKey === pendingChatSessionRef.current) {
@@ -223,6 +221,8 @@ export function CaptureView(): React.JSX.Element {
       if (jsonMatch) {
         try {
           const parsed = JSON.parse(jsonMatch[0]) as CaptureResult
+          // Default category for backward compatibility
+          if (!parsed.category) parsed.category = parsed.actionItems?.length > 0 ? 'task' : 'knowledge'
           const items = (parsed.actionItems ?? []).map((a) => ({ ...a, checked: false }))
           setResult(parsed)
           setActionItems(items)
@@ -233,10 +233,9 @@ export function CaptureView(): React.JSX.Element {
       } else {
         setCaptureState('idle')
       }
-    }
+    })
 
-    gatewayClient.on('*', handler)
-    return () => gatewayClient.off('*', handler)
+    return unsub
   }, [])
 
   const startCapture = useCallback(
@@ -259,13 +258,6 @@ export function CaptureView(): React.JSX.Element {
         setProcessingStep((prev) => Math.min(prev + 1, STEPS_TEXT_URL.length - 1))
       }, 5000)
 
-      if (connectionState !== 'connected') {
-        clearInterval(timerRef.current)
-        timerRef.current = null
-        setCaptureState('idle')
-        return
-      }
-
       const sessionKey = `agent:main:capture-${crypto.randomUUID()}`
       pendingSessionRef.current = sessionKey
 
@@ -273,15 +265,23 @@ export function CaptureView(): React.JSX.Element {
         typeLabelOverride ??
         (type === 'text' ? 'nota/texto' : type === 'url' ? 'artículo/página web' : 'archivo')
 
-      const prompt = `Procesa el siguiente ${typeLabel} y extrae información estructurada.
+      const prompt = `Procesa el siguiente ${typeLabel}. Primero clasifica el contenido, luego extrae información según su tipo.
 
-Devuelve SOLO JSON válido con esta estructura exacta:
+PASO 1 — Clasifica en UNA categoría:
+- "task": contiene compromisos, acciones por hacer, asignaciones, deadlines (reuniones, minutas, emails de trabajo)
+- "knowledge": contiene conceptos, teorías, frameworks, tutoriales, artículos, aprendizajes (artículos, notas de estudio, documentación)
+- "decision": contiene análisis de opciones, trade-offs, evaluaciones, comparaciones (propuestas, reviews, estrategias)
+
+PASO 2 — Devuelve SOLO JSON válido:
 {
+  "category": "task|knowledge|decision",
   "summary": "2-3 oraciones resumiendo el contenido principal",
   "actionItems": [{"text": "acción concreta", "owner": "nombre o null"}],
   "decisions": ["decisión confirmada o hecho establecido"],
   "openQuestions": ["pregunta sin resolver o tema pendiente"],
   "keyPoints": ["punto clave relevante"],
+  "concepts": ["concepto, framework, o idea clave para recordar"],
+  "takeaways": ["insight accionable o lección aprendida"],
   "entities": {
     "people": ["nombres de personas mencionadas"],
     "projects": ["proyectos o temas principales"],
@@ -289,10 +289,16 @@ Devuelve SOLO JSON válido con esta estructura exacta:
   }
 }
 
-Reglas:
+Reglas por categoría:
+- Si category="task": enfócate en actionItems y decisions. concepts/takeaways pueden estar vacíos.
+- Si category="knowledge": enfócate en concepts, takeaways y keyPoints. actionItems vacío a menos que haya acciones explícitas.
+- Si category="decision": enfócate en decisions, openQuestions y takeaways. actionItems solo si hay next steps concretos.
+
+Reglas generales:
 - actionItems: solo compromisos concretos con acción clara. Lista vacía si no hay.
 - decisions: afirmaciones de finalidad, acuerdos confirmados. Lista vacía si no hay.
-- openQuestions: temas sin resolver, preguntas abiertas. Lista vacía si no hay.
+- concepts: ideas, frameworks, modelos mentales extraídos del contenido. Lista vacía si no aplica.
+- takeaways: insights accionables — qué cambiaría en tu trabajo después de leer esto. Lista vacía si no aplica.
 - keyPoints: 3-5 puntos más importantes del contenido.
 - entities: extrae solo los que aparecen claramente en el texto.
 
@@ -300,11 +306,7 @@ Contenido:
 ${content}`
 
       try {
-        await gatewayClient.rpc('chat.send', {
-          sessionKey,
-          message: prompt,
-          idempotencyKey: sessionKey
-        })
+        await window.api.agent.send(sessionKey, prompt, sessionKey)
       } catch {
         pendingSessionRef.current = null
         if (timerRef.current) {
@@ -314,7 +316,7 @@ ${content}`
         setCaptureState('idle')
       }
     },
-    [connectionState, captureState]
+    [captureState]
   )
 
   const [urlError, setUrlError] = useState<string | null>(null)
@@ -362,11 +364,7 @@ Basándote únicamente en el contenido anterior, responde esta pregunta de forma
 ${question}`
 
     try {
-      await gatewayClient.rpc('chat.send', {
-        sessionKey,
-        message: prompt,
-        idempotencyKey: sessionKey
-      })
+      await window.api.agent.send(sessionKey, prompt, sessionKey)
     } catch {
       pendingChatSessionRef.current = null
       setChatLoading(false)
@@ -394,9 +392,9 @@ ${question}`
   )
 
   const handleSave = useCallback(async (): Promise<void> => {
-    if (!result) return
+    if (!result || savedToast) return
     const titleRaw =
-      sourceType === 'text' ? textInput : sourceType === 'url' ? urlInput : fileName || 'Captura'
+      (sourceType === 'text' ? textInput : sourceType === 'url' ? urlInput : fileName) || 'Captura'
     const id = crypto.randomUUID()
     const timestamp = Date.now()
     const entry: RecentCapture = {
@@ -431,6 +429,18 @@ ${question}`
         },
         timestamp
       })
+      // Also track in agent-store KB entries for the KB Manager view
+      addKBEntry({
+        title: titleRaw.slice(0, 80),
+        sourceType: sourceType === 'text' || sourceType === 'url' ? 'capture' : 'transcript',
+        sourceId: id,
+        summary: result.summary,
+        tags: [
+          ...(result.entities?.projects ?? []).slice(0, 3),
+          ...(result.entities?.people ?? []).slice(0, 3)
+        ],
+        folder: sourceType === 'transcript' ? 'Transcripts' : 'Captures'
+      })
     } catch {
       // KB write failure is non-fatal — local recents already saved
     }
@@ -449,7 +459,7 @@ ${question}`
       setUrlInput('')
       setFileName('')
     }, 1500)
-  }, [result, sourceType, textInput, urlInput, fileName, actionItems])
+  }, [result, savedToast, sourceType, textInput, urlInput, fileName, actionItems, addKBEntry])
 
   const handleDiscard = (): void => {
     window.api.telemetry.emit('capture.discarded', { sourceType })
@@ -471,9 +481,8 @@ ${question}`
   }
 
   const canCapture =
-    connectionState === 'connected' &&
-    ((sourceType === 'text' && textInput.trim().length > 0) ||
-      (sourceType === 'url' && urlInput.trim().length > 0))
+    (sourceType === 'text' && textInput.trim().length > 0) ||
+    (sourceType === 'url' && urlInput.trim().length > 0)
 
   // ── Content renderer for non-transcript source types ──────────────────────
 
@@ -491,16 +500,37 @@ ${question}`
         <div className="flex h-full overflow-hidden">
           {/* Main panel */}
           <div className="flex flex-1 flex-col overflow-y-auto p-6">
-            {/* Header */}
+            {/* Back button + Header */}
+            <button
+              onClick={() => setCaptureState('idle')}
+              className="mb-3 flex items-center gap-1 text-xs text-att-blue transition-colors hover:text-[#4a6be5]"
+            >
+              <svg className="h-3 w-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M10 4l-4 4 4 4" />
+              </svg>
+              Back to captures
+            </button>
             <div className="mb-5 flex items-start gap-3">
-              <div className="flex h-7 w-7 items-center justify-center rounded-full bg-[rgba(76,175,130,.12)]">
-                <Check className="h-3.5 w-3.5 text-[#4caf82]" strokeWidth={2.5} />
+              <div className="flex h-7 w-7 items-center justify-center rounded-full bg-att-green/12">
+                <Check className="h-3.5 w-3.5 text-att-green" strokeWidth={2.5} />
               </div>
               <div>
-                <p className="text-sm font-medium text-foreground">
-                  {t('capture.ready_to_review')}
-                </p>
-                <p className="mt-0.5 text-xs text-[#7a7d85]">
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-medium text-foreground">
+                    {t('capture.ready_to_review')}
+                  </p>
+                  {result.category && (
+                    <span className={cn(
+                      'rounded px-1.5 py-0.5 font-mono text-[8px] uppercase',
+                      result.category === 'task' ? 'bg-att-blue/12 text-att-blue'
+                        : result.category === 'knowledge' ? 'bg-att-purple/12 text-att-purple'
+                        : 'bg-att-orange/12 text-att-orange'
+                    )}>
+                      {result.category}
+                    </span>
+                  )}
+                </div>
+                <p className="mt-0.5 text-xs text-muted-foreground">
                   {t(`capture.source.${sourceType}`)} · {sourceTitle}
                 </p>
               </div>
@@ -508,43 +538,55 @@ ${question}`
 
             {/* Summary */}
             <section className="mb-5">
-              <h3 className="mb-2 font-mono text-[9px] uppercase tracking-[.1em] text-[#4a4d55]">
+              <h3 className="mb-2 font-mono text-[9px] uppercase tracking-[.1em] text-muted-foreground/60">
                 {t('capture.summary')}
               </h3>
-              <p className="text-sm leading-relaxed text-[#c8cad0]">{result.summary}</p>
+              <p className="text-sm leading-relaxed text-foreground/80">{result.summary}</p>
             </section>
 
             {/* Action items */}
             {actionItems.length > 0 && (
               <section className="mb-5">
-                <h3 className="mb-2 font-mono text-[9px] uppercase tracking-[.1em] text-[#4a4d55]">
+                <h3 className="mb-2 font-mono text-[9px] uppercase tracking-[.1em] text-muted-foreground/60">
                   {t('capture.action_items', { count: actionItems.length })}
                 </h3>
                 <div className="flex flex-col gap-1.5">
                   {actionItems.map((item, i) => (
-                    <label key={i} className="flex cursor-pointer items-start gap-2.5">
-                      <input
-                        type="checkbox"
-                        checked={item.checked}
-                        onChange={(e) =>
-                          setActionItems((prev) =>
-                            prev.map((a, j) => (j === i ? { ...a, checked: e.target.checked } : a))
-                          )
-                        }
-                        className="mt-0.5 shrink-0 accent-[#5b7cf6]"
-                      />
-                      <span
-                        className={cn(
-                          'text-sm leading-snug',
-                          item.checked ? 'text-[#4a4d55] line-through' : 'text-foreground'
-                        )}
+                    <div key={i} className="group flex items-start gap-2.5">
+                      <label className="flex flex-1 cursor-pointer items-start gap-2.5">
+                        <input
+                          type="checkbox"
+                          checked={item.checked}
+                          onChange={(e) =>
+                            setActionItems((prev) =>
+                              prev.map((a, j) => (j === i ? { ...a, checked: e.target.checked } : a))
+                            )
+                          }
+                          className="mt-0.5 shrink-0 accent-att-blue"
+                        />
+                        <span
+                          className={cn(
+                            'text-sm leading-snug',
+                            item.checked ? 'text-muted-foreground/60 line-through' : 'text-foreground'
+                          )}
+                        >
+                          {item.text}
+                          {item.owner && (
+                            <span className="ml-1.5 text-[10px] text-att-blue">@{item.owner}</span>
+                          )}
+                        </span>
+                      </label>
+                      <button
+                        onClick={() => addLocalTask({
+                          description: item.text + (item.owner ? ` (@${item.owner})` : ''),
+                          sourceType: 'capture'
+                        })}
+                        className="shrink-0 rounded p-1 text-muted-foreground/30 opacity-0 transition-all hover:bg-att-blue/12 hover:text-att-blue group-hover:opacity-100"
+                        title="Send to Tasks"
                       >
-                        {item.text}
-                        {item.owner && (
-                          <span className="ml-1.5 text-[10px] text-[#5b7cf6]">@{item.owner}</span>
-                        )}
-                      </span>
-                    </label>
+                        <ListTodo className="h-3 w-3" />
+                      </button>
+                    </div>
                   ))}
                 </div>
               </section>
@@ -553,13 +595,13 @@ ${question}`
             {/* Decisions */}
             {result.decisions.length > 0 && (
               <section className="mb-5">
-                <h3 className="mb-2 font-mono text-[9px] uppercase tracking-[.1em] text-[#4a4d55]">
+                <h3 className="mb-2 font-mono text-[9px] uppercase tracking-[.1em] text-muted-foreground/60">
                   {t('capture.decisions', { count: result.decisions.length })}
                 </h3>
                 <div className="flex flex-col gap-1.5">
                   {result.decisions.map((d, i) => (
                     <div key={i} className="flex items-start gap-2">
-                      <span className="mt-0.5 shrink-0 text-[#4caf82]">✓</span>
+                      <span className="mt-0.5 shrink-0 text-att-green">✓</span>
                       <span className="text-sm text-foreground">{d}</span>
                     </div>
                   ))}
@@ -570,14 +612,48 @@ ${question}`
             {/* Open questions */}
             {result.openQuestions.length > 0 && (
               <section className="mb-5">
-                <h3 className="mb-2 font-mono text-[9px] uppercase tracking-[.1em] text-[#4a4d55]">
+                <h3 className="mb-2 font-mono text-[9px] uppercase tracking-[.1em] text-muted-foreground/60">
                   {t('capture.open_questions', { count: result.openQuestions.length })}
                 </h3>
                 <div className="flex flex-col gap-1.5">
                   {result.openQuestions.map((q, i) => (
                     <div key={i} className="flex items-start gap-2">
-                      <span className="mt-0.5 shrink-0 text-[#d4a843]">?</span>
+                      <span className="mt-0.5 shrink-0 text-att-orange">?</span>
                       <span className="text-sm text-foreground">{q}</span>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {/* Concepts (knowledge captures) */}
+            {result.concepts && result.concepts.length > 0 && (
+              <section className="mb-5">
+                <h3 className="mb-2 font-mono text-[9px] uppercase tracking-[.1em] text-att-purple/60">
+                  Concepts & Frameworks
+                </h3>
+                <div className="flex flex-col gap-1.5">
+                  {result.concepts.map((c, i) => (
+                    <div key={i} className="flex items-start gap-2 rounded-md border border-att-purple/15 bg-att-purple/5 px-3 py-2">
+                      <span className="mt-0.5 shrink-0 text-att-purple">◆</span>
+                      <span className="text-sm text-foreground">{c}</span>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {/* Takeaways (knowledge + decision captures) */}
+            {result.takeaways && result.takeaways.length > 0 && (
+              <section className="mb-5">
+                <h3 className="mb-2 font-mono text-[9px] uppercase tracking-[.1em] text-att-green/60">
+                  Takeaways
+                </h3>
+                <div className="flex flex-col gap-1.5">
+                  {result.takeaways.map((tw, i) => (
+                    <div key={i} className="flex items-start gap-2">
+                      <span className="mt-0.5 shrink-0 text-att-green">→</span>
+                      <span className="text-sm text-foreground">{tw}</span>
                     </div>
                   ))}
                 </div>
@@ -587,13 +663,13 @@ ${question}`
             {/* Key points */}
             {result.keyPoints.length > 0 && (
               <section className="mb-5">
-                <h3 className="mb-2 font-mono text-[9px] uppercase tracking-[.1em] text-[#4a4d55]">
+                <h3 className="mb-2 font-mono text-[9px] uppercase tracking-[.1em] text-muted-foreground/60">
                   {t('capture.key_points')}
                 </h3>
                 <ul className="flex flex-col gap-1">
                   {result.keyPoints.map((k, i) => (
-                    <li key={i} className="flex items-start gap-2 text-sm text-[#c8cad0]">
-                      <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-[#3a3b3f]" />
+                    <li key={i} className="flex items-start gap-2 text-sm text-foreground/80">
+                      <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-att-surface-raised" />
                       {k}
                     </li>
                   ))}
@@ -603,26 +679,28 @@ ${question}`
           </div>
 
           {/* Aside */}
-          <aside className="w-[288px] shrink-0 overflow-y-auto border-l border-[#1f2024] p-5">
+          <aside className="w-[288px] shrink-0 overflow-y-auto border-l border-att-divider p-5">
             {/* Source info */}
             <div className="mb-5">
-              <p className="mb-1 font-mono text-[9px] uppercase tracking-[.1em] text-[#4a4d55]">
+              <p className="mb-1 font-mono text-[9px] uppercase tracking-[.1em] text-muted-foreground/60">
                 {t('capture.source_label')}
               </p>
-              <p className="text-xs text-[#7a7d85]">
+              <p className="text-xs text-muted-foreground">
                 {t(`capture.source.${sourceType}`)} · {relativeTime(Date.now(), t)}
               </p>
             </div>
 
-            {/* Actions */}
+            {/* Actions — context-aware based on capture category */}
             <div className="mb-5 flex flex-col gap-2">
+              {/* Primary save action */}
               <button
                 onClick={() => void handleSave()}
+                disabled={savedToast}
                 className={cn(
                   'flex items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors',
                   savedToast
-                    ? 'bg-[rgba(76,175,130,.12)] text-[#4caf82]'
-                    : 'bg-[rgba(91,124,246,.12)] text-[#5b7cf6] hover:bg-[rgba(91,124,246,.2)]'
+                    ? 'bg-att-green/12 text-att-green'
+                    : 'bg-att-blue/12 text-att-blue hover:bg-att-blue/20'
                 )}
               >
                 {savedToast ? (
@@ -630,61 +708,99 @@ ${question}`
                     <Check className="h-3.5 w-3.5" strokeWidth={2.5} />
                     {t('capture.saved')}
                   </>
+                ) : result.category === 'knowledge' ? (
+                  'Save to Knowledge Base'
+                ) : result.category === 'task' ? (
+                  'Save & Send to Tasks'
                 ) : (
                   t('capture.save_to_memory')
                 )}
               </button>
+
+              {/* Secondary: task captures → auto-create tasks for all action items */}
+              {result.category === 'task' && actionItems.length > 0 && !savedToast && (
+                <button
+                  onClick={() => {
+                    for (const item of actionItems.filter((a) => !a.checked)) {
+                      addLocalTask({
+                        description: item.text + (item.owner ? ` (@${item.owner})` : ''),
+                        sourceType: 'capture'
+                      })
+                    }
+                    void handleSave()
+                  }}
+                  className="rounded-md border border-att-blue/30 px-3 py-2 text-sm text-att-blue transition-colors hover:bg-att-blue/8"
+                >
+                  Save + Create {actionItems.filter((a) => !a.checked).length} tasks
+                </button>
+              )}
+
               <button
                 onClick={handleDiscard}
-                className="rounded-md px-3 py-2 text-sm text-[#4a4d55] transition-colors hover:bg-[#1c1d20] hover:text-[#e05c5c]"
+                className="rounded-md px-3 py-2 text-sm text-muted-foreground/60 transition-colors hover:bg-att-surface-hover hover:text-att-red"
               >
                 {t('capture.discard')}
               </button>
             </div>
 
-            {/* Entities */}
+            {/* Entities — extracted names, projects, and dates (click to ask about them) */}
             {(result.entities.people.length > 0 ||
               result.entities.projects.length > 0 ||
               result.entities.dates.length > 0) && (
               <div className="mb-5">
-                <p className="mb-2 font-mono text-[9px] uppercase tracking-[.1em] text-[#4a4d55]">
+                <p className="mb-2 font-mono text-[9px] uppercase tracking-[.1em] text-muted-foreground/60">
                   {t('capture.entities')}
                 </p>
                 <div className="flex flex-col gap-2">
                   {result.entities.people.length > 0 && (
-                    <div className="flex flex-wrap gap-1">
-                      {result.entities.people.map((p, i) => (
-                        <span
-                          key={i}
-                          className="rounded bg-[rgba(91,124,246,.1)] px-1.5 py-0.5 text-[10px] text-[#5b7cf6]"
-                        >
-                          {p}
-                        </span>
-                      ))}
+                    <div>
+                      <span className="mb-1 block text-[9px] text-muted-foreground/40">People</span>
+                      <div className="flex flex-wrap gap-1">
+                        {result.entities.people.map((p, i) => (
+                          <button
+                            key={i}
+                            onClick={() => setChatInput(`What does "${p}" do or decide in this content?`)}
+                            className="rounded bg-att-blue/10 px-1.5 py-0.5 text-[10px] text-att-blue transition-colors hover:bg-att-blue/20"
+                            title={`Ask about ${p}`}
+                          >
+                            {p}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   )}
                   {result.entities.projects.length > 0 && (
-                    <div className="flex flex-wrap gap-1">
-                      {result.entities.projects.map((p, i) => (
-                        <span
-                          key={i}
-                          className="rounded bg-[rgba(76,175,130,.1)] px-1.5 py-0.5 text-[10px] text-[#4caf82]"
-                        >
-                          {p}
-                        </span>
-                      ))}
+                    <div>
+                      <span className="mb-1 block text-[9px] text-muted-foreground/40">Projects</span>
+                      <div className="flex flex-wrap gap-1">
+                        {result.entities.projects.map((p, i) => (
+                          <button
+                            key={i}
+                            onClick={() => setChatInput(`What is mentioned about "${p}" in this content?`)}
+                            className="rounded bg-att-green/10 px-1.5 py-0.5 text-[10px] text-att-green transition-colors hover:bg-att-green/20"
+                            title={`Ask about ${p}`}
+                          >
+                            {p}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   )}
                   {result.entities.dates.length > 0 && (
-                    <div className="flex flex-wrap gap-1">
-                      {result.entities.dates.map((d, i) => (
-                        <span
-                          key={i}
-                          className="rounded bg-[rgba(212,168,67,.1)] px-1.5 py-0.5 text-[10px] text-[#d4a843]"
-                        >
-                          {d}
-                        </span>
-                      ))}
+                    <div>
+                      <span className="mb-1 block text-[9px] text-muted-foreground/40">Dates</span>
+                      <div className="flex flex-wrap gap-1">
+                        {result.entities.dates.map((d, i) => (
+                          <button
+                            key={i}
+                            onClick={() => setChatInput(`What happens on "${d}" according to this content?`)}
+                            className="rounded bg-att-orange/10 px-1.5 py-0.5 text-[10px] text-att-orange transition-colors hover:bg-att-orange/20"
+                            title={`Ask about ${d}`}
+                          >
+                            {d}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -692,8 +808,8 @@ ${question}`
             )}
 
             {/* Chat */}
-            <div className="border-t border-[#1f2024] pt-4">
-              <p className="mb-3 font-mono text-[9px] uppercase tracking-[.1em] text-[#4a4d55]">
+            <div className="border-t border-att-divider pt-4">
+              <p className="mb-3 font-mono text-[9px] uppercase tracking-[.1em] text-muted-foreground/60">
                 {t('capture.ask')}
               </p>
 
@@ -709,8 +825,8 @@ ${question}`
                         className={cn(
                           'max-w-[220px] rounded-lg px-3 py-2 text-xs leading-relaxed',
                           msg.role === 'user'
-                            ? 'bg-[rgba(91,124,246,.15)] text-[#c8cad0]'
-                            : 'bg-[#1a1b1e] text-[#c8cad0]'
+                            ? 'bg-att-blue/15 text-foreground/80'
+                            : 'bg-att-surface text-foreground/80'
                         )}
                       >
                         {msg.text}
@@ -719,17 +835,17 @@ ${question}`
                   ))}
                   {chatLoading && (
                     <div className="flex justify-start">
-                      <span className="flex items-center gap-1 rounded-lg bg-[#1a1b1e] px-3 py-2">
+                      <span className="flex items-center gap-1 rounded-lg bg-att-surface px-3 py-2">
                         <span
-                          className="h-1.5 w-1.5 animate-bounce rounded-full bg-[#4a4d55]"
+                          className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/60"
                           style={{ animationDelay: '0ms' }}
                         />
                         <span
-                          className="h-1.5 w-1.5 animate-bounce rounded-full bg-[#4a4d55]"
+                          className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/60"
                           style={{ animationDelay: '120ms' }}
                         />
                         <span
-                          className="h-1.5 w-1.5 animate-bounce rounded-full bg-[#4a4d55]"
+                          className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/60"
                           style={{ animationDelay: '240ms' }}
                         />
                       </span>
@@ -750,12 +866,12 @@ ${question}`
                   }}
                   placeholder={t('capture.ask_placeholder')}
                   disabled={chatLoading}
-                  className="flex-1 rounded-lg border border-[#2a2b2f] bg-[#151618] px-2.5 py-2 text-xs text-foreground placeholder:text-[#3a3b3f] focus:border-[#5b7cf6] focus:outline-none disabled:opacity-50"
+                  className="flex-1 rounded-lg border border-att-divider bg-att-surface px-2.5 py-2 text-xs text-foreground placeholder:text-att-surface-raised focus:border-att-blue/50 focus:outline-none disabled:opacity-50"
                 />
                 <button
                   onClick={() => void handleChatSend()}
                   disabled={chatLoading || !chatInput.trim()}
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#5b7cf6] text-white transition-colors hover:bg-[#4a6be5] disabled:opacity-40"
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-att-blue text-white transition-colors hover:bg-[#4a6be5] disabled:opacity-40"
                 >
                   <Send className="h-3.5 w-3.5" />
                 </button>
@@ -778,12 +894,12 @@ ${question}`
                   source: t(`capture.source.${sourceType}`).toLowerCase()
                 })}
               </span>
-              <span className="font-mono text-[10px] text-[#4a4d55]">{progress}%</span>
+              <span className="font-mono text-[10px] text-muted-foreground/60">{progress}%</span>
             </div>
             {/* Progress bar */}
-            <div className="mb-5 h-[3px] overflow-hidden rounded-full bg-[#1f2024]">
+            <div className="mb-5 h-[3px] overflow-hidden rounded-full bg-att-divider">
               <div
-                className="h-full rounded-full bg-[#5b7cf6] transition-all duration-[800ms] ease-out"
+                className="h-full rounded-full bg-att-blue transition-all duration-[800ms] ease-out"
                 style={{ width: `${progress}%` }}
               />
             </div>
@@ -796,18 +912,18 @@ ${question}`
                   className={cn(
                     'flex items-center gap-2.5 text-sm transition-colors duration-300',
                     i < processingStep
-                      ? 'text-[#4caf82]'
+                      ? 'text-att-green'
                       : i === processingStep
                         ? 'text-foreground'
-                        : 'text-[#2a2b2f]'
+                        : 'text-att-divider'
                   )}
                 >
                   {i < processingStep ? (
                     <Check className="h-3.5 w-3.5 shrink-0" strokeWidth={2.5} />
                   ) : i === processingStep ? (
-                    <div className="h-3.5 w-3.5 shrink-0 animate-pulse rounded-full bg-[#5b7cf6]" />
+                    <div className="h-3.5 w-3.5 shrink-0 animate-pulse rounded-full bg-att-blue" />
                   ) : (
-                    <div className="h-3.5 w-3.5 shrink-0 rounded-full bg-[#2a2b2f]" />
+                    <div className="h-3.5 w-3.5 shrink-0 rounded-full bg-att-divider" />
                   )}
                   {step}
                 </div>
@@ -816,7 +932,7 @@ ${question}`
 
             <button
               onClick={handleCancel}
-              className="mt-6 flex items-center gap-1.5 text-xs text-[#4a4d55] transition-colors hover:text-[#e05c5c]"
+              className="mt-6 flex items-center gap-1.5 text-xs text-muted-foreground/60 transition-colors hover:text-att-red"
             >
               <X className="h-3 w-3" />
               {t('capture.cancel')}
@@ -837,7 +953,7 @@ ${question}`
               onChange={(e) => setTextInput(e.target.value)}
               placeholder={t('capture.text_placeholder')}
               rows={8}
-              className="w-full resize-none rounded-lg border border-[#2a2b2f] bg-[#151618] px-3 py-2.5 text-sm text-foreground placeholder:text-[#3a3b3f] focus:border-[#5b7cf6] focus:outline-none"
+              className="w-full resize-none rounded-lg border border-att-divider bg-att-surface px-3 py-2.5 text-sm text-foreground placeholder:text-att-surface-raised focus:border-att-blue/50 focus:outline-none"
             />
           )}
 
@@ -851,15 +967,15 @@ ${question}`
                   setUrlError(null)
                 }}
                 placeholder="https://..."
-                className="w-full rounded-lg border border-[#2a2b2f] bg-[#151618] px-3 py-2.5 text-sm text-foreground placeholder:text-[#3a3b3f] focus:border-[#5b7cf6] focus:outline-none"
+                className="w-full rounded-lg border border-att-divider bg-att-surface px-3 py-2.5 text-sm text-foreground placeholder:text-att-surface-raised focus:border-att-blue/50 focus:outline-none"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && canCapture) void handleCapture()
                 }}
               />
               {urlError ? (
-                <p className="text-[10px] text-red-400">{urlError}</p>
+                <p className="text-[10px] text-att-red">{urlError}</p>
               ) : (
-                <p className="text-[10px] text-[#4a4d55]">{t('capture.url_hint')}</p>
+                <p className="text-[10px] text-muted-foreground/60">{t('capture.url_hint')}</p>
               )}
             </div>
           )}
@@ -875,25 +991,25 @@ ${question}`
               className={cn(
                 'flex flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed py-10 transition-colors',
                 dragOver
-                  ? 'border-[#5b7cf6] bg-[rgba(91,124,246,.05)]'
-                  : 'border-[#2a2b2f] bg-[#151618] hover:border-[#3a3b3f]'
+                  ? 'border-att-blue bg-att-blue/5'
+                  : 'border-att-divider bg-att-surface hover:border-att-surface-raised'
               )}
             >
-              <Upload className={cn('h-8 w-8', dragOver ? 'text-[#5b7cf6]' : 'text-[#3a3b3f]')} />
+              <Upload className={cn('h-8 w-8', dragOver ? 'text-att-blue' : 'text-att-surface-raised')} />
               <div className="text-center">
                 <p className="text-sm text-foreground">
                   {t('capture.file_drop')}{' '}
                   <button
                     onClick={() => fileInputRef.current?.click()}
-                    className="text-[#5b7cf6] hover:underline"
+                    className="text-att-blue hover:underline"
                   >
                     {t('capture.file_select')}
                   </button>
                 </p>
-                <p className="mt-1 text-xs text-[#4a4d55]">{t('capture.file_types')}</p>
+                <p className="mt-1 text-xs text-muted-foreground/60">{t('capture.file_types')}</p>
               </div>
               {fileName && (
-                <div className="flex items-center gap-1.5 text-xs text-[#7a7d85]">
+                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                   <FileText className="h-3.5 w-3.5" />
                   {fileName}
                 </div>
@@ -918,24 +1034,22 @@ ${question}`
           <button
             onClick={() => void handleCapture()}
             disabled={!canCapture}
-            className="mb-6 w-full rounded-md bg-[#5b7cf6] py-2 text-sm font-medium text-white transition-colors hover:bg-[#4a6be5] disabled:cursor-not-allowed disabled:opacity-40"
+            className="mb-6 w-full rounded-md bg-att-blue py-2 text-sm font-medium text-white transition-colors hover:bg-[#4a6be5] disabled:cursor-not-allowed disabled:opacity-40"
           >
             {t('capture.button')}
           </button>
         )}
 
-        {/* Offline notice */}
-        {connectionState !== 'connected' && (
-          <p className="mb-4 text-center text-xs text-[#d4a843]">{t('capture.offline_notice')}</p>
-        )}
+        {/* Offline notice removed — runtime handles errors gracefully */}
 
-        {/* Recents */}
-        {recents.length > 0 && (
+        {/* Recents — merged from localStorage captures + agent-store rawCaptures */}
+        {(recents.length > 0 || rawCaptures.length > 0) && (
           <div>
-            <p className="mb-2 font-mono text-[9px] uppercase tracking-[.1em] text-[#4a4d55]">
+            <p className="mb-2 font-mono text-[9px] uppercase tracking-[.1em] text-muted-foreground/60">
               {t('capture.recents')}
             </p>
             <div className="flex flex-col gap-0.5">
+              {/* Processed captures from CaptureView (localStorage) */}
               {recents.map((entry) => (
                 <button
                   key={entry.id}
@@ -943,19 +1057,42 @@ ${question}`
                     setResult(entry.result)
                     setActionItems(entry.result.actionItems.map((a) => ({ ...a, checked: false })))
                     setSourceType(entry.sourceType === 'transcript' ? 'file' : entry.sourceType)
+                    // Restore captured content so the chat Q&A works
+                    setCapturedContent(entry.result.summary || entry.title)
                     setCaptureState('review')
                   }}
-                  className="flex w-full items-center gap-2 rounded px-2 py-2 text-left transition-colors hover:bg-[#151618]"
+                  className="flex w-full items-center gap-2 rounded px-2 py-2 text-left transition-colors hover:bg-att-surface"
                 >
-                  <span className="shrink-0 rounded border border-[#2a2b2f] px-1 py-0.5 font-mono text-[8px] uppercase text-[#4a4d55]">
+                  <span className="shrink-0 rounded border border-att-divider px-1 py-0.5 font-mono text-[8px] uppercase text-muted-foreground/60">
                     {entry.sourceType}
                   </span>
-                  <span className="flex-1 truncate text-xs text-[#c8cad0]">{entry.title}</span>
-                  <span className="flex shrink-0 items-center gap-1 text-[10px] text-[#4a4d55]">
+                  <span className="flex-1 truncate text-xs text-foreground/80">{entry.title}</span>
+                  <span className="flex shrink-0 items-center gap-1 text-[10px] text-muted-foreground/60">
                     <Clock className="h-2.5 w-2.5" />
                     {relativeTime(entry.timestamp, t)}
                   </span>
                 </button>
+              ))}
+              {/* Landscape/dashboard captures from agent-store */}
+              {rawCaptures.filter((c) => !c.archived).slice(0, 10).map((entry) => (
+                <div
+                  key={entry.id}
+                  className="flex w-full items-center gap-2 rounded px-2 py-2 text-left"
+                >
+                  <span className={cn(
+                    'shrink-0 rounded border px-1 py-0.5 font-mono text-[8px] uppercase',
+                    entry.sourceType === 'landscape-chat'
+                      ? 'border-att-blue/30 text-att-blue'
+                      : 'border-att-divider text-muted-foreground/60'
+                  )}>
+                    {entry.sourceType ?? entry.type}
+                  </span>
+                  <span className="flex-1 truncate text-xs text-foreground/80">{entry.text}</span>
+                  <span className="flex shrink-0 items-center gap-1 text-[10px] text-muted-foreground/60">
+                    <Clock className="h-2.5 w-2.5" />
+                    {relativeTime(entry.timestamp, t)}
+                  </span>
+                </div>
               ))}
             </div>
           </div>
@@ -972,19 +1109,22 @@ ${question}`
       <div className="shrink-0 px-6 pt-6">
         <div className="mb-5">
           <h1 className="text-base font-semibold text-foreground">Capture</h1>
-          <p className="mt-0.5 text-xs text-[#7a7d85]">
+          <p className="mt-0.5 text-xs text-muted-foreground">
             Captura información, el agente extrae lo que importa.
           </p>
         </div>
 
-        {/* Source type pills — always visible */}
+        {/* Source type pills — always visible, reset to idle on click */}
         <div className="mb-4 flex flex-wrap gap-2">
           {(['text', 'url', 'file', 'transcript'] as SourceType[]).map((type) => (
             <SourcePill
               key={type}
               type={type}
               active={sourceType === type}
-              onClick={() => setSourceType(type)}
+              onClick={() => {
+                setSourceType(type)
+                setCaptureState('idle')
+              }}
             />
           ))}
         </div>

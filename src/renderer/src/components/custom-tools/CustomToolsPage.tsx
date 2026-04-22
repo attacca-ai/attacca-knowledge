@@ -28,7 +28,7 @@ function saveRecentTool(tool: RecentCustomTool): void {
 }
 
 function buildLLMPrompt(toolName: string, usageDescription: string): string {
-  return `Eres un agente técnico experto en APIs y automatización. El usuario quiere conectar "${toolName}" a un asistente de IA personal (OpenClaw). 
+  return `Eres un agente técnico experto en APIs y automatización. El usuario quiere conectar "${toolName}" a un asistente de IA personal (Attacca). 
 
 Uso descrito por el usuario: "${usageDescription}"
 
@@ -240,8 +240,8 @@ export function CustomToolsPage({
       }}
       className={`rounded-[4px] border px-[10px] py-1 font-mono text-[9px] uppercase tracking-[.06em] transition-all ${
         subState === s
-          ? 'border-[#5b7cf6] bg-[#5b7cf6] text-white'
-          : 'border-[#2a2b2f] bg-transparent text-[#4a4d55]'
+          ? 'border-att-blue bg-att-blue text-white'
+          : 'border-att-divider bg-transparent text-muted-foreground/60'
       }`}
     >
       {n} · {label}
@@ -249,28 +249,28 @@ export function CustomToolsPage({
   )
 
   return (
-    <div className="flex flex-1 overflow-hidden bg-[#0e0f11]">
+    <div className="flex flex-1 overflow-hidden bg-background">
       {/* ── Left panel ── */}
-      <div className="flex flex-1 flex-col overflow-hidden border-r border-[#1f2024]">
+      <div className="flex flex-1 flex-col overflow-hidden border-r border-att-divider">
         {/* Header */}
-        <div className="shrink-0 border-b border-[#1f2024] px-8 py-6">
-          <div className="mb-[5px] flex items-center gap-1 font-mono text-[9px] uppercase tracking-[.12em] text-[#4a4d55]">
-            <button onClick={onBack} className="hover:text-[#7a7d85]">
+        <div className="shrink-0 border-b border-att-divider px-8 py-6">
+          <div className="mb-[5px] flex items-center gap-1 font-mono text-[9px] uppercase tracking-[.12em] text-muted-foreground/60">
+            <button onClick={onBack} className="hover:text-muted-foreground">
               {t('customTools.breadcrumb_connections')}
             </button>
             <span>·</span>
             <span>{t('customTools.breadcrumb_custom')}</span>
           </div>
-          <h1 className="mb-1 text-[20px] font-light tracking-[-0.01em] text-[#e8e9eb]">
+          <h1 className="mb-1 text-[20px] font-light tracking-[-0.01em] text-foreground">
             {t('customTools.title')}
           </h1>
-          <p className="max-w-[480px] text-[12.5px] leading-[1.5] text-[#7a7d85]">
+          <p className="max-w-[480px] text-[12.5px] leading-[1.5] text-muted-foreground">
             {t('customTools.desc')}
           </p>
 
           {/* Sub-state tabs */}
           <div className="mt-[10px] flex items-center gap-[5px]">
-            <span className="mr-[2px] self-center font-mono text-[9px] text-[#4a4d55]">
+            <span className="mr-[2px] self-center font-mono text-[9px] text-muted-foreground/60">
               {t('customTools.step_label')}
             </span>
             {tabLabel('describe', 1, t('customTools.step.describe'))}
@@ -287,12 +287,12 @@ export function CustomToolsPage({
           {/* ── DESCRIBE ── */}
           {subState === 'describe' && (
             <div>
-              <p className="mb-5 max-w-[460px] text-[13px] leading-[1.6] text-[#7a7d85]">
+              <p className="mb-5 max-w-[460px] text-[13px] leading-[1.6] text-muted-foreground">
                 {t('customTools.no_tech')}
               </p>
 
               <div className="mb-[14px] max-w-[520px]">
-                <div className="mb-[6px] text-[12px] text-[#7a7d85]">
+                <div className="mb-[6px] text-[12px] text-muted-foreground">
                   {t('customTools.tool_label')}
                 </div>
                 <input
@@ -300,29 +300,29 @@ export function CustomToolsPage({
                   value={toolName}
                   onChange={(e) => setToolName(e.target.value)}
                   placeholder={t('customTools.tool_placeholder')}
-                  className="w-full rounded-[6px] border border-[#2a2b2f] bg-[#151618] px-3 py-[9px] font-sans text-[13px] text-[#e8e9eb] outline-none placeholder:text-[#4a4d55] focus:border-[#5b7cf6]"
+                  className="w-full rounded-[6px] border border-att-divider bg-att-surface px-3 py-[9px] font-sans text-[13px] text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-att-blue"
                 />
-                <div className="mt-[5px] text-[11px] text-[#4a4d55]">
+                <div className="mt-[5px] text-[11px] text-muted-foreground/60">
                   {t('customTools.tool_hint')}
                 </div>
               </div>
 
               <div className="mb-[14px] max-w-[520px]">
-                <div className="mb-[6px] text-[12px] text-[#7a7d85]">
+                <div className="mb-[6px] text-[12px] text-muted-foreground">
                   {t('customTools.usage_label')}
                 </div>
                 <textarea
                   value={usageDescription}
                   onChange={(e) => setUsageDescription(e.target.value)}
                   placeholder={t('customTools.usage_placeholder')}
-                  className="h-[80px] w-full resize-none rounded-[6px] border border-[#2a2b2f] bg-[#151618] px-3 py-[9px] font-sans text-[12.5px] leading-[1.5] text-[#e8e9eb] outline-none placeholder:text-[#4a4d55] focus:border-[#5b7cf6]"
+                  className="h-[80px] w-full resize-none rounded-[6px] border border-att-divider bg-att-surface px-3 py-[9px] font-sans text-[12.5px] leading-[1.5] text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-att-blue"
                 />
               </div>
 
               <button
                 disabled={!toolName.trim()}
                 onClick={handleStartExploration}
-                className="mt-1 inline-flex items-center gap-[7px] rounded-[6px] bg-[#5b7cf6] px-5 py-[9px] font-sans text-[12.5px] font-medium text-white transition-opacity hover:opacity-85 disabled:cursor-not-allowed disabled:opacity-40"
+                className="mt-1 inline-flex items-center gap-[7px] rounded-[6px] bg-att-blue px-5 py-[9px] font-sans text-[12.5px] font-medium text-white transition-opacity hover:opacity-85 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <svg
                   width="13"
@@ -339,8 +339,8 @@ export function CustomToolsPage({
               </button>
 
               {/* Experimental note */}
-              <div className="mt-4 flex max-w-[520px] items-start gap-[10px] rounded-lg border border-[#1f2024] bg-[#151618] px-[14px] py-3">
-                <span className="mt-[1px] shrink-0 text-[#4a4d55]">
+              <div className="mt-4 flex max-w-[520px] items-start gap-[10px] rounded-lg border border-att-divider bg-att-surface px-[14px] py-3">
+                <span className="mt-[1px] shrink-0 text-muted-foreground/60">
                   <svg
                     width="14"
                     height="14"
@@ -353,7 +353,7 @@ export function CustomToolsPage({
                     <path d="M8 5v3l2 2" />
                   </svg>
                 </span>
-                <p className="text-[11.5px] leading-[1.5] text-[#4a4d55]">
+                <p className="text-[11.5px] leading-[1.5] text-muted-foreground/60">
                   {t('customTools.experimental_warn')}
                 </p>
               </div>
@@ -379,49 +379,49 @@ export function CustomToolsPage({
       >
         {/* How it works */}
         <div>
-          <div className="mb-2 font-mono text-[9px] uppercase tracking-[.1em] text-[#4a4d55]">
+          <div className="mb-2 font-mono text-[9px] uppercase tracking-[.1em] text-muted-foreground/60">
             {t('customTools.how_it_works')}
           </div>
-          <p className="text-[12px] leading-[1.55] text-[#7a7d85]">
+          <p className="text-[12px] leading-[1.55] text-muted-foreground">
             El agente busca la API pública de la herramienta, verifica qué puede hacer con ella, y
             mapea las capacidades a tu uso específico.{' '}
             <span className="text-[#f0a04b]">Tú no tocas ninguna configuración técnica.</span>
           </p>
         </div>
 
-        <div className="h-px bg-[#1f2024]" />
+        <div className="h-px bg-att-divider" />
 
         {/* Back button */}
         <button
           onClick={onBack}
-          className="flex items-center gap-2 text-[12px] text-[#4a4d55] transition-colors hover:text-[#7a7d85]"
+          className="flex items-center gap-2 text-[12px] text-muted-foreground/60 transition-colors hover:text-muted-foreground"
         >
           <ArrowLeft className="h-3 w-3" />
           {t('customTools.back')}
         </button>
 
-        <div className="h-px bg-[#1f2024]" />
+        <div className="h-px bg-att-divider" />
 
         {/* Recent custom connections */}
         {recentTools.length > 0 && (
           <div>
-            <div className="mb-2 font-mono text-[9px] uppercase tracking-[.1em] text-[#4a4d55]">
+            <div className="mb-2 font-mono text-[9px] uppercase tracking-[.1em] text-muted-foreground/60">
               {t('customTools.recent_title')}
             </div>
             <div className="flex flex-col">
               {recentTools.map((tool, i) => (
                 <div
                   key={i}
-                  className="cursor-pointer border-b border-[#1f2024] py-2 last:border-b-0"
+                  className="cursor-pointer border-b border-att-divider py-2 last:border-b-0"
                 >
-                  <div className="text-[12px] text-[#7a7d85]">{tool.name}</div>
+                  <div className="text-[12px] text-muted-foreground">{tool.name}</div>
                   <div className="mt-[2px] flex gap-[6px] font-mono text-[9px]">
-                    <span className="text-[#4a4d55]">{tool.connectedAt}</span>
+                    <span className="text-muted-foreground/60">{tool.connectedAt}</span>
                     <span
                       className={`rounded-[2px] px-[5px] py-[1px] text-[8px] ${
                         tool.status === 'active'
-                          ? 'bg-[rgba(76,175,130,.1)] text-[#4caf82]'
-                          : 'bg-[rgba(212,168,67,.1)] text-[#d4a843]'
+                          ? 'bg-att-green/10 text-att-green'
+                          : 'bg-att-orange/10 text-att-orange'
                       }`}
                     >
                       {tool.status === 'active'
@@ -435,18 +435,18 @@ export function CustomToolsPage({
           </div>
         )}
 
-        {recentTools.length > 0 && <div className="h-px bg-[#1f2024]" />}
+        {recentTools.length > 0 && <div className="h-px bg-att-divider" />}
 
         {/* Request official integration CTA */}
-        <div className="rounded-lg border border-[#1f2024] bg-[#151618] p-[14px]">
-          <div className="mb-1 text-[12px] font-medium text-[#e8e9eb]">
+        <div className="rounded-lg border border-att-divider bg-att-surface p-[14px]">
+          <div className="mb-1 text-[12px] font-medium text-foreground">
             {t('customTools.not_working')}
           </div>
           <button
             onClick={() =>
               window.api.app.openExternal('https://request.composio.dev/boards/tool-requests')
             }
-            className="w-full rounded-[6px] border border-[#2a2b2f] bg-transparent py-[7px] font-sans text-[12px] text-[#7a7d85] transition-all hover:border-[#5b7cf6] hover:text-[#5b7cf6]"
+            className="w-full rounded-[6px] border border-att-divider bg-transparent py-[7px] font-sans text-[12px] text-muted-foreground transition-all hover:border-att-blue hover:text-att-blue"
           >
             {t('customTools.request_official')}
           </button>

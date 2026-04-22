@@ -3,7 +3,6 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { join, dirname } from 'path'
 import { app } from 'electron'
 import { llmCompletion } from '../llm/completion'
-import { readConfig } from '../gateway/config'
 import { parseLlmJson } from '../lib/parse-llm-json'
 import {
   getMemoriesSince,
@@ -20,17 +19,8 @@ import {
 
 // ── LLM Helper ──────────────────────────────────────────────────────────────
 
-// Cheapest model per provider — synthesis doesn't need top-tier reasoning
-const CHEAP_MODELS: Record<string, string> = {
-  anthropic: 'claude-haiku-4-5-20251001',
-  openai: 'gpt-4o-mini',
-  google: 'gemini-2.0-flash'
-}
-
 async function synthesisLlmCall(systemPrompt: string, userPrompt: string): Promise<string> {
-  const config = readConfig()
-  const provider = config.llm?.provider ?? 'anthropic'
-  const model = CHEAP_MODELS[provider] ?? CHEAP_MODELS.anthropic
+  const model = 'claude-haiku-4-5-20251001'
 
   const response = await llmCompletion({
     messages: [

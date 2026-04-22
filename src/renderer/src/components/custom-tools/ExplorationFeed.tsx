@@ -34,7 +34,7 @@ const STEPS: ExplorationStep[] = [
   },
   {
     title: 'Preparando definición de conexión',
-    detail: 'Creando el adaptador con clasificación de riesgo para OpenClaw',
+    detail: 'Creando el adaptador con clasificación de riesgo para Attacca',
     doneTag: 'definición lista',
     activeTag: 'preparando'
   }
@@ -52,8 +52,8 @@ export function ExplorationFeed({
   return (
     <div className="max-w-[520px]">
       {/* File card */}
-      <div className="mb-5 flex items-center gap-3 rounded-lg border border-[#1f2024] bg-[#151618] px-4 py-3">
-        <div className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-md bg-[rgba(91,124,246,.12)] text-[#5b7cf6]">
+      <div className="mb-5 flex items-center gap-3 rounded-lg border border-att-divider bg-att-surface px-4 py-3">
+        <div className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-md bg-att-blue/12 text-att-blue">
           <svg
             width="16"
             height="16"
@@ -67,15 +67,15 @@ export function ExplorationFeed({
           </svg>
         </div>
         <div className="flex-1">
-          <div className="text-[13px] font-medium text-[#e8e9eb]">
+          <div className="text-[13px] font-medium text-foreground">
             {toolName || 'Herramienta'} · API Research
           </div>
-          <div className="font-mono text-[9px] text-[#4a4d55]">
+          <div className="font-mono text-[9px] text-muted-foreground/60">
             Investigando API y capacidades de conexión
           </div>
         </div>
-        <div className="flex shrink-0 items-center gap-[5px] rounded-[10px] bg-[rgba(91,124,246,.12)] px-2 py-[3px] font-mono text-[9px] text-[#5b7cf6]">
-          <span className="h-[5px] w-[5px] animate-pulse rounded-full bg-[#5b7cf6]" />
+        <div className="flex shrink-0 items-center gap-[5px] rounded-[10px] bg-att-blue/12 px-2 py-[3px] font-mono text-[9px] text-att-blue">
+          <span className="h-[5px] w-[5px] animate-pulse rounded-full bg-att-blue" />
           explorando
         </div>
       </div>
@@ -91,7 +91,7 @@ export function ExplorationFeed({
             <div
               key={idx}
               className={cn(
-                'flex items-start gap-3 border-b border-[#1f2024] py-[10px]',
+                'flex items-start gap-3 border-b border-att-divider py-[10px]',
                 'last:border-b-0'
               )}
             >
@@ -99,9 +99,9 @@ export function ExplorationFeed({
               <div
                 className={cn(
                   'mt-[2px] flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full',
-                  isDone && 'bg-[rgba(76,175,130,.1)] text-[#4caf82]',
-                  isActive && 'bg-[rgba(91,124,246,.12)] text-[#5b7cf6]',
-                  isPending && 'bg-[#1c1d20] text-[#4a4d55]'
+                  isDone && 'bg-att-green/10 text-att-green',
+                  isActive && 'bg-att-blue/12 text-att-blue',
+                  isPending && 'bg-att-surface-hover text-muted-foreground/60'
                 )}
               >
                 {isDone ? (
@@ -147,7 +147,7 @@ export function ExplorationFeed({
                 <div
                   className={cn(
                     'mb-[2px] text-[12.5px] leading-[1.3]',
-                    isPending ? 'text-[#4a4d55]' : 'text-[#e8e9eb]'
+                    isPending ? 'text-muted-foreground/60' : 'text-foreground'
                   )}
                 >
                   {step.title}
@@ -155,7 +155,7 @@ export function ExplorationFeed({
                 <div
                   className={cn(
                     'text-[11px] leading-[1.4]',
-                    isPending ? 'text-[#2a2b2f]' : 'text-[#7a7d85]'
+                    isPending ? 'text-att-divider' : 'text-muted-foreground'
                   )}
                 >
                   {step.detail}
@@ -164,8 +164,8 @@ export function ExplorationFeed({
                   <span
                     className={cn(
                       'mt-1 inline-block rounded-[2px] px-[5px] py-[1px] font-mono text-[8.5px]',
-                      isDone && 'bg-[rgba(76,175,130,.1)] text-[#4caf82]',
-                      isActive && 'bg-[rgba(91,124,246,.12)] text-[#5b7cf6]'
+                      isDone && 'bg-att-green/10 text-att-green',
+                      isActive && 'bg-att-blue/12 text-att-blue'
                     )}
                   >
                     {isDone ? step.doneTag : step.activeTag}

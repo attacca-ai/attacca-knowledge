@@ -1,5 +1,5 @@
 import { net } from 'electron'
-import { readConfig } from '../gateway/config'
+import { readLLMConfig } from '../config/llm-config'
 
 interface LLMCompletionRequest {
   messages: Array<{ role: string; content: string }>
@@ -20,13 +20,13 @@ interface LLMCompletionResponse {
  * Replaces the relay's /llm/completions proxy.
  */
 export async function llmCompletion(request: LLMCompletionRequest): Promise<LLMCompletionResponse> {
-  const config = readConfig()
-  if (!config.llm?.apiKey) {
+  const llmConfig = readLLMConfig()
+  if (!llmConfig?.apiKey) {
     throw new Error('No LLM API key configured. Add one in Settings.')
   }
 
-  const provider = config.llm.provider
-  const apiKey = config.llm.apiKey
+  const provider = llmConfig.provider
+  const apiKey = llmConfig.apiKey
 
   console.log(
     `[llm] Completion request: provider=${provider} model=${request.model || 'default'} messages=${request.messages.length}`

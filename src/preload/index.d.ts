@@ -121,6 +121,12 @@ export interface AttaccaAPI {
     }>
   }
 
+  clickup: {
+    connect: (token: string) => Promise<{ success: boolean; workspaceName?: string; error?: string }>
+    disconnect: () => Promise<{ success: boolean; error?: string }>
+    status: () => Promise<{ connected: boolean; workspaceName: string | null }>
+  }
+
   relay: {
     getUsage: () => Promise<{
       totalCostUsd: number

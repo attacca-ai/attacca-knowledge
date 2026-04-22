@@ -1,6 +1,4 @@
 import { useState } from 'react'
-import { gatewayClient } from '@/lib/gateway-client'
-import { useGatewayStore } from '@/stores/gateway-store'
 import { useAgentStore } from '@/stores/agent-store'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -17,7 +15,6 @@ interface ConnectionProposal {
 }
 
 export function MetaAgent(): React.JSX.Element {
-  const connectionState = useGatewayStore((s) => s.connectionState)
   const addActivity = useAgentStore((s) => s.addActivity)
 
   const [toolName, setToolName] = useState('')
@@ -34,14 +31,46 @@ export function MetaAgent(): React.JSX.Element {
     setInstalled(false)
 
     try {
-      if (connectionState === 'connected') {
-        const result = await gatewayClient.rpc<{ connection: ConnectionProposal }>(
-          'agent.request',
-          {
-            prompt: `The user wants to connect a custom tool: "${toolName}" - "${toolDescription}". Analyze if this tool has a public API, OAuth, or webhooks. Generate a connection proposal. Return as JSON: { "connection": { "name": string, "type": "api"|"oauth"|"webhook", "description": string, "authMethod": string, "riskClassification": Record<string, string> } }`
+      {
+        const sessionKey = `meta-${crypto.randomUUID()}`
+        const prompt = `The user wants to connect a custom tool: "${toolName}" - "${toolDescription}". Analyze if this tool has a public API, OAuth, or webhooks. Generate a connection proposal. Return as JSON: { "connection": { "name": string, "type": "api"|"oauth"|"webhook", "description": string, "authMethod": string, "riskClassification": Record<string, string> } }`
+
+        const result = await new Promise<{ connection: ConnectionProposal } | null>(
+          (resolve) => {
+            let settled = false
+            const finish = (value: { connection: ConnectionProposal } | null): void => {
+              if (settled) return
+              settled = true
+              clearTimeout(timeout)
+              unsub()
+              unsubError()
+              resolve(value)
+            }
+
+            const timeout = setTimeout(() => finish(null), 30_000)
+
+            const unsub = window.api.agent.onFinal((data) => {
+              if (data.sessionKey !== sessionKey) return
+              try {
+                const parsed = JSON.parse(data.message) as { connection: ConnectionProposal }
+                finish(parsed)
+              } catch {
+                finish(null)
+              }
+            })
+
+            const unsubError = window.api.agent.onError((data) => {
+              if (data.sessionKey !== sessionKey) return
+              finish(null)
+            })
+
+            window.api.agent.send(sessionKey, prompt, crypto.randomUUID()).catch(() => {
+              finish(null)
+            })
           }
         )
-        if (result.connection) {
+
+        if (result?.connection) {
           setProposal(result.connection)
           setGenerating(false)
           return
@@ -163,10 +192,10 @@ export function MetaAgent(): React.JSX.Element {
                         variant="outline"
                         className={
                           risk === 'High'
-                            ? 'text-red-500'
+                            ? 'text-att-red'
                             : risk === 'Medium'
-                              ? 'text-yellow-500'
-                              : 'text-green-500'
+                              ? 'text-att-orange'
+                              : 'text-att-green'
                         }
                       >
                         {risk}
@@ -177,7 +206,7 @@ export function MetaAgent(): React.JSX.Element {
               </div>
 
               {installed ? (
-                <div className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400">
+                <div className="flex items-center gap-2 text-sm text-att-green">
                   <Check className="h-4 w-4" />
                   Connection installed
                 </div>

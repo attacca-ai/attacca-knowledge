@@ -41,7 +41,7 @@ export function MidRiskNotification({ approval }: MidRiskNotificationProps): Rea
   if (profile === 'cautious') {
     // Cautious: inline confirmation required
     return (
-      <div className="flex items-center gap-2 rounded-md border border-yellow-500/30 bg-yellow-500/10 p-2 text-xs">
+      <div className="flex items-center gap-2 rounded-md border border-att-orange/30 bg-att-orange/10 p-2 text-xs">
         <span className="flex-1 text-foreground">{approval.description}</span>
         <Button variant="ghost" size="xs" onClick={handleDeny}>
           <X className="h-3 w-3" />
@@ -57,7 +57,7 @@ export function MidRiskNotification({ approval }: MidRiskNotificationProps): Rea
   if (profile === 'balanced') {
     // Balanced: notification with undo
     return (
-      <div className="flex items-center gap-2 rounded-md border border-blue-500/30 bg-blue-500/10 p-2 text-xs">
+      <div className="flex items-center gap-2 rounded-md border border-att-blue/30 bg-att-blue/10 p-2 text-xs">
         <span className="flex-1 text-foreground">{approval.description}</span>
         <Button
           variant="ghost"

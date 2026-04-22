@@ -12,6 +12,8 @@ import { registerAllTasks } from './scheduler/tasks'
 import { stopAll as stopScheduler } from './scheduler'
 import { initTelemetryCollector, getTelemetryCollector } from './telemetry/collector'
 import { getMemoryDb, closeMemoryDb } from './memory/db'
+import { registerProvider } from './integrations/registry'
+import { clickupProvider } from './integrations/clickup/provider'
 
 // Single instance lock
 const gotTheLock = app.requestSingleInstanceLock()
@@ -51,7 +53,10 @@ if (!gotTheLock) {
       isPackaged: app.isPackaged
     })
 
-    // Register IPC handlers before creating windows
+    // Register direct integration providers (before IPC handlers so they're available immediately)
+    registerProvider(clickupProvider)
+
+    // Register IPC handlers
     registerIpcHandlers()
 
     // Create main window

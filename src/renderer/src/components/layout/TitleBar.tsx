@@ -1,19 +1,9 @@
 import { Globe } from 'lucide-react'
-import { useGatewayStore } from '@/stores/gateway-store'
 import { useTranslation } from '@/i18n'
 import { Badge } from '@/components/ui/badge'
 
 export function TitleBar(): React.JSX.Element {
-  const connectionState = useGatewayStore((s) => s.connectionState)
-  const processState = useGatewayStore((s) => s.processState)
   const { t, locale, setLocale } = useTranslation()
-
-  const statusColor = {
-    connected: 'bg-green-500',
-    connecting: 'bg-yellow-500',
-    disconnected: 'bg-gray-500',
-    error: 'bg-red-500'
-  }[connectionState]
 
   return (
     <div
@@ -27,17 +17,14 @@ export function TitleBar(): React.JSX.Element {
       >
         <button
           onClick={() => setLocale(locale === 'en' ? 'es' : 'en')}
-          className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] border border-[#2a2b2f] text-[#7a7d85] transition-colors hover:border-[#5b7cf6] hover:text-[#5b7cf6] cursor-pointer"
+          className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] border border-att-divider text-muted-foreground transition-colors hover:border-att-blue hover:text-att-blue cursor-pointer"
         >
           <Globe className="w-2.5 h-2.5" />
           {locale === 'en' ? 'ES' : 'EN'}
         </button>
-        <div
-          className={`h-2 w-2 rounded-full ${statusColor}`}
-          title={`Gateway: ${processState?.state ?? 'unknown'}`}
-        />
+        <div className="h-2 w-2 rounded-full bg-att-green" title="Agent: ready" />
         <Badge variant="outline" className="text-[10px] px-1.5 py-0">
-          {t(`titlebar.${connectionState}`)}
+          {t('titlebar.connected')}
         </Badge>
       </div>
     </div>

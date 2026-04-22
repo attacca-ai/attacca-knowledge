@@ -1,12 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useAgentStore } from '@/stores/agent-store'
-import { useGatewayStore } from '@/stores/gateway-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { normalizeComposioSlugs } from '@/lib/constants'
-import { gatewayClient } from '@/lib/gateway-client'
-import { extractMessageText } from '@/lib/utils'
 import { useTranslation } from '@/i18n'
-import type { OcEvent } from '@/types/gateway'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -218,20 +214,20 @@ const ACTION_PREFIX_TO_LABEL: Record<string, string> = {
 // ── Style tokens ──────────────────────────────────────────────────────────────
 
 const RISK_BADGE: Record<string, string> = {
-  mid: 'bg-[rgba(212,168,67,.1)] text-[#d4a843]',
-  hold: 'bg-[#232428] text-[#4a4d55]'
+  mid: 'bg-att-orange/10 text-att-orange',
+  hold: 'bg-att-surface-raised text-muted-foreground/60'
 }
 
 const ACT_DOT: Record<string, string> = {
-  done: 'bg-[#4caf82]',
-  active: 'bg-[#5b7cf6] animate-pulse',
-  held: 'bg-[#d4a843]'
+  done: 'bg-att-green',
+  active: 'bg-att-blue animate-pulse',
+  held: 'bg-att-orange'
 }
 
-const TAG_TOOL = 'bg-[#232428] text-[#4a4d55]'
-const TAG_DONE = 'bg-[rgba(76,175,130,.1)] text-[#4caf82]'
-const TAG_HOLD = 'bg-[rgba(212,168,67,.1)] text-[#d4a843]'
-const TAG_HIGH = 'bg-[rgba(224,92,92,.1)] text-[#e05c5c]'
+const TAG_TOOL = 'bg-att-surface-raised text-muted-foreground/60'
+const TAG_DONE = 'bg-att-green/10 text-att-green'
+const TAG_HOLD = 'bg-att-orange/10 text-att-orange'
+const TAG_HIGH = 'bg-att-red/10 text-att-red'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -307,7 +303,6 @@ Return ONLY valid JSON:
 
 export function TakeOverMode(): React.JSX.Element {
   const addActivity = useAgentStore((s) => s.addActivity)
-  const connectionState = useGatewayStore((s) => s.connectionState)
   const takeOverSummaryInterval = useSettingsStore((s) => s.takeOverSummaryInterval)
   const { t } = useTranslation()
 
@@ -426,122 +421,116 @@ export function TakeOverMode(): React.JSX.Element {
   useEffect(() => {
     if (phase !== 'active') return
 
-    const handler = (ev: OcEvent): void => {
+    // ── Tool call events → real-time activity feed ──
+    const unsubToolCall = window.api.agent.onToolCall((data) => {
       if (stoppedRef.current) return
-      const payload = (ev.payload ?? {}) as Record<string, unknown>
-
-      // ── Tool call events → real-time activity feed ──
-      if (ev.event === 'agent') {
-        const stream = payload.stream as string
-        const data = (payload.data ?? {}) as Record<string, unknown>
-        const eventPhase = data.phase as string | undefined
-        const toolName = (data.name as string) || ''
-
-        if (stream === 'tool' && eventPhase === 'start') {
-          const label = toolLabelFromActionName(toolName)
-          setActivityItems((prev) => [
-            ...prev,
-            {
-              id: crypto.randomUUID(),
-              status: 'active',
-              title: toolName.replace(/^composio\./, ''),
-              sub: t('takeover.active.using', { tool: label }),
-              tool: label,
-              time: nowTimeStr(),
-              risk: 'mid'
-            }
-          ])
-        } else if (stream === 'tool' && eventPhase === 'end') {
-          const label = toolLabelFromActionName(toolName)
-          setActivityItems((prev) => {
-            const idx = [...prev]
-              .reverse()
-              .findIndex((i) => i.status === 'active' && i.tool === label)
-            if (idx === -1) return prev
-            const actualIdx = prev.length - 1 - idx
-            const updated = [...prev]
-            updated[actualIdx] = { ...updated[actualIdx], status: 'done' }
-            return updated
-          })
+      const toolName = data.toolName || ''
+      const label = toolLabelFromActionName(toolName)
+      setActivityItems((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          status: 'active',
+          title: toolName.replace(/^composio\./, ''),
+          sub: t('takeover.active.using', { tool: label }),
+          tool: label,
+          time: nowTimeStr(),
+          risk: 'mid'
         }
-      }
+      ])
+    })
 
-      // ── Chat final events → structured JSON results ──
-      if (ev.event === 'chat') {
-        const state = payload.state as string
-        if (state !== 'final') return
-        const sessionKey = payload.sessionKey as string | undefined
-        if (!sessionKey) return
+    const unsubToolResult = window.api.agent.onToolResult((data) => {
+      if (stoppedRef.current) return
+      const toolName = data.toolName || ''
+      const label = toolLabelFromActionName(toolName)
+      setActivityItems((prev) => {
+        const idx = [...prev]
+          .reverse()
+          .findIndex((i) => i.status === 'active' && i.tool === label)
+        if (idx === -1) return prev
+        const actualIdx = prev.length - 1 - idx
+        const updated = [...prev]
+        updated[actualIdx] = { ...updated[actualIdx], status: 'done' }
+        return updated
+      })
+    })
 
-        const rawText = extractMessageText(
-          payload.message as Parameters<typeof extractMessageText>[0]
-        )
-        const jsonMatch = rawText.match(/\{[\s\S]*\}/)
-        if (!jsonMatch) return
+    // ── Chat final events → structured JSON results ──
+    const unsubFinal = window.api.agent.onFinal((data) => {
+      if (stoppedRef.current) return
+      const sessionKey = data.sessionKey
+      if (!sessionKey) return
 
-        // Wrap-up response
-        if (sessionKey === wrapUpSessionRef.current) {
-          wrapUpSessionRef.current = null
-          if (wrapUpTimeoutRef.current) {
-            clearTimeout(wrapUpTimeoutRef.current)
-            wrapUpTimeoutRef.current = null
-          }
-          try {
-            const parsed = JSON.parse(jsonMatch[0]) as WrapUpResponse
-            if (parsed.summary) setAgentSummary(parsed.summary)
-          } catch {
-            /* ignore */
-          }
-          transitionToReturn()
-          return
+      const rawText = data.message
+      const jsonMatch = rawText.match(/\{[\s\S]*\}/)
+      if (!jsonMatch) return
+
+      // Wrap-up response
+      if (sessionKey === wrapUpSessionRef.current) {
+        wrapUpSessionRef.current = null
+        if (wrapUpTimeoutRef.current) {
+          clearTimeout(wrapUpTimeoutRef.current)
+          wrapUpTimeoutRef.current = null
         }
-
-        // Regular takeover response (initial or poll)
-        if (!sessionKey.startsWith('agent:main:takeover-')) return
         try {
-          const parsed = JSON.parse(jsonMatch[0]) as TakeOverResponse
-          const now = nowTimeStr()
-
-          if (parsed.done) {
-            for (const item of parsed.done) {
-              setActivityItems((prev) => [
-                ...prev,
-                {
-                  id: crypto.randomUUID(),
-                  status: 'done',
-                  title: item.title,
-                  sub: item.detail,
-                  tool: item.tool,
-                  time: now
-                }
-              ])
-            }
-          }
-          if (parsed.held) {
-            for (const item of parsed.held) {
-              setActivityItems((prev) => [
-                ...prev,
-                {
-                  id: crypto.randomUUID(),
-                  status: 'held',
-                  title: item.title,
-                  sub: item.detail,
-                  tool: item.tool,
-                  time: now,
-                  risk: (item.risk as 'mid' | 'high') ?? 'mid'
-                }
-              ])
-            }
-          }
+          const parsed = JSON.parse(jsonMatch[0]) as WrapUpResponse
           if (parsed.summary) setAgentSummary(parsed.summary)
         } catch {
-          /* ignore parse errors */
+          /* ignore */
         }
+        transitionToReturn()
+        return
       }
-    }
 
-    gatewayClient.on('*', handler)
-    return () => gatewayClient.off('*', handler)
+      // Regular takeover response (initial or poll)
+      if (!sessionKey.startsWith('agent:main:takeover-')) return
+      try {
+        const parsed = JSON.parse(jsonMatch[0]) as TakeOverResponse
+        const now = nowTimeStr()
+
+        if (parsed.done) {
+          for (const item of parsed.done) {
+            setActivityItems((prev) => [
+              ...prev,
+              {
+                id: crypto.randomUUID(),
+                status: 'done',
+                title: item.title,
+                sub: item.detail,
+                tool: item.tool,
+                time: now
+              }
+            ])
+          }
+        }
+        if (parsed.held) {
+          for (const item of parsed.held) {
+            setActivityItems((prev) => [
+              ...prev,
+              {
+                id: crypto.randomUUID(),
+                status: 'held',
+                title: item.title,
+                sub: item.detail,
+                tool: item.tool,
+                time: now,
+                risk: (item.risk as 'mid' | 'high') ?? 'mid'
+              }
+            ])
+          }
+        }
+        if (parsed.summary) setAgentSummary(parsed.summary)
+      } catch {
+        /* ignore parse errors */
+      }
+    })
+
+    return () => {
+      unsubToolCall()
+      unsubToolResult()
+      unsubFinal()
+    }
   }, [phase, transitionToReturn, t])
 
   // ── Auto-stop when duration expires ───────────────────────────────────────
@@ -561,7 +550,7 @@ export function TakeOverMode(): React.JSX.Element {
     addActivity({ type: 'info', description: t('takeover.ended') })
 
     // Send wrap-up prompt for summary
-    if (connectionState === 'connected') {
+    {
       const wrapUpKey = `agent:main:takeover-summary-${crypto.randomUUID()}`
       wrapUpSessionRef.current = wrapUpKey
 
@@ -573,11 +562,7 @@ export function TakeOverMode(): React.JSX.Element {
       }, 30_000)
 
       try {
-        await gatewayClient.rpc('chat.send', {
-          sessionKey: wrapUpKey,
-          message: buildWrapUpPrompt(),
-          idempotencyKey: wrapUpKey
-        })
+        await window.api.agent.send(wrapUpKey, buildWrapUpPrompt(), wrapUpKey)
       } catch {
         if (wrapUpTimeoutRef.current) {
           clearTimeout(wrapUpTimeoutRef.current)
@@ -586,10 +571,8 @@ export function TakeOverMode(): React.JSX.Element {
         wrapUpSessionRef.current = null
         transitionToReturn()
       }
-    } else {
-      transitionToReturn()
     }
-  }, [startedAt, connectionState, addActivity, transitionToReturn, t])
+  }, [startedAt, addActivity, transitionToReturn, t])
 
   useEffect(() => {
     if (phase !== 'active' || !endAt) return
@@ -620,8 +603,6 @@ export function TakeOverMode(): React.JSX.Element {
   const disabledToggles = scopeToggles.filter((tog) => !tog.enabled)
 
   const handleActivate = useCallback(async (): Promise<void> => {
-    if (connectionState !== 'connected') return
-
     const now = Date.now()
     const hours =
       durationIdx === 4
@@ -659,11 +640,7 @@ export function TakeOverMode(): React.JSX.Element {
     )
 
     try {
-      await gatewayClient.rpc('chat.send', {
-        sessionKey,
-        message: prompt,
-        idempotencyKey: sessionKey
-      })
+      await window.api.agent.send(sessionKey, prompt, sessionKey)
     } catch {
       setActivityItems((prev) => [
         ...prev,
@@ -684,16 +661,12 @@ export function TakeOverMode(): React.JSX.Element {
     pollIntervalRef.current = setInterval(() => {
       if (stoppedRef.current) return
       const pollKey = `agent:main:takeover-${crypto.randomUUID()}`
-      gatewayClient
-        .rpc('chat.send', {
-          sessionKey: pollKey,
-          message: buildPollPrompt(),
-          idempotencyKey: pollKey
-        })
+      window.api.agent
+        .send(pollKey, buildPollPrompt(), pollKey)
         .catch(() => {})
     }, pollMs)
   }, [
-    connectionState,
+
     durationIdx,
     customHours,
     enabledToggles,
@@ -780,16 +753,16 @@ export function TakeOverMode(): React.JSX.Element {
     return (
       <div className="flex flex-1 overflow-hidden">
         {/* Main */}
-        <div className="flex flex-1 flex-col overflow-hidden border-r border-[#1f2024]">
+        <div className="flex flex-1 flex-col overflow-hidden border-r border-att-divider">
           {/* Header */}
-          <div className="flex-shrink-0 border-b border-[#1f2024] px-9 pb-6 pt-7">
-            <div className="mb-1.5 font-mono text-[9px] uppercase tracking-[.12em] text-[#4a4d55]">
+          <div className="flex-shrink-0 border-b border-att-divider px-9 pb-6 pt-7">
+            <div className="mb-1.5 font-mono text-[9px] uppercase tracking-[.12em] text-muted-foreground/60">
               {t('takeover.briefing.eyebrow')}
             </div>
-            <div className="mb-1 text-[22px] font-light leading-tight tracking-[-0.01em] text-[#e8e9eb]">
+            <div className="mb-1 text-[22px] font-light leading-tight tracking-[-0.01em] text-foreground">
               {t('takeover.briefing.title')}
             </div>
-            <div className="max-w-[500px] text-[13px] leading-[1.55] text-[#7a7d85]">
+            <div className="max-w-[500px] text-[13px] leading-[1.55] text-muted-foreground">
               {t('takeover.briefing.desc')}{' '}
               <span className="text-[#f0a04b]">{t('takeover.briefing.desc_accent')}</span>{' '}
               {t('takeover.briefing.desc_tail')}
@@ -800,7 +773,7 @@ export function TakeOverMode(): React.JSX.Element {
           <div className="flex-1 overflow-y-auto px-9 py-6 [scrollbar-width:thin]">
             {/* Duration */}
             <div className="mb-7">
-              <div className="mb-2.5 flex items-center gap-2 font-mono text-[9px] uppercase tracking-[.12em] text-[#4a4d55] after:h-px after:flex-1 after:bg-[#1f2024] after:content-['']">
+              <div className="mb-2.5 flex items-center gap-2 font-mono text-[9px] uppercase tracking-[.12em] text-muted-foreground/60 after:h-px after:flex-1 after:bg-att-divider after:content-['']">
                 {t('takeover.briefing.duration_q')}
               </div>
               <div className="flex flex-wrap gap-1.5">
@@ -811,7 +784,7 @@ export function TakeOverMode(): React.JSX.Element {
                     className={`rounded-full border px-3.5 py-1.5 text-[12px] transition-all ${
                       durationIdx === i
                         ? 'border-[#f0a04b] bg-[rgba(240,160,75,.1)] text-[#f0a04b]'
-                        : 'border-[#2a2b2f] text-[#7a7d85] hover:border-[#4a4d55] hover:text-[#e8e9eb]'
+                        : 'border-att-divider text-muted-foreground hover:border-muted-foreground/60 hover:text-foreground'
                     }`}
                   >
                     {chip}
@@ -823,26 +796,26 @@ export function TakeOverMode(): React.JSX.Element {
                   type="text"
                   value={customHours}
                   onChange={(e) => setCustomHours(e.target.value)}
-                  className="w-14 rounded border border-[#2a2b2f] bg-[#151618] px-2.5 py-1.5 text-center text-[12px] text-[#e8e9eb] outline-none transition-colors focus:border-[#5b7cf6]"
+                  className="w-14 rounded border border-att-divider bg-att-surface px-2.5 py-1.5 text-center text-[12px] text-foreground outline-none transition-colors focus:border-att-blue"
                   placeholder="N"
                 />
-                <span className="text-[12px] text-[#7a7d85]">{t('takeover.hours_exact')}</span>
+                <span className="text-[12px] text-muted-foreground">{t('takeover.hours_exact')}</span>
               </div>
             </div>
 
             {/* Scope */}
             <div className="mb-7">
-              <div className="mb-2.5 flex items-center gap-2 font-mono text-[9px] uppercase tracking-[.12em] text-[#4a4d55] after:h-px after:flex-1 after:bg-[#1f2024] after:content-['']">
+              <div className="mb-2.5 flex items-center gap-2 font-mono text-[9px] uppercase tracking-[.12em] text-muted-foreground/60 after:h-px after:flex-1 after:bg-att-divider after:content-['']">
                 {t('takeover.briefing.scope_q')}
               </div>
 
               {connectedTools.length === 0 ? (
-                <div className="rounded-lg border border-dashed border-[#2a2b2f] px-4 py-6 text-center text-[12px] text-[#4a4d55]">
+                <div className="rounded-lg border border-dashed border-att-divider px-4 py-6 text-center text-[12px] text-muted-foreground/60">
                   {t('takeover.briefing.no_tools')}{' '}
-                  <span className="text-[#7a7d85]">{t('takeover.briefing.no_tools_hint')}</span>
+                  <span className="text-muted-foreground">{t('takeover.briefing.no_tools_hint')}</span>
                 </div>
               ) : (
-                <div className="overflow-hidden rounded-[10px] border border-[#1f2024] bg-[#151618]">
+                <div className="overflow-hidden rounded-[10px] border border-att-divider bg-att-surface">
                   {connectedTools.flatMap((toolId) => {
                     const scope = toolkitScope[toolId]
                     if (!scope) return []
@@ -854,29 +827,29 @@ export function TakeOverMode(): React.JSX.Element {
                       return (
                         <div
                           key={`${toolId}:${action.label}`}
-                          className="flex cursor-pointer items-center gap-3.5 border-b border-[#1f2024] px-4 py-3 transition-colors last:border-b-0 hover:bg-[#1c1d20]"
+                          className="flex cursor-pointer items-center gap-3.5 border-b border-att-divider px-4 py-3 transition-colors last:border-b-0 hover:bg-att-surface-hover"
                           onClick={() => toggleScope(toolId, action.label)}
                         >
                           {/* Icon */}
                           <div
                             className={`flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md text-[12px] ${
                               toolId === 'google-calendar'
-                                ? 'bg-[rgba(91,124,246,.12)] text-[#5b7cf6]'
+                                ? 'bg-att-blue/12 text-att-blue'
                                 : toolId === 'gmail'
-                                  ? 'bg-[rgba(155,114,245,.12)] text-[#9b72f5]'
+                                  ? 'bg-att-purple/12 text-att-purple'
                                   : toolId === 'slack'
                                     ? 'bg-[rgba(74,21,75,.3)] text-[#b39ddb]'
-                                    : 'bg-[rgba(76,175,130,.1)] text-[#4caf82]'
+                                    : 'bg-att-green/10 text-att-green'
                             }`}
                           >
                             {scope.icon}
                           </div>
                           {/* Info */}
                           <div className="flex-1">
-                            <div className="mb-0.5 text-[12.5px] text-[#e8e9eb]">
+                            <div className="mb-0.5 text-[12.5px] text-foreground">
                               {action.label}
                             </div>
-                            <div className="text-[11px] leading-[1.3] text-[#4a4d55]">
+                            <div className="text-[11px] leading-[1.3] text-muted-foreground/60">
                               {action.desc}
                             </div>
                           </div>
@@ -889,7 +862,7 @@ export function TakeOverMode(): React.JSX.Element {
                           {/* Toggle */}
                           <div
                             className={`relative h-[18px] w-8 flex-shrink-0 rounded-full transition-colors ${
-                              enabled ? 'bg-[#4caf82]' : 'bg-[#232428]'
+                              enabled ? 'bg-att-green' : 'bg-att-surface-raised'
                             }`}
                           >
                             <div
@@ -908,26 +881,26 @@ export function TakeOverMode(): React.JSX.Element {
 
             {/* Exceptions */}
             <div className="mb-7">
-              <div className="mb-2.5 flex items-center gap-2 font-mono text-[9px] uppercase tracking-[.12em] text-[#4a4d55] after:h-px after:flex-1 after:bg-[#1f2024] after:content-['']">
+              <div className="mb-2.5 flex items-center gap-2 font-mono text-[9px] uppercase tracking-[.12em] text-muted-foreground/60 after:h-px after:flex-1 after:bg-att-divider after:content-['']">
                 {t('takeover.briefing.exceptions_q')}
               </div>
               <textarea
                 value={exceptions}
                 onChange={(e) => setExceptions(e.target.value)}
                 placeholder={t('takeover.briefing.exceptions_placeholder')}
-                className="h-[72px] w-full resize-none rounded border border-[#2a2b2f] bg-[#151618] px-3.5 py-2.5 text-[12.5px] leading-[1.5] text-[#e8e9eb] outline-none transition-colors placeholder:text-[#4a4d55] focus:border-[#5b7cf6]"
+                className="h-[72px] w-full resize-none rounded border border-att-divider bg-att-surface px-3.5 py-2.5 text-[12.5px] leading-[1.5] text-foreground outline-none transition-colors placeholder:text-muted-foreground/60 focus:border-att-blue"
               />
-              <div className="mt-1.5 text-[11px] italic text-[#4a4d55]">
+              <div className="mt-1.5 text-[11px] italic text-muted-foreground/60">
                 {t('takeover.briefing.exceptions_hint')}
               </div>
             </div>
           </div>
 
           {/* Footer */}
-          <div className="flex flex-shrink-0 items-center gap-3 border-t border-[#1f2024] px-9 py-4">
+          <div className="flex flex-shrink-0 items-center gap-3 border-t border-att-divider px-9 py-4">
             <button
               onClick={() => void handleActivate()}
-              disabled={connectedTools.length === 0 || connectionState !== 'connected'}
+              disabled={connectedTools.length === 0}
               className="flex items-center gap-1.5 rounded bg-[#f0a04b] px-7 py-2.5 text-[13px] font-semibold tracking-[.01em] text-[#1a1200] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
             >
               <svg
@@ -942,9 +915,9 @@ export function TakeOverMode(): React.JSX.Element {
               </svg>
               {t('takeover.briefing.activate')}
             </button>
-            <div className="text-[11.5px] leading-[1.4] text-[#4a4d55]">
+            <div className="text-[11.5px] leading-[1.4] text-muted-foreground/60">
               {t('takeover.briefing.activate_desc')}{' '}
-              <span className="font-medium text-[#7a7d85]">
+              <span className="font-medium text-muted-foreground">
                 {t('takeover.briefing.activate_now')}
               </span>
               .
@@ -956,11 +929,11 @@ export function TakeOverMode(): React.JSX.Element {
 
         {/* Aside */}
         <div className="flex w-[300px] flex-shrink-0 flex-col overflow-hidden">
-          <div className="flex-shrink-0 border-b border-[#1f2024] px-5 pb-3.5 pt-5">
-            <div className="mb-2 font-mono text-[9px] uppercase tracking-[.1em] text-[#4a4d55]">
+          <div className="flex-shrink-0 border-b border-att-divider px-5 pb-3.5 pt-5">
+            <div className="mb-2 font-mono text-[9px] uppercase tracking-[.1em] text-muted-foreground/60">
               {t('takeover.briefing.aside_title')}
             </div>
-            <div className="text-[13px] font-light leading-[1.6] text-[#e8e9eb]">
+            <div className="text-[13px] font-light leading-[1.6] text-foreground">
               <span className="text-[#f0a04b]">
                 {t('takeover.briefing.aside_desc_actions', { count: scopeToggles.length })}
               </span>{' '}
@@ -975,22 +948,22 @@ export function TakeOverMode(): React.JSX.Element {
           <div className="flex-1 overflow-y-auto px-5 py-3.5 [scrollbar-width:thin]">
             {asideHandled.length > 0 && (
               <div className="mb-4.5">
-                <div className="mb-2 flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-[.1em] text-[#4a4d55] after:h-px after:flex-1 after:bg-[#1f2024] after:content-['']">
+                <div className="mb-2 flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-[.1em] text-muted-foreground/60 after:h-px after:flex-1 after:bg-att-divider after:content-['']">
                   {t('takeover.briefing.aside_handles')}
                 </div>
                 {asideHandled.map((item, i) => (
                   <div
                     key={i}
-                    className="flex items-start gap-2 border-b border-[#1f2024] py-2 last:border-b-0"
+                    className="flex items-start gap-2 border-b border-att-divider py-2 last:border-b-0"
                   >
-                    <div className="mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-[10px] bg-[rgba(76,175,130,.1)] text-[#4caf82]">
+                    <div className="mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-[10px] bg-att-green/10 text-att-green">
                       {item.icon}
                     </div>
                     <div className="flex-1">
-                      <div className="text-[12px] leading-[1.3] text-[#7a7d85]">{item.label}</div>
-                      <div className="font-mono text-[9px] text-[#4a4d55]">{item.meta}</div>
+                      <div className="text-[12px] leading-[1.3] text-muted-foreground">{item.label}</div>
+                      <div className="font-mono text-[9px] text-muted-foreground/60">{item.meta}</div>
                     </div>
-                    <span className="mt-0.5 flex-shrink-0 rounded-[2px] bg-[rgba(76,175,130,.1)] px-1.5 py-px font-mono text-[8px] text-[#4caf82]">
+                    <span className="mt-0.5 flex-shrink-0 rounded-[2px] bg-att-green/10 px-1.5 py-px font-mono text-[8px] text-att-green">
                       {t('takeover.briefing.aside_process')}
                     </span>
                   </div>
@@ -1000,22 +973,22 @@ export function TakeOverMode(): React.JSX.Element {
 
             {asideHeld.length > 0 && (
               <div>
-                <div className="mb-2 flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-[.1em] text-[#4a4d55] after:h-px after:flex-1 after:bg-[#1f2024] after:content-['']">
+                <div className="mb-2 flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-[.1em] text-muted-foreground/60 after:h-px after:flex-1 after:bg-att-divider after:content-['']">
                   {t('takeover.briefing.aside_holds')}
                 </div>
                 {asideHeld.map((item, i) => (
                   <div
                     key={i}
-                    className="flex items-start gap-2 border-b border-[#1f2024] py-2 last:border-b-0"
+                    className="flex items-start gap-2 border-b border-att-divider py-2 last:border-b-0"
                   >
-                    <div className="mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-[10px] bg-[rgba(212,168,67,.1)] text-[#d4a843]">
+                    <div className="mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-[10px] bg-att-orange/10 text-att-orange">
                       ⚑
                     </div>
                     <div className="flex-1">
-                      <div className="text-[12px] leading-[1.3] text-[#7a7d85]">{item.label}</div>
-                      <div className="font-mono text-[9px] text-[#4a4d55]">{item.meta}</div>
+                      <div className="text-[12px] leading-[1.3] text-muted-foreground">{item.label}</div>
+                      <div className="font-mono text-[9px] text-muted-foreground/60">{item.meta}</div>
                     </div>
-                    <span className="mt-0.5 flex-shrink-0 rounded-[2px] bg-[rgba(212,168,67,.1)] px-1.5 py-px font-mono text-[8px] text-[#d4a843]">
+                    <span className="mt-0.5 flex-shrink-0 rounded-[2px] bg-att-orange/10 px-1.5 py-px font-mono text-[8px] text-att-orange">
                       {t('takeover.briefing.aside_hold')}
                     </span>
                   </div>
@@ -1024,7 +997,7 @@ export function TakeOverMode(): React.JSX.Element {
             )}
 
             {scopeToggles.length === 0 && (
-              <div className="py-4 text-center text-[12px] text-[#4a4d55]">
+              <div className="py-4 text-center text-[12px] text-muted-foreground/60">
                 {t('takeover.briefing.aside_empty')}
               </div>
             )}
@@ -1040,20 +1013,20 @@ export function TakeOverMode(): React.JSX.Element {
     return (
       <div className="flex flex-1 overflow-hidden">
         {/* Main */}
-        <div className="flex flex-1 flex-col overflow-hidden border-r border-[#1f2024]">
+        <div className="flex flex-1 flex-col overflow-hidden border-r border-att-divider">
           {/* Hero */}
           <div className="flex-shrink-0 border-b border-[rgba(240,160,75,.2)] bg-gradient-to-b from-[rgba(240,160,75,.06)] to-transparent px-9 pb-5 pt-6">
             <div className="mb-2.5 inline-flex items-center gap-1.5 rounded-full border border-[rgba(240,160,75,.3)] bg-[rgba(240,160,75,.1)] px-3 py-1 font-mono text-[9px] tracking-[.08em] text-[#f0a04b]">
               <div className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#f0a04b]" />
               {t('takeover.active.badge')}
             </div>
-            <div className="mb-1 text-[22px] font-light leading-tight tracking-[-0.01em] text-[#e8e9eb]">
+            <div className="mb-1 text-[22px] font-light leading-tight tracking-[-0.01em] text-foreground">
               {t('takeover.active.title')}
             </div>
-            <div className="mb-3.5 flex items-center gap-4 text-[12px] text-[#7a7d85]">
+            <div className="mb-3.5 flex items-center gap-4 text-[12px] text-muted-foreground">
               <span>
                 {t('takeover.active.started_at')}{' '}
-                <strong className="font-medium text-[#e8e9eb]">{startedAtStr}</strong>
+                <strong className="font-medium text-foreground">{startedAtStr}</strong>
               </span>
               <span>·</span>
               <span className="font-mono text-[#f0a04b]">{elapsed}</span>
@@ -1062,19 +1035,19 @@ export function TakeOverMode(): React.JSX.Element {
                   <span>·</span>
                   <span>
                     {t('takeover.active.ends_at')}{' '}
-                    <strong className="font-medium text-[#e8e9eb]">{endAtStr}</strong>
+                    <strong className="font-medium text-foreground">{endAtStr}</strong>
                   </span>
                 </>
               )}
             </div>
             <div className="flex max-w-[480px] items-center gap-2.5">
-              <div className="h-[3px] flex-1 overflow-hidden rounded-full bg-[#232428]">
+              <div className="h-[3px] flex-1 overflow-hidden rounded-full bg-att-surface-raised">
                 <div
                   className="h-full rounded-full bg-[#f0a04b] transition-all duration-500"
                   style={{ width: `${progress}%` }}
                 />
               </div>
-              <div className="flex-shrink-0 font-mono text-[9px] text-[#4a4d55]">
+              <div className="flex-shrink-0 font-mono text-[9px] text-muted-foreground/60">
                 {t('takeover.active.progress', { pct: progress })}
               </div>
             </div>
@@ -1085,9 +1058,9 @@ export function TakeOverMode(): React.JSX.Element {
             {/* Active */}
             {activeItems.length > 0 && (
               <div className="mb-6">
-                <div className="mb-2.5 flex items-center gap-2 font-mono text-[9px] uppercase tracking-[.12em] text-[#4a4d55] after:h-px after:flex-1 after:bg-[#1f2024] after:content-['']">
+                <div className="mb-2.5 flex items-center gap-2 font-mono text-[9px] uppercase tracking-[.12em] text-muted-foreground/60 after:h-px after:flex-1 after:bg-att-divider after:content-['']">
                   {t('takeover.active.handling_now')}
-                  <span className="rounded-[3px] bg-[#232428] px-1.5 py-px text-[9px] text-[#4a4d55]">
+                  <span className="rounded-[3px] bg-att-surface-raised px-1.5 py-px text-[9px] text-muted-foreground/60">
                     {t('takeover.active.active_count', { count: activeItems.length })}
                   </span>
                 </div>
@@ -1100,9 +1073,9 @@ export function TakeOverMode(): React.JSX.Element {
             {/* Done */}
             {doneItems.length > 0 && (
               <div className="mb-6">
-                <div className="mb-2.5 flex items-center gap-2 font-mono text-[9px] uppercase tracking-[.12em] text-[#4a4d55] after:h-px after:flex-1 after:bg-[#1f2024] after:content-['']">
+                <div className="mb-2.5 flex items-center gap-2 font-mono text-[9px] uppercase tracking-[.12em] text-muted-foreground/60 after:h-px after:flex-1 after:bg-att-divider after:content-['']">
                   {t('takeover.active.completed')}
-                  <span className="rounded-[3px] bg-[#232428] px-1.5 py-px text-[9px] text-[#4a4d55]">
+                  <span className="rounded-[3px] bg-att-surface-raised px-1.5 py-px text-[9px] text-muted-foreground/60">
                     {t('takeover.active.items_count', { count: doneItems.length })}
                   </span>
                 </div>
@@ -1115,9 +1088,9 @@ export function TakeOverMode(): React.JSX.Element {
             {/* Held */}
             {heldItems.length > 0 && (
               <div className="mb-6">
-                <div className="mb-2.5 flex items-center gap-2 font-mono text-[9px] uppercase tracking-[.12em] text-[#4a4d55] after:h-px after:flex-1 after:bg-[#1f2024] after:content-['']">
+                <div className="mb-2.5 flex items-center gap-2 font-mono text-[9px] uppercase tracking-[.12em] text-muted-foreground/60 after:h-px after:flex-1 after:bg-att-divider after:content-['']">
                   {t('takeover.active.saving_for_you')}
-                  <span className="rounded-[3px] bg-[#232428] px-1.5 py-px text-[9px] text-[#4a4d55]">
+                  <span className="rounded-[3px] bg-att-surface-raised px-1.5 py-px text-[9px] text-muted-foreground/60">
                     {t('takeover.active.items_count', { count: heldItems.length })}
                   </span>
                 </div>
@@ -1128,7 +1101,7 @@ export function TakeOverMode(): React.JSX.Element {
             )}
 
             {activityItems.length === 0 && (
-              <div className="py-8 text-center text-[12px] text-[#4a4d55]">
+              <div className="py-8 text-center text-[12px] text-muted-foreground/60">
                 {t('takeover.active.initializing')}
               </div>
             )}
@@ -1138,8 +1111,8 @@ export function TakeOverMode(): React.JSX.Element {
         {/* Aside */}
         <div className="flex w-[280px] flex-shrink-0 flex-col overflow-hidden">
           {/* Stats */}
-          <div className="flex flex-shrink-0 flex-col gap-3 border-b border-[#1f2024] p-5">
-            <div className="mb-1.5 font-mono text-[9px] uppercase tracking-[.1em] text-[#4a4d55]">
+          <div className="flex flex-shrink-0 flex-col gap-3 border-b border-att-divider p-5">
+            <div className="mb-1.5 font-mono text-[9px] uppercase tracking-[.1em] text-muted-foreground/60">
               {t('takeover.active.summary_title')}
             </div>
             <StatRow
@@ -1161,31 +1134,31 @@ export function TakeOverMode(): React.JSX.Element {
 
           {/* Held list */}
           <div className="flex-1 overflow-y-auto px-5 py-4 [scrollbar-width:thin]">
-            <div className="mb-2.5 font-mono text-[9px] uppercase tracking-[.1em] text-[#4a4d55]">
+            <div className="mb-2.5 font-mono text-[9px] uppercase tracking-[.1em] text-muted-foreground/60">
               {t('takeover.active.held_queue')}
             </div>
             {heldItems.length === 0 ? (
-              <div className="text-[11.5px] text-[#4a4d55]">{t('takeover.active.held_empty')}</div>
+              <div className="text-[11.5px] text-muted-foreground/60">{t('takeover.active.held_empty')}</div>
             ) : (
               heldItems.map((item) => (
                 <div
                   key={item.id}
-                  className="mb-1.5 rounded-md border border-l-2 border-[#1f2024] border-l-[#d4a843] bg-[#151618] px-3 py-2.5"
+                  className="mb-1.5 rounded-md border border-l-2 border-att-divider border-l-att-orange bg-att-surface px-3 py-2.5"
                 >
-                  <div className="mb-0.5 text-[12px] leading-[1.3] text-[#e8e9eb]">
+                  <div className="mb-0.5 text-[12px] leading-[1.3] text-foreground">
                     {item.title}
                   </div>
-                  <div className="text-[11px] italic leading-[1.4] text-[#4a4d55]">{item.sub}</div>
+                  <div className="text-[11px] italic leading-[1.4] text-muted-foreground/60">{item.sub}</div>
                 </div>
               ))
             )}
           </div>
 
           {/* Stop */}
-          <div className="flex-shrink-0 border-t border-[#1f2024] p-3.5">
+          <div className="flex-shrink-0 border-t border-att-divider p-3.5">
             <button
               onClick={() => void handleReturn()}
-              className="flex w-full items-center justify-center gap-1.5 rounded border border-[rgba(224,92,92,.35)] bg-transparent py-2.5 text-[12px] text-[#e05c5c] transition-all hover:border-[#e05c5c] hover:bg-[rgba(224,92,92,.1)]"
+              className="flex w-full items-center justify-center gap-1.5 rounded border border-att-red/35 bg-transparent py-2.5 text-[12px] text-att-red transition-all hover:border-att-red hover:bg-att-red/10"
             >
               <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor">
                 <rect x="3" y="3" width="10" height="10" rx="1" />
@@ -1204,10 +1177,10 @@ export function TakeOverMode(): React.JSX.Element {
     return (
       <div className="flex flex-1 overflow-hidden">
         {/* Main */}
-        <div className="flex flex-1 flex-col overflow-hidden border-r border-[#1f2024]">
+        <div className="flex flex-1 flex-col overflow-hidden border-r border-att-divider">
           {/* Header */}
-          <div className="flex-shrink-0 border-b border-[#1f2024] px-9 pb-5 pt-6">
-            <div className="mb-2.5 inline-flex items-center gap-1.5 rounded-full border border-[rgba(76,175,130,.3)] bg-[rgba(76,175,130,.1)] px-3 py-1 font-mono text-[9px] text-[#4caf82]">
+          <div className="flex-shrink-0 border-b border-att-divider px-9 pb-5 pt-6">
+            <div className="mb-2.5 inline-flex items-center gap-1.5 rounded-full border border-att-green/30 bg-att-green/10 px-3 py-1 font-mono text-[9px] text-att-green">
               <svg
                 width="8"
                 height="8"
@@ -1220,29 +1193,29 @@ export function TakeOverMode(): React.JSX.Element {
               </svg>
               {t('takeover.return.welcome_back')}
             </div>
-            <div className="mb-1 text-[22px] font-light leading-tight tracking-[-0.01em] text-[#e8e9eb]">
+            <div className="mb-1 text-[22px] font-light leading-tight tracking-[-0.01em] text-foreground">
               {t('takeover.return.while_away')}
             </div>
-            <div className="mb-3.5 text-[12px] text-[#7a7d85]">
+            <div className="mb-3.5 text-[12px] text-muted-foreground">
               {t('takeover.return.active_summary', { duration: durationStr, start: startedAtStr })}
             </div>
             <div className="flex gap-4.5">
               <ReturnStat
                 value={String(doneCards.length)}
                 label={t('takeover.return.stat_handled')}
-                color="text-[#e8e9eb]"
+                color="text-foreground"
               />
-              <div className="w-px bg-[#1f2024]" />
+              <div className="w-px bg-att-divider" />
               <ReturnStat
                 value={String(heldCards.filter((c) => !c.acknowledged).length)}
                 label={t('takeover.return.stat_attention')}
-                color="text-[#d4a843]"
+                color="text-att-orange"
               />
-              <div className="w-px bg-[#1f2024]" />
+              <div className="w-px bg-att-divider" />
               <ReturnStat
                 value={String(heldCards.filter((c) => c.risk === 'high').length)}
                 label={t('takeover.return.stat_high_risk')}
-                color="text-[#4caf82]"
+                color="text-att-green"
               />
             </div>
           </div>
@@ -1253,13 +1226,13 @@ export function TakeOverMode(): React.JSX.Element {
             {heldCards.length > 0 && (
               <div className="mb-7">
                 <div className="mb-3 flex items-center gap-2">
-                  <div className="flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded-[5px] bg-[rgba(212,168,67,.1)] text-[11px] text-[#d4a843]">
+                  <div className="flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded-[5px] bg-att-orange/10 text-[11px] text-att-orange">
                     ⚑
                   </div>
-                  <div className="text-[12.5px] font-medium text-[#e8e9eb]">
+                  <div className="text-[12.5px] font-medium text-foreground">
                     {t('takeover.return.needs_attention')}
                   </div>
-                  <span className="rounded-[3px] bg-[#232428] px-1.5 py-px font-mono text-[9px] text-[#4a4d55]">
+                  <span className="rounded-[3px] bg-att-surface-raised px-1.5 py-px font-mono text-[9px] text-muted-foreground/60">
                     {heldCards.filter((c) => !c.acknowledged).length}
                   </span>
                 </div>
@@ -1267,7 +1240,7 @@ export function TakeOverMode(): React.JSX.Element {
                   {heldCards.map((card) => (
                     <div
                       key={card.id}
-                      className={`flex items-start gap-2.5 rounded-lg border border-l-2 border-[#1f2024] border-l-[#d4a843] bg-[#151618] px-3.5 py-3 transition-opacity ${
+                      className={`flex items-start gap-2.5 rounded-lg border border-l-2 border-att-divider border-l-att-orange bg-att-surface px-3.5 py-3 transition-opacity ${
                         card.acknowledged ? 'opacity-55' : ''
                       }`}
                     >
@@ -1276,8 +1249,8 @@ export function TakeOverMode(): React.JSX.Element {
                         onClick={() => acknowledgeHeld(card.id)}
                         className={`mt-0.5 flex h-[18px] w-[18px] flex-shrink-0 items-center justify-center rounded border transition-all ${
                           card.acknowledged
-                            ? 'border-[#4caf82] bg-[#4caf82]'
-                            : 'border-[#2a2b2f] bg-transparent'
+                            ? 'border-att-green bg-att-green'
+                            : 'border-att-divider bg-transparent'
                         }`}
                       >
                         {card.acknowledged && (
@@ -1286,14 +1259,14 @@ export function TakeOverMode(): React.JSX.Element {
                       </button>
                       {/* Body */}
                       <div className="flex-1">
-                        <div className="mb-0.5 text-[12.5px] font-medium leading-[1.3] text-[#e8e9eb]">
+                        <div className="mb-0.5 text-[12.5px] font-medium leading-[1.3] text-foreground">
                           {card.title}
                         </div>
-                        <div className="mb-1.5 text-[11.5px] leading-[1.4] text-[#7a7d85]">
+                        <div className="mb-1.5 text-[11.5px] leading-[1.4] text-muted-foreground">
                           {card.desc || t('takeover.return.requires_judgment')}
                         </div>
                         {card.detail && (
-                          <div className="mb-1.5 rounded bg-[#1c1d20] px-2 py-1 font-mono text-[10px] leading-[1.5] text-[#4a4d55]">
+                          <div className="mb-1.5 rounded bg-att-surface-hover px-2 py-1 font-mono text-[10px] leading-[1.5] text-muted-foreground/60">
                             {card.detail}
                           </div>
                         )}
@@ -1314,10 +1287,10 @@ export function TakeOverMode(): React.JSX.Element {
                       </div>
                       {/* Actions */}
                       <div className="flex flex-shrink-0 flex-col gap-1.5">
-                        <button className="rounded border border-[#5b7cf6] bg-[#5b7cf6] px-2.5 py-1.5 text-[11px] font-medium text-white transition-opacity hover:opacity-90">
+                        <button className="rounded border border-att-blue bg-att-blue px-2.5 py-1.5 text-[11px] font-medium text-white transition-opacity hover:opacity-90">
                           {card.primaryAction}
                         </button>
-                        <button className="rounded border border-[#2a2b2f] bg-transparent px-2.5 py-1.5 text-[11px] text-[#7a7d85] transition-all hover:border-[#4a4d55] hover:text-[#e8e9eb]">
+                        <button className="rounded border border-att-divider bg-transparent px-2.5 py-1.5 text-[11px] text-muted-foreground transition-all hover:border-muted-foreground/60 hover:text-foreground">
                           {t('takeover.return.ignore')}
                         </button>
                       </div>
@@ -1331,18 +1304,18 @@ export function TakeOverMode(): React.JSX.Element {
             {doneCards.length > 0 && (
               <div className="mb-7">
                 <div className="mb-3 flex items-center gap-2">
-                  <div className="flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded-[5px] bg-[rgba(76,175,130,.1)] text-[11px] text-[#4caf82]">
+                  <div className="flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded-[5px] bg-att-green/10 text-[11px] text-att-green">
                     ✓
                   </div>
-                  <div className="text-[12.5px] font-medium text-[#e8e9eb]">
+                  <div className="text-[12.5px] font-medium text-foreground">
                     {t('takeover.return.agent_handled')}
                   </div>
-                  <span className="rounded-[3px] bg-[#232428] px-1.5 py-px font-mono text-[9px] text-[#4a4d55]">
+                  <span className="rounded-[3px] bg-att-surface-raised px-1.5 py-px font-mono text-[9px] text-muted-foreground/60">
                     {doneCards.length}
                   </span>
                   <button
                     onClick={markAllSeen}
-                    className="ml-auto rounded border border-transparent bg-transparent px-2 py-0.5 font-mono text-[9px] text-[#4a4d55] transition-all hover:border-[#4caf82] hover:text-[#4caf82]"
+                    className="ml-auto rounded border border-transparent bg-transparent px-2 py-0.5 font-mono text-[9px] text-muted-foreground/60 transition-all hover:border-att-green hover:text-att-green"
                   >
                     {t('takeover.return.mark_all_seen')}
                   </button>
@@ -1351,18 +1324,18 @@ export function TakeOverMode(): React.JSX.Element {
                   {doneCards.map((card) => (
                     <div
                       key={card.id}
-                      className={`flex items-start gap-2.5 rounded-lg border border-[#1f2024] bg-[#151618] px-3.5 py-3 transition-opacity ${
+                      className={`flex items-start gap-2.5 rounded-lg border border-att-divider bg-att-surface px-3.5 py-3 transition-opacity ${
                         card.seen ? 'opacity-55' : ''
                       }`}
                     >
-                      <div className="mt-0.5 flex h-[18px] w-[18px] flex-shrink-0 items-center justify-center rounded border border-[#4caf82] bg-[#4caf82]">
+                      <div className="mt-0.5 flex h-[18px] w-[18px] flex-shrink-0 items-center justify-center rounded border border-att-green bg-att-green">
                         <span className="text-[9px] font-bold text-white">✓</span>
                       </div>
                       <div className="flex-1">
-                        <div className="mb-0.5 text-[12.5px] font-medium leading-[1.3] text-[#e8e9eb]">
+                        <div className="mb-0.5 text-[12.5px] font-medium leading-[1.3] text-foreground">
                           {card.title}
                         </div>
-                        <div className="mb-1.5 text-[11.5px] leading-[1.4] text-[#7a7d85]">
+                        <div className="mb-1.5 text-[11.5px] leading-[1.4] text-muted-foreground">
                           {card.desc}
                         </div>
                         <div className="flex gap-1.5">
@@ -1385,7 +1358,7 @@ export function TakeOverMode(): React.JSX.Element {
             )}
 
             {doneCards.length === 0 && heldCards.length === 0 && (
-              <div className="py-8 text-center text-[12px] text-[#4a4d55]">
+              <div className="py-8 text-center text-[12px] text-muted-foreground/60">
                 {t('takeover.return.no_activity')}
               </div>
             )}
@@ -1394,7 +1367,7 @@ export function TakeOverMode(): React.JSX.Element {
             <div className="pt-2">
               <button
                 onClick={handleReset}
-                className="rounded border border-[#2a2b2f] bg-transparent px-4 py-2 text-[12px] text-[#7a7d85] transition-all hover:border-[#4a4d55] hover:text-[#e8e9eb]"
+                className="rounded border border-att-divider bg-transparent px-4 py-2 text-[12px] text-muted-foreground transition-all hover:border-muted-foreground/60 hover:text-foreground"
               >
                 {t('takeover.return.new_takeover')}
               </button>
@@ -1405,10 +1378,10 @@ export function TakeOverMode(): React.JSX.Element {
         {/* Aside */}
         <div className="flex w-[280px] flex-shrink-0 flex-col gap-4.5 overflow-y-auto p-5 [scrollbar-width:thin]">
           <div>
-            <div className="mb-2 font-mono text-[9px] uppercase tracking-[.1em] text-[#4a4d55]">
+            <div className="mb-2 font-mono text-[9px] uppercase tracking-[.1em] text-muted-foreground/60">
               {t('takeover.return.agent_read')}
             </div>
-            <div className="mb-2.5 text-[13px] font-light leading-[1.6] text-[#e8e9eb]">
+            <div className="mb-2.5 text-[13px] font-light leading-[1.6] text-foreground">
               {agentSummary ||
                 (doneCards.length > 0
                   ? t('takeover.return.agent_fallback_done', { count: doneCards.length })
@@ -1420,33 +1393,33 @@ export function TakeOverMode(): React.JSX.Element {
               )}
             </div>
             {heldCards.length > 0 && (
-              <div className="border-l-2 border-[#2a2b2f] pl-2.5 text-[12px] italic leading-[1.5] text-[#7a7d85]">
+              <div className="border-l-2 border-att-divider pl-2.5 text-[12px] italic leading-[1.5] text-muted-foreground">
                 {t('takeover.return.review_held')}
               </div>
             )}
           </div>
 
-          <div className="h-px bg-[#1f2024]" />
+          <div className="h-px bg-att-divider" />
 
           {timeline.length > 0 && (
             <div>
-              <div className="mb-2 font-mono text-[9px] uppercase tracking-[.1em] text-[#4a4d55]">
+              <div className="mb-2 font-mono text-[9px] uppercase tracking-[.1em] text-muted-foreground/60">
                 {t('takeover.return.timeline')}
               </div>
               <div>
                 {timeline.map((item, i) => (
                   <div
                     key={i}
-                    className="flex items-start gap-2.5 border-b border-[#1f2024] py-2 last:border-b-0"
+                    className="flex items-start gap-2.5 border-b border-att-divider py-2 last:border-b-0"
                   >
                     <div
                       className={`mt-1.5 h-1.5 w-1.5 flex-shrink-0 rounded-full ${
-                        item.status === 'done' ? 'bg-[#4caf82]' : 'bg-[#d4a843]'
+                        item.status === 'done' ? 'bg-att-green' : 'bg-att-orange'
                       }`}
                     />
                     <div className="flex-1">
-                      <div className="text-[11.5px] leading-[1.3] text-[#7a7d85]">{item.text}</div>
-                      <div className="font-mono text-[9px] text-[#4a4d55]">{item.time}</div>
+                      <div className="text-[11.5px] leading-[1.3] text-muted-foreground">{item.text}</div>
+                      <div className="font-mono text-[9px] text-muted-foreground/60">{item.time}</div>
                     </div>
                   </div>
                 ))}
@@ -1461,7 +1434,7 @@ export function TakeOverMode(): React.JSX.Element {
   // ── Root render ───────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden bg-[#0e0f11] font-sans text-[13px] text-[#e8e9eb]">
+    <div className="flex flex-1 flex-col overflow-hidden bg-background font-sans text-[13px] text-foreground">
       {phase === 'briefing' && renderBriefing()}
       {phase === 'active' && renderActive()}
       {phase === 'return' && renderReturn()}
@@ -1479,11 +1452,11 @@ function ActivityRow({
   t: (key: string, params?: Record<string, string | number>) => string
 }): React.JSX.Element {
   return (
-    <div className="flex items-start gap-2.5 border-b border-[#1f2024] py-2.5 last:border-b-0">
+    <div className="flex items-start gap-2.5 border-b border-att-divider py-2.5 last:border-b-0">
       <div className={`mt-1.5 h-1.5 w-1.5 flex-shrink-0 rounded-full ${ACT_DOT[item.status]}`} />
       <div className="flex-1">
-        <div className="mb-0.5 text-[12.5px] leading-[1.3] text-[#e8e9eb]">{item.title}</div>
-        <div className="mb-1.5 text-[11.5px] leading-[1.4] text-[#7a7d85]">{item.sub}</div>
+        <div className="mb-0.5 text-[12.5px] leading-[1.3] text-foreground">{item.title}</div>
+        <div className="mb-1.5 text-[11.5px] leading-[1.4] text-muted-foreground">{item.sub}</div>
         <div className="flex flex-wrap gap-1.5">
           {item.status === 'done' && (
             <span className={`rounded-[2px] px-1.5 py-px font-mono text-[8px] ${TAG_DONE}`}>
@@ -1505,7 +1478,7 @@ function ActivityRow({
           </span>
         </div>
       </div>
-      <div className="flex-shrink-0 font-mono text-[9px] text-[#4a4d55]">{item.time}</div>
+      <div className="flex-shrink-0 font-mono text-[9px] text-muted-foreground/60">{item.time}</div>
     </div>
   )
 }
@@ -1520,9 +1493,9 @@ function StatRow({
   color: 'good' | 'warn' | 'neutral'
 }): React.JSX.Element {
   const valClass =
-    color === 'good' ? 'text-[#4caf82]' : color === 'warn' ? 'text-[#d4a843]' : 'text-[#e8e9eb]'
+    color === 'good' ? 'text-att-green' : color === 'warn' ? 'text-att-orange' : 'text-foreground'
   return (
-    <div className="flex items-center justify-between text-[12px] text-[#7a7d85]">
+    <div className="flex items-center justify-between text-[12px] text-muted-foreground">
       <span>{label}</span>
       <span className={`font-mono text-[13px] font-medium ${valClass}`}>{value}</span>
     </div>
@@ -1541,7 +1514,7 @@ function ReturnStat({
   return (
     <div className="flex flex-col gap-0.5">
       <div className={`font-mono text-[18px] font-light ${color}`}>{value}</div>
-      <div className="text-[10.5px] text-[#4a4d55]">{label}</div>
+      <div className="text-[10.5px] text-muted-foreground/60">{label}</div>
     </div>
   )
 }

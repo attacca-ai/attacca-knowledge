@@ -6,9 +6,6 @@ import { useOnboardingStore } from '../../stores/onboarding-store'
 import { installMockApi, cleanupMockApi } from '../../../../../tests/helpers'
 
 // Mock hooks
-vi.mock('@/hooks/useGateway', () => ({
-  useGateway: vi.fn()
-}))
 vi.mock('@/hooks/useOnlineStatus', () => ({
   useOnlineStatus: vi.fn().mockReturnValue(true)
 }))

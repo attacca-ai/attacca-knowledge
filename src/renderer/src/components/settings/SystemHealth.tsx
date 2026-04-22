@@ -33,11 +33,11 @@ function formatTimeAgo(
 function statusDot(result: string | null): { color: string; shadow?: string } {
   switch (result) {
     case 'success':
-      return { color: '#4caf82', shadow: '0 0 5px #4caf82' }
+      return { color: 'var(--att-green)', shadow: '0 0 5px var(--att-green)' }
     case 'skipped':
-      return { color: '#d4a843' }
+      return { color: 'var(--att-orange)' }
     case 'failed':
-      return { color: '#e05c5c' }
+      return { color: 'var(--att-red)' }
     default:
       return { color: '#4a4d55' }
   }
@@ -91,7 +91,7 @@ export function SystemHealth(): React.JSX.Element {
             <div
               key={task.id}
               className="rounded-[8px] p-3.5"
-              style={{ background: '#1c1d20', border: '1px solid #232428' }}
+              style={{ background: 'var(--att-surface-hover)', border: '1px solid var(--att-surface-raised)' }}
             >
               <div className="flex items-start gap-3">
                 <div
@@ -101,15 +101,15 @@ export function SystemHealth(): React.JSX.Element {
                 />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between mb-0.5">
-                    <span className="text-[12.5px] text-[#e8e9eb]">{taskName}</span>
-                    <span className="text-[10px] text-[#4a4d55]" style={{ fontFamily: MONO }}>
+                    <span className="text-[12.5px] text-foreground">{taskName}</span>
+                    <span className="text-[10px] text-muted-foreground/60" style={{ fontFamily: MONO }}>
                       {formatTimeAgo(task.lastRun, t)}
                     </span>
                   </div>
-                  <div className="text-[11px] text-[#4a4d55] leading-[1.4] mb-2">{taskDesc}</div>
+                  <div className="text-[11px] text-muted-foreground/60 leading-[1.4] mb-2">{taskDesc}</div>
                   {task.lastError && (
                     <div
-                      className="text-[10px] text-[#e05c5c] mb-2 truncate"
+                      className="text-[10px] text-att-red mb-2 truncate"
                       title={task.lastError}
                     >
                       {task.lastError}
@@ -150,8 +150,8 @@ export function SystemHealth(): React.JSX.Element {
 
       {stats && (
         <div
-          className="mt-3 pt-3 flex items-center gap-4 text-[10px] text-[#4a4d55]"
-          style={{ borderTop: '1px solid #232428', fontFamily: MONO }}
+          className="mt-3 pt-3 flex items-center gap-4 text-[10px] text-muted-foreground/60"
+          style={{ borderTop: '1px solid var(--att-surface-raised)', fontFamily: MONO }}
         >
           <span>{t('settings.health.memories', { n: stats.total })}</span>
           <span>{t('settings.health.with_embeddings', { n: stats.withEmbeddings })}</span>

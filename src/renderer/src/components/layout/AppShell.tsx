@@ -12,20 +12,90 @@ import { SettingsPage } from '@/components/settings/SettingsPage'
 import { ConnectionsPage } from '@/components/settings/ConnectionsPage'
 import { CustomToolsPage } from '@/components/custom-tools/CustomToolsPage'
 import { CaptureView } from '@/components/features/CaptureView'
+import { TasksView } from '@/components/features/TasksView'
+import { KnowledgeBasePage } from '@/components/features/KnowledgeBasePage'
 import { ApprovalDialog } from '@/components/permissions/ApprovalDialog'
 import { MidRiskNotification } from '@/components/permissions/MidRiskNotification'
 import { usePermissionStore } from '@/stores/permission-store'
+import { useAgentStore } from '@/stores/agent-store'
+import { useAgent } from '@/hooks/useAgent'
 import type { RiskTier } from '@/lib/permission-engine'
 
 export function AppShell(): React.JSX.Element {
   const [activeView, setActiveView] = useState<SidebarView>('dashboard')
   const [customToolName, setCustomToolName] = useState<string>('')
   const prevViewRef = useRef<SidebarView>('dashboard')
+  const lastMessageRef = useRef<string | null>(null)
   const pendingApprovals = usePermissionStore((s) => s.pendingApprovals)
+  const { addActivity, completeTask, failTask, hydrate } = useAgentStore()
   const midRiskApprovals = useMemo(
     () => pendingApprovals.filter((a) => a.tier === 'medium'),
     [pendingApprovals]
   )
+
+  // Restore persisted state on mount (runs once, never unmounts)
+  useEffect(() => {
+    hydrate()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Cross-component navigation via custom events
+  useEffect(() => {
+    const handler = (e: Event): void => {
+      const { view } = (e as CustomEvent<{ view: SidebarView }>).detail
+      if (view) setActiveView(view)
+    }
+    window.addEventListener('attacca:navigate', handler)
+    return () => window.removeEventListener('attacca:navigate', handler)
+  }, [])
+
+  // Initialize the agent client IPC listeners (must be called once at root level)
+  useAgent()
+
+  // Global agent event listeners — live in AppShell so they never unmount.
+  // This ensures agent events (task completion, chat messages, errors) are
+  // captured even when the user navigates away from the Dashboard.
+  useEffect(() => {
+    const unsubToolCall = window.api.agent.onToolCall((data) => {
+      addActivity({
+        type: 'tool_call',
+        description: `Calling tool: ${data.toolName || 'unknown'}`,
+        details: JSON.stringify(data.toolInput, null, 2)
+      })
+    })
+
+    const unsubToolResult = window.api.agent.onToolResult((data) => {
+      addActivity({
+        type: 'tool_result',
+        description: 'Tool result received',
+        details: data.summary
+      })
+    })
+
+    const unsubFinal = window.api.agent.onFinal((data) => {
+      const text = data.message
+      if (text) {
+        lastMessageRef.current = text
+        addActivity({ type: 'message', description: text })
+      }
+      const task = useAgentStore.getState().currentTask
+      if (task) completeTask(task.id, lastMessageRef.current ?? undefined)
+      lastMessageRef.current = null
+    })
+
+    const unsubError = window.api.agent.onError((data) => {
+      const errorMsg = data.error || 'An error occurred'
+      addActivity({ type: 'error', description: errorMsg })
+      const task = useAgentStore.getState().currentTask
+      if (task) failTask(task.id, errorMsg)
+    })
+
+    return () => {
+      unsubToolCall()
+      unsubToolResult()
+      unsubFinal()
+      unsubError()
+    }
+  }, [addActivity, completeTask, failTask])
 
   useEffect(() => {
     const prev = prevViewRef.current
@@ -75,7 +145,9 @@ export function AppShell(): React.JSX.Element {
           <ErrorBoundary>
             {activeView === 'dashboard' && <Dashboard />}
             {activeView === 'capture' && <CaptureView />}
+            {activeView === 'tasks' && <TasksView />}
             {activeView === 'schedule' && <ScheduleView />}
+            {activeView === 'knowledge-base' && <KnowledgeBasePage />}
             {activeView === 'workflows' && <WorkflowAdder />}
             {activeView === 'takeover' && <TakeOverMode />}
             {activeView === 'meta-agent' && <MetaAgent />}

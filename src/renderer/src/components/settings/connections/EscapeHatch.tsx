@@ -9,16 +9,16 @@ export function EscapeHatch({ onClick }: EscapeHatchProps): React.JSX.Element {
   return (
     <div
       onClick={onClick}
-      className="group relative max-w-[600px] cursor-pointer rounded-[10px] border-[1.5px] border-dashed border-[#2a2b2f] p-[18px_20px] transition-all duration-[150ms] hover:border-[#4a4d55] hover:bg-[#151618]"
+      className="group relative max-w-[600px] cursor-pointer rounded-[10px] border-[1.5px] border-dashed border-att-divider p-[18px_20px] transition-all duration-[150ms] hover:border-muted-foreground/60 hover:bg-att-surface"
     >
       {/* Experimental tag */}
-      <span className="absolute right-[14px] top-3 rounded-[3px] bg-[#232428] px-[6px] py-[2px] font-mono text-[8px] uppercase tracking-[.05em] text-[#4a4d55]">
+      <span className="absolute right-[14px] top-3 rounded-[3px] bg-att-surface-raised px-[6px] py-[2px] font-mono text-[8px] uppercase tracking-[.05em] text-muted-foreground/60">
         {t('escapeHatch.tag')}
       </span>
 
       <div className="flex items-start gap-[14px]">
         {/* Icon */}
-        <div className="mt-[2px] flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[#232428] text-[#4a4d55] transition-all group-hover:bg-[#1c1d20] group-hover:text-[#7a7d85]">
+        <div className="mt-[2px] flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-att-surface-raised text-muted-foreground/60 transition-all group-hover:bg-att-surface-hover group-hover:text-muted-foreground">
           <svg
             width="16"
             height="16"
@@ -34,10 +34,10 @@ export function EscapeHatch({ onClick }: EscapeHatchProps): React.JSX.Element {
 
         {/* Body */}
         <div>
-          <div className="mb-[3px] text-[13px] font-medium text-[#7a7d85] transition-colors group-hover:text-[#e8e9eb]">
+          <div className="mb-[3px] text-[13px] font-medium text-muted-foreground transition-colors group-hover:text-foreground">
             {t('escapeHatch.title')}
           </div>
-          <div className="text-[11.5px] leading-[1.5] text-[#4a4d55]">{t('escapeHatch.desc')}</div>
+          <div className="text-[11.5px] leading-[1.5] text-muted-foreground/60">{t('escapeHatch.desc')}</div>
         </div>
       </div>
     </div>

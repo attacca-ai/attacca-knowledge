@@ -1,10 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { gatewayClient } from '@/lib/gateway-client'
-import { useGatewayStore } from '@/stores/gateway-store'
 import { useAgentStore, type LibraryEntry } from '@/stores/agent-store'
-import { extractMessageText } from '@/lib/utils'
-import type { OcEvent } from '@/types/gateway'
-import { Send, RefreshCw, Check, Play, Zap, Copy, Eye, EyeOff, ArrowLeft } from 'lucide-react'
+import { Send, RefreshCw, Check, Play, Zap, Copy, Eye, EyeOff, ArrowLeft, Plus } from 'lucide-react'
 
 // ── Local types ───────────────────────────────────────────────────────────────
 
@@ -69,25 +65,25 @@ interface AgentResponse {
 // ── Style constants ───────────────────────────────────────────────────────────
 
 const STEP_TAG_CLASSES: Record<string, string> = {
-  tool: 'bg-[#232428] text-[#4a4d55]',
-  mid: 'bg-[rgba(212,168,67,.1)] text-[#d4a843]',
-  high: 'bg-[rgba(224,92,92,.1)] text-[#e05c5c]',
-  low: 'bg-[rgba(76,175,130,.1)] text-[#4caf82]'
+  tool: 'bg-att-surface-raised text-muted-foreground/60',
+  mid: 'bg-att-orange/10 text-att-orange',
+  high: 'bg-att-red/10 text-att-red',
+  low: 'bg-att-green/10 text-att-green'
 }
 
 const TOOL_DOT_CLASSES: Record<string, string> = {
-  cal: 'bg-[#5b7cf6]',
-  email: 'bg-[#9b72f5]',
-  task: 'bg-[#4caf82]',
+  cal: 'bg-att-blue',
+  email: 'bg-att-purple',
+  task: 'bg-att-green',
   slack: 'bg-[#4a154b]',
-  default: 'bg-[#4a4d55]'
+  default: 'bg-muted-foreground/60'
 }
 
 const EXAMPLE_ICON_CLASSES: Record<string, string> = {
-  blue: 'bg-[rgba(91,124,246,.12)] text-[#5b7cf6]',
-  green: 'bg-[rgba(76,175,130,.1)] text-[#4caf82]',
-  yellow: 'bg-[rgba(212,168,67,.1)] text-[#d4a843]',
-  purple: 'bg-[rgba(155,114,245,.12)] text-[#9b72f5]'
+  blue: 'bg-att-blue/12 text-att-blue',
+  green: 'bg-att-green/10 text-att-green',
+  yellow: 'bg-att-orange/10 text-att-orange',
+  purple: 'bg-att-purple/12 text-att-purple'
 }
 
 const EXAMPLES = [
@@ -196,7 +192,6 @@ function stripHtmlBlock(text: string): string {
 // ── Main component ────────────────────────────────────────────────────────────
 
 export function WorkflowAdder(): React.JSX.Element {
-  const connectionState = useGatewayStore((s) => s.connectionState)
   const addActivity = useAgentStore((s) => s.addActivity)
 
   // Workflow building state
@@ -238,23 +233,17 @@ export function WorkflowAdder(): React.JSX.Element {
     if (runBodyRef.current) runBodyRef.current.scrollTop = runBodyRef.current.scrollHeight
   }, [runMessages])
 
-  // Gateway listener — handles both building and run sessions
+  // Agent listener — handles both building and run sessions
   useEffect(() => {
-    const handler = (ev: OcEvent): void => {
-      if (ev.event !== 'chat') return
-      const payload = (ev.payload ?? {}) as Record<string, unknown>
-      if (payload.state !== 'final') return
-
-      const sessionKey = payload.sessionKey as string | undefined
+    const unsub = window.api.agent.onFinal((data) => {
+      const sessionKey = data.sessionKey
 
       // ── Run session response ──
       if (sessionKey && sessionKey === pendingRunRef.current) {
         pendingRunRef.current = null
         setRunSending(false)
 
-        const rawText = extractMessageText(
-          payload.message as Parameters<typeof extractMessageText>[0]
-        )
+        const rawText = data.message
 
         const htmlContent = extractHtmlBlock(rawText) ?? undefined
         const displayText = htmlContent ? stripHtmlBlock(rawText) : rawText
@@ -282,9 +271,7 @@ export function WorkflowAdder(): React.JSX.Element {
       pendingSessionRef.current = null
       setSending(false)
 
-      const rawText = extractMessageText(
-        payload.message as Parameters<typeof extractMessageText>[0]
-      )
+      const rawText = data.message
       const jsonMatch = rawText.match(/\{[\s\S]*\}/)
       if (!jsonMatch) return
 
@@ -314,10 +301,9 @@ export function WorkflowAdder(): React.JSX.Element {
       } catch {
         /* no-op */
       }
-    }
+    })
 
-    gatewayClient.on('*', handler)
-    return () => gatewayClient.off('*', handler)
+    return unsub
   }, [runEntry])
 
   // ── Handlers ─────────────────────────────────────────────────────────────
@@ -325,22 +311,22 @@ export function WorkflowAdder(): React.JSX.Element {
   const handleSend = useCallback(
     async (text?: string): Promise<void> => {
       const msg = (text ?? input).trim()
-      if (!msg || sending || connectionState !== 'connected') return
+      if (!msg || sending) return
 
       const now = new Date().toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit' })
       const userMsg: WfMessage = { id: crypto.randomUUID(), role: 'user', text: msg, time: now }
 
       setMessages((prev) => {
         const updated = [...prev, userMsg]
-        const sessionKey = `agent:main:workflow-${crypto.randomUUID()}`
+        const sessionKey = `workflow-${crypto.randomUUID()}`
         pendingSessionRef.current = sessionKey
         setSending(true)
         if (convoState === 'empty') setConvoState('clarifying')
         setInput('')
 
         const prompt = buildAgentPrompt(updated, msg)
-        void gatewayClient
-          .rpc('chat.send', { sessionKey, message: prompt, idempotencyKey: sessionKey })
+        void window.api.agent
+          .send(sessionKey, prompt, sessionKey)
           .catch(() => {
             setSending(false)
             pendingSessionRef.current = null
@@ -349,14 +335,14 @@ export function WorkflowAdder(): React.JSX.Element {
         return updated
       })
     },
-    [input, sending, connectionState, convoState]
+    [input, sending, convoState]
   )
 
   const handleRunExecute = useCallback(
     async (text?: string): Promise<void> => {
       if (!runEntry) return
       const msg = (text ?? runInput).trim()
-      if (!msg || runSending || connectionState !== 'connected') return
+      if (!msg || runSending) return
 
       const now = new Date().toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit' })
       setRunMessages((prev) => [
@@ -366,37 +352,24 @@ export function WorkflowAdder(): React.JSX.Element {
       setRunInput('')
       setRunSending(true)
 
-      const sessionKey = `agent:main:workflow-run-${crypto.randomUUID()}`
+      const sessionKey = `workflow-run-${crypto.randomUUID()}`
       pendingRunRef.current = sessionKey
 
       const prompt = buildRunPrompt(runEntry, msg)
       try {
-        await gatewayClient.rpc('chat.send', {
-          sessionKey,
-          message: prompt,
-          idempotencyKey: sessionKey
-        })
+        await window.api.agent.send(sessionKey, prompt, sessionKey)
         window.api.telemetry.emit('workflow.run', { workflowName: runEntry.name })
       } catch {
         setRunSending(false)
         pendingRunRef.current = null
       }
     },
-    [runEntry, runInput, runSending, connectionState]
+    [runEntry, runInput, runSending]
   )
 
   const handleActivate = useCallback(async (): Promise<void> => {
     if (!workflow || activating || activated) return
     setActivating(true)
-
-    try {
-      await gatewayClient.rpc('skill.create', {
-        name: workflow.name,
-        description: workflow.description
-      })
-    } catch {
-      /* best-effort */
-    }
 
     const entry: LibraryEntry = {
       id: crypto.randomUUID(),
@@ -450,10 +423,10 @@ export function WorkflowAdder(): React.JSX.Element {
 
   // Preview status
   const previewStatus = !workflow
-    ? { label: 'Waiting...', cls: 'bg-[#232428] text-[#4a4d55]' }
+    ? { label: 'Waiting...', cls: 'bg-att-surface-raised text-muted-foreground/60' }
     : convoState === 'ready'
-      ? { label: 'Ready to activate', cls: 'bg-[rgba(76,175,130,.1)] text-[#4caf82]' }
-      : { label: 'Building...', cls: 'bg-[rgba(91,124,246,.12)] text-[#5b7cf6]' }
+      ? { label: 'Ready to activate', cls: 'bg-att-green/10 text-att-green' }
+      : { label: 'Building...', cls: 'bg-att-blue/12 text-att-blue' }
 
   const activeCount = library.filter((e) => e.status === 'active').length
 
@@ -462,26 +435,26 @@ export function WorkflowAdder(): React.JSX.Element {
   return (
     <div className="flex h-full overflow-hidden">
       {/* ── LEFT: CONVERSATION / RUN PANEL ── */}
-      <div className="flex flex-1 flex-col overflow-hidden border-r border-[#1f2024]">
+      <div className="flex flex-1 flex-col overflow-hidden border-r border-att-divider">
         {runEntry ? (
           /* ═══ RUN MODE ═══ */
           <>
             {/* Run header */}
-            <div className="shrink-0 border-b border-[#1f2024] px-7 pb-4 pt-5">
+            <div className="shrink-0 border-b border-att-divider px-7 pb-4 pt-5">
               <button
                 onClick={() => {
                   setRunEntry(null)
                   setRunMessages([])
                   setRunInput('')
                 }}
-                className="mb-2 flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-[.1em] text-[#4a4d55] transition-colors hover:text-[#7a7d85]"
+                className="mb-2 flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-[.1em] text-muted-foreground/60 transition-colors hover:text-muted-foreground"
               >
                 <ArrowLeft className="h-3 w-3" />
                 Back to workflows
               </button>
               <div className="mb-0.5 flex items-center gap-2">
-                <div className="h-1.5 w-1.5 rounded-full bg-[#4caf82] shadow-[0_0_4px_#4caf82]" />
-                <div className="font-mono text-[9px] uppercase tracking-[.1em] text-[#4a4d55]">
+                <div className="h-1.5 w-1.5 rounded-full bg-att-green shadow-[0_0_4px_var(--att-green)]" />
+                <div className="font-mono text-[9px] uppercase tracking-[.1em] text-muted-foreground/60">
                   Running workflow
                 </div>
               </div>
@@ -492,7 +465,7 @@ export function WorkflowAdder(): React.JSX.Element {
                 {runEntry.name}
               </div>
               {runEntry.description && (
-                <div className="mt-1 max-w-[480px] text-[12px] text-[#7a7d85]">
+                <div className="mt-1 max-w-[480px] text-[12px] text-muted-foreground">
                   {runEntry.description}
                 </div>
               )}
@@ -505,7 +478,7 @@ export function WorkflowAdder(): React.JSX.Element {
               style={{ scrollbarWidth: 'thin', scrollbarColor: '#2a2b2f transparent' }}
             >
               {runMessages.length === 0 && (
-                <div className="text-[13px] leading-relaxed text-[#7a7d85]">
+                <div className="text-[13px] leading-relaxed text-muted-foreground">
                   Paste the text you want to process, or describe what to run.
                 </div>
               )}
@@ -521,27 +494,27 @@ export function WorkflowAdder(): React.JSX.Element {
                       <div
                         className={`max-w-[420px] rounded-[10px] px-3.5 py-2.5 text-[12.5px] leading-[1.55] ${
                           isUser
-                            ? 'rounded-br-[3px] bg-[#232428] text-foreground'
-                            : 'rounded-bl-[3px] border border-[#1f2024] bg-[#1c1d20] text-[#7a7d85]'
+                            ? 'rounded-br-[3px] bg-att-surface-raised text-foreground'
+                            : 'rounded-bl-[3px] border border-att-divider bg-att-surface-hover text-muted-foreground'
                         }`}
                       >
                         {msg.text}
                       </div>
                     )}
-                    <div className="px-1 font-mono text-[8.5px] text-[#4a4d55]">{msg.time}</div>
+                    <div className="px-1 font-mono text-[8.5px] text-muted-foreground/60">{msg.time}</div>
 
                     {/* HTML output block */}
                     {msg.htmlContent && (
-                      <div className="w-full max-w-[560px] overflow-hidden rounded-lg border border-[#2a2b2f] bg-[#151618]">
+                      <div className="w-full max-w-[560px] overflow-hidden rounded-lg border border-att-divider bg-att-surface">
                         {/* Block header */}
-                        <div className="flex items-center justify-between border-b border-[#1f2024] px-3 py-2">
-                          <span className="font-mono text-[9px] uppercase tracking-[.1em] text-[#4a4d55]">
+                        <div className="flex items-center justify-between border-b border-att-divider px-3 py-2">
+                          <span className="font-mono text-[9px] uppercase tracking-[.1em] text-muted-foreground/60">
                             HTML output
                           </span>
                           <div className="flex items-center gap-1.5">
                             <button
                               onClick={() => setPreviewId(previewId === msg.id ? null : msg.id)}
-                              className="flex items-center gap-1 rounded px-2 py-1 font-mono text-[9px] text-[#4a4d55] transition-colors hover:bg-[#1c1d20] hover:text-[#7a7d85]"
+                              className="flex items-center gap-1 rounded px-2 py-1 font-mono text-[9px] text-muted-foreground/60 transition-colors hover:bg-att-surface-hover hover:text-muted-foreground"
                             >
                               {previewId === msg.id ? (
                                 <EyeOff className="h-3 w-3" />
@@ -552,10 +525,10 @@ export function WorkflowAdder(): React.JSX.Element {
                             </button>
                             <button
                               onClick={() => handleCopy(msg.id, msg.htmlContent!)}
-                              className="flex items-center gap-1 rounded px-2 py-1 font-mono text-[9px] text-[#4a4d55] transition-colors hover:bg-[#1c1d20] hover:text-[#7a7d85]"
+                              className="flex items-center gap-1 rounded px-2 py-1 font-mono text-[9px] text-muted-foreground/60 transition-colors hover:bg-att-surface-hover hover:text-muted-foreground"
                             >
                               {copiedId === msg.id ? (
-                                <Check className="h-3 w-3 text-[#4caf82]" />
+                                <Check className="h-3 w-3 text-att-green" />
                               ) : (
                                 <Copy className="h-3 w-3" />
                               )}
@@ -567,7 +540,7 @@ export function WorkflowAdder(): React.JSX.Element {
                         {/* Code view */}
                         {previewId !== msg.id && (
                           <pre
-                            className="max-h-[300px] overflow-auto px-3 py-3 font-mono text-[11px] leading-relaxed text-[#7a7d85]"
+                            className="max-h-[300px] overflow-auto px-3 py-3 font-mono text-[11px] leading-relaxed text-muted-foreground"
                             style={{
                               scrollbarWidth: 'thin',
                               scrollbarColor: '#2a2b2f transparent'
@@ -593,7 +566,7 @@ export function WorkflowAdder(): React.JSX.Element {
               })}
 
               {runSending && (
-                <div className="flex items-center gap-2 text-[12px] text-[#4a4d55]">
+                <div className="flex items-center gap-2 text-[12px] text-muted-foreground/60">
                   <RefreshCw className="h-3 w-3 animate-spin" />
                   <span>Running workflow...</span>
                 </div>
@@ -601,22 +574,22 @@ export function WorkflowAdder(): React.JSX.Element {
             </div>
 
             {/* Run input */}
-            <div className="shrink-0 border-t border-[#1f2024] px-5 py-3">
-              <div className="flex items-end gap-2 rounded-lg border border-[#2a2b2f] bg-[#151618] px-3 py-2.5 transition-colors focus-within:border-[#5b7cf6]">
+            <div className="shrink-0 border-t border-att-divider px-5 py-3">
+              <div className="flex items-end gap-2 rounded-lg border border-att-divider bg-att-surface px-3 py-2.5 transition-colors focus-within:border-att-blue">
                 <textarea
                   value={runInput}
                   onChange={handleRunTextareaInput}
                   onKeyDown={handleRunKeyDown}
                   placeholder="Paste the text to process, or describe the input..."
                   rows={1}
-                  disabled={runSending || connectionState !== 'connected'}
-                  className="flex-1 resize-none bg-transparent text-[12.5px] leading-relaxed text-foreground outline-none placeholder:text-[#4a4d55] disabled:opacity-50"
+                  disabled={runSending}
+                  className="flex-1 resize-none bg-transparent text-[12.5px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/60 disabled:opacity-50"
                   style={{ minHeight: '20px', maxHeight: '80px' }}
                 />
                 <button
                   onClick={() => void handleRunExecute()}
-                  disabled={!runInput.trim() || runSending || connectionState !== 'connected'}
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-[#5b7cf6] transition-opacity hover:opacity-85 disabled:opacity-30"
+                  disabled={!runInput.trim() || runSending}
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-att-blue transition-opacity hover:opacity-85 disabled:opacity-30"
                 >
                   <Send className="h-3 w-3 text-white" />
                 </button>
@@ -627,8 +600,8 @@ export function WorkflowAdder(): React.JSX.Element {
           /* ═══ WORKFLOW BUILDING MODE ═══ */
           <>
             {/* Header */}
-            <div className="shrink-0 border-b border-[#1f2024] px-7 pb-4 pt-5">
-              <div className="mb-1 font-mono text-[9px] uppercase tracking-[.12em] text-[#4a4d55]">
+            <div className="shrink-0 border-b border-att-divider px-7 pb-4 pt-5">
+              <div className="mb-1 font-mono text-[9px] uppercase tracking-[.12em] text-muted-foreground/60">
                 Workflows · new
               </div>
               <div
@@ -637,7 +610,7 @@ export function WorkflowAdder(): React.JSX.Element {
               >
                 Teach the agent
               </div>
-              <div className="max-w-[480px] text-[12.5px] leading-relaxed text-[#7a7d85]">
+              <div className="max-w-[480px] text-[12.5px] leading-relaxed text-muted-foreground">
                 Describe in your own words what you want the agent to do — when, with which tools,
                 and what you decide.{' '}
                 <span className="text-[#f0a04b]">
@@ -647,15 +620,15 @@ export function WorkflowAdder(): React.JSX.Element {
 
               {/* State tabs */}
               <div className="mt-2.5 flex items-center gap-1.5">
-                <span className="font-mono text-[9px] text-[#4a4d55]">STATE:</span>
+                <span className="font-mono text-[9px] text-muted-foreground/60">STATE:</span>
                 {(['empty', 'clarifying', 'ready'] as const).map((s) => (
                   <button
                     key={s}
                     disabled
                     className={`rounded border px-2.5 py-1 font-mono text-[9px] uppercase tracking-[.06em] transition-all duration-[120ms] ${
                       convoState === s
-                        ? 'border-[#5b7cf6] bg-[#5b7cf6] text-white'
-                        : 'border-[#2a2b2f] bg-transparent text-[#4a4d55]'
+                        ? 'border-att-blue bg-att-blue text-white'
+                        : 'border-att-divider bg-transparent text-muted-foreground/60'
                     }`}
                   >
                     {s === 'empty' ? 'Empty' : s === 'clarifying' ? 'Clarifying' : 'Ready'}
@@ -673,27 +646,79 @@ export function WorkflowAdder(): React.JSX.Element {
               {/* Empty state */}
               {convoState === 'empty' && (
                 <>
-                  <div className="max-w-[460px] text-[13px] leading-relaxed text-[#7a7d85]">
-                    There is no right format. You can be as vague or as precise as you want — the
-                    agent resolves ambiguities with you before doing anything.
-                  </div>
+                  {/* Your workflows — shown above examples when library has entries */}
+                  {library.length > 0 && (
+                    <div className="flex w-full max-w-[520px] flex-col gap-2">
+                      <div className="mb-0.5 font-mono text-[9px] uppercase tracking-[.1em] text-muted-foreground/60">
+                        Your workflows
+                      </div>
+                      {library.map((entry) => (
+                        <button
+                          key={entry.id}
+                          onClick={() => {
+                            setRunEntry(entry)
+                            setRunMessages([])
+                            setRunInput('')
+                          }}
+                          disabled={entry.status === 'paused'}
+                          className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-att-divider bg-att-surface px-3.5 py-2.5 text-left transition-all duration-[120ms] hover:border-att-green hover:bg-att-green/5 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          <div className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded bg-att-green/12 text-att-green">
+                            <Zap className="h-3 w-3" />
+                          </div>
+                          <div className="flex-1 text-[12.5px] leading-snug text-muted-foreground">
+                            <strong className="font-medium text-foreground">{entry.name}</strong>
+                            {entry.description ? ` ${entry.description}` : ''}
+                            <span className="ml-2 font-mono text-[9px] text-muted-foreground/40">×{entry.runs} runs</span>
+                          </div>
+                          <div className="mt-0.5 flex items-center gap-1 rounded bg-att-green/10 px-1.5 py-0.5 font-mono text-[8px] text-att-green">
+                            <Play className="h-2.5 w-2.5" />
+                            Run
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Create new workflow CTA */}
                   <div className="flex w-full max-w-[520px] flex-col gap-2">
-                    <div className="mb-0.5 font-mono text-[9px] uppercase tracking-[.1em] text-[#4a4d55]">
+                    <div className="mb-0.5 font-mono text-[9px] uppercase tracking-[.1em] text-muted-foreground/60">
+                      {library.length > 0 ? 'Create new' : 'Get started'}
+                    </div>
+                    <button
+                      onClick={() => textareaRef.current?.focus()}
+                      className="flex cursor-pointer items-center gap-3 rounded-lg border border-dashed border-att-blue/40 bg-att-blue/5 px-4 py-3 text-left transition-all duration-[120ms] hover:border-att-blue hover:bg-att-blue/10"
+                    >
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-att-blue/12">
+                        <Plus className="h-4 w-4 text-att-blue" />
+                      </div>
+                      <div>
+                        <div className="text-[13px] font-medium text-foreground">New workflow</div>
+                        <div className="text-[11px] text-muted-foreground/60">
+                          Describe what you want automated — the agent will figure out the rest
+                        </div>
+                      </div>
+                    </button>
+                  </div>
+
+                  {/* Examples */}
+                  <div className="flex w-full max-w-[520px] flex-col gap-2">
+                    <div className="mb-0.5 font-mono text-[9px] uppercase tracking-[.1em] text-muted-foreground/60">
                       Examples to get started
                     </div>
                     {EXAMPLES.map((ex, i) => (
                       <button
                         key={i}
                         onClick={() => void handleSend(ex.text)}
-                        disabled={connectionState !== 'connected'}
-                        className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-[#1f2024] bg-[#151618] px-3.5 py-2.5 text-left transition-all duration-[120ms] hover:border-[#5b7cf6] hover:bg-[rgba(91,124,246,.05)] disabled:cursor-not-allowed disabled:opacity-40"
+                        disabled={false}
+                        className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-att-divider bg-att-surface px-3.5 py-2.5 text-left transition-all duration-[120ms] hover:border-att-blue hover:bg-att-blue/5 disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         <div
                           className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded text-[11px] ${EXAMPLE_ICON_CLASSES[ex.color]}`}
                         >
                           {ex.icon}
                         </div>
-                        <div className="text-[12.5px] leading-snug text-[#7a7d85]">
+                        <div className="text-[12.5px] leading-snug text-muted-foreground">
                           <strong className="font-medium text-foreground">{ex.title}</strong>{' '}
                           {ex.text}
                         </div>
@@ -715,25 +740,25 @@ export function WorkflowAdder(): React.JSX.Element {
                       <div
                         className={`max-w-[420px] rounded-[10px] px-3.5 py-2.5 text-[12.5px] leading-[1.55] ${
                           isUser
-                            ? 'rounded-br-[3px] bg-[#232428] text-foreground'
-                            : 'rounded-bl-[3px] border border-[#1f2024] bg-[#1c1d20] text-[#7a7d85]'
+                            ? 'rounded-br-[3px] bg-att-surface-raised text-foreground'
+                            : 'rounded-bl-[3px] border border-att-divider bg-att-surface-hover text-muted-foreground'
                         }`}
                       >
                         {msg.text}
                       </div>
-                      <div className="px-1 font-mono text-[8.5px] text-[#4a4d55]">{msg.time}</div>
+                      <div className="px-1 font-mono text-[8.5px] text-muted-foreground/60">{msg.time}</div>
 
                       {/* Clarify card */}
                       {!isUser && i === messages.length - 1 && clarifyCard && (
-                        <div className="mt-1 max-w-[440px] rounded-lg border border-[#2a2b2f] border-l-[3px] border-l-[#5b7cf6] bg-[#151618] p-4">
-                          <div className="mb-2 font-mono text-[8.5px] uppercase tracking-[.1em] text-[#5b7cf6]">
+                        <div className="mt-1 max-w-[440px] rounded-lg border border-att-divider border-l-[3px] border-l-att-blue bg-att-surface p-4">
+                          <div className="mb-2 font-mono text-[8.5px] uppercase tracking-[.1em] text-att-blue">
                             {clarifyCard.label}
                           </div>
                           <div className="mb-2 text-[13px] font-normal leading-relaxed text-foreground">
                             {clarifyCard.question}
                           </div>
                           {clarifyCard.why && (
-                            <div className="mb-3 text-[11px] italic leading-snug text-[#4a4d55]">
+                            <div className="mb-3 text-[11px] italic leading-snug text-muted-foreground/60">
                               {clarifyCard.why}
                             </div>
                           )}
@@ -747,17 +772,17 @@ export function WorkflowAdder(): React.JSX.Element {
                                 }}
                                 className={`flex cursor-pointer items-center gap-2 rounded-md border px-3 py-1.5 text-left text-[12px] transition-all duration-[120ms] ${
                                   selectedOption === opt.key
-                                    ? 'border-[#5b7cf6] bg-[rgba(91,124,246,.12)] text-foreground'
-                                    : 'border-[#2a2b2f] bg-transparent text-[#7a7d85] hover:border-[#5b7cf6] hover:bg-[rgba(91,124,246,.08)] hover:text-foreground'
+                                    ? 'border-att-blue bg-att-blue/12 text-foreground'
+                                    : 'border-att-divider bg-transparent text-muted-foreground hover:border-att-blue hover:bg-att-blue/8 hover:text-foreground'
                                 }`}
                               >
-                                <span className="shrink-0 rounded bg-[#232428] px-1 py-0.5 font-mono text-[8px] text-[#4a4d55]">
+                                <span className="shrink-0 rounded bg-att-surface-raised px-1 py-0.5 font-mono text-[8px] text-muted-foreground/60">
                                   {opt.key}
                                 </span>
                                 {opt.text}
                               </button>
                             ))}
-                            <div className="my-1 text-center font-mono text-[9px] text-[#4a4d55]">
+                            <div className="my-1 text-center font-mono text-[9px] text-muted-foreground/60">
                               — or type your answer —
                             </div>
                             <input
@@ -769,7 +794,7 @@ export function WorkflowAdder(): React.JSX.Element {
                                   e.currentTarget.value = ''
                                 }
                               }}
-                              className="w-full rounded border border-[#2a2b2f] bg-[#1c1d20] px-2.5 py-1.5 text-[12px] text-foreground placeholder:text-[#4a4d55] outline-none transition-colors focus:border-[#5b7cf6]"
+                              className="w-full rounded border border-att-divider bg-att-surface-hover px-2.5 py-1.5 text-[12px] text-foreground placeholder:text-muted-foreground/60 outline-none transition-colors focus:border-att-blue"
                             />
                           </div>
                         </div>
@@ -780,20 +805,20 @@ export function WorkflowAdder(): React.JSX.Element {
 
               {/* Confidence bar */}
               {workflow && convoState !== 'empty' && (
-                <div className="flex max-w-[440px] items-center gap-2.5 rounded-md border border-[#1f2024] bg-[#151618] px-3 py-2">
-                  <span className="shrink-0 font-mono text-[9px] text-[#4a4d55]">Confidence</span>
-                  <div className="h-1 flex-1 overflow-hidden rounded-full bg-[#232428]">
+                <div className="flex max-w-[440px] items-center gap-2.5 rounded-md border border-att-divider bg-att-surface px-3 py-2">
+                  <span className="shrink-0 font-mono text-[9px] text-muted-foreground/60">Confidence</span>
+                  <div className="h-1 flex-1 overflow-hidden rounded-full bg-att-surface-raised">
                     <div
                       className="h-full rounded-full transition-all duration-500"
                       style={{
                         width: `${workflow.confidence}%`,
-                        background: workflow.confidence >= 80 ? '#4caf82' : '#d4a843'
+                        background: workflow.confidence >= 80 ? 'var(--att-green)' : 'var(--att-orange)'
                       }}
                     />
                   </div>
                   <span
                     className="shrink-0 font-mono text-[9px]"
-                    style={{ color: workflow.confidence >= 80 ? '#4caf82' : '#d4a843' }}
+                    style={{ color: workflow.confidence >= 80 ? 'var(--att-green)' : 'var(--att-orange)' }}
                   >
                     {workflow.confidence}%
                   </span>
@@ -801,7 +826,7 @@ export function WorkflowAdder(): React.JSX.Element {
               )}
 
               {sending && (
-                <div className="flex items-center gap-2 text-[12px] text-[#4a4d55]">
+                <div className="flex items-center gap-2 text-[12px] text-muted-foreground/60">
                   <RefreshCw className="h-3 w-3 animate-spin" />
                   <span>Agent is thinking...</span>
                 </div>
@@ -809,8 +834,8 @@ export function WorkflowAdder(): React.JSX.Element {
             </div>
 
             {/* Build input */}
-            <div className="shrink-0 border-t border-[#1f2024] px-5 py-3">
-              <div className="flex items-end gap-2 rounded-lg border border-[#2a2b2f] bg-[#151618] px-3 py-2.5 transition-colors focus-within:border-[#5b7cf6]">
+            <div className="shrink-0 border-t border-att-divider px-5 py-3">
+              <div className="flex items-end gap-2 rounded-lg border border-att-divider bg-att-surface px-3 py-2.5 transition-colors focus-within:border-att-blue">
                 <textarea
                   ref={textareaRef}
                   value={input}
@@ -818,14 +843,14 @@ export function WorkflowAdder(): React.JSX.Element {
                   onKeyDown={handleKeyDown}
                   placeholder="Describe the workflow you want the agent to learn..."
                   rows={1}
-                  disabled={sending || connectionState !== 'connected'}
-                  className="flex-1 resize-none bg-transparent text-[12.5px] leading-relaxed text-foreground outline-none placeholder:text-[#4a4d55] disabled:opacity-50"
+                  disabled={sending}
+                  className="flex-1 resize-none bg-transparent text-[12.5px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/60 disabled:opacity-50"
                   style={{ minHeight: '20px', maxHeight: '80px' }}
                 />
                 <button
                   onClick={() => void handleSend()}
-                  disabled={!input.trim() || sending || connectionState !== 'connected'}
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-[#5b7cf6] transition-opacity hover:opacity-85 disabled:opacity-30"
+                  disabled={!input.trim() || sending}
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-att-blue transition-opacity hover:opacity-85 disabled:opacity-30"
                 >
                   <Send className="h-3 w-3 text-white" />
                 </button>
@@ -838,9 +863,9 @@ export function WorkflowAdder(): React.JSX.Element {
       {/* ── RIGHT: PREVIEW + LIBRARY ── */}
       <div className="flex w-[340px] shrink-0 flex-col overflow-hidden">
         {/* Workflow Preview */}
-        <div className="flex flex-1 flex-col overflow-hidden border-b border-[#1f2024]">
-          <div className="flex shrink-0 items-center justify-between border-b border-[#1f2024] px-5 pb-3 pt-4">
-            <span className="font-mono text-[9px] uppercase tracking-[.1em] text-[#4a4d55]">
+        <div className="flex flex-1 flex-col overflow-hidden border-b border-att-divider">
+          <div className="flex shrink-0 items-center justify-between border-b border-att-divider px-5 pb-3 pt-4">
+            <span className="font-mono text-[9px] uppercase tracking-[.1em] text-muted-foreground/60">
               Workflow definition
             </span>
             <span className={`rounded px-1.5 py-0.5 font-mono text-[8.5px] ${previewStatus.cls}`}>
@@ -854,7 +879,7 @@ export function WorkflowAdder(): React.JSX.Element {
           >
             {!workflow ? (
               <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
-                <div className="mb-1 text-[#4a4d55] opacity-40">
+                <div className="mb-1 text-muted-foreground/60 opacity-40">
                   <svg
                     width="32"
                     height="32"
@@ -867,7 +892,7 @@ export function WorkflowAdder(): React.JSX.Element {
                     <path d="M9 12h6M12 9v6" />
                   </svg>
                 </div>
-                <div className="text-[12px] leading-relaxed text-[#4a4d55]">
+                <div className="text-[12px] leading-relaxed text-muted-foreground/60">
                   As you describe the workflow, the definition will appear here in real time.
                 </div>
               </div>
@@ -876,20 +901,20 @@ export function WorkflowAdder(): React.JSX.Element {
                 <div className="mb-1 text-[14px] font-medium leading-snug text-foreground">
                   {workflow.name}
                 </div>
-                <div className="mb-4 text-[11.5px] leading-relaxed text-[#7a7d85]">
+                <div className="mb-4 text-[11.5px] leading-relaxed text-muted-foreground">
                   {workflow.description}
                 </div>
 
                 {/* Trigger */}
                 <div className="mb-4">
-                  <div className="mb-2 flex items-center gap-1.5 font-mono text-[8.5px] uppercase tracking-[.1em] text-[#4a4d55] after:h-px after:flex-1 after:bg-[#1f2024]">
+                  <div className="mb-2 flex items-center gap-1.5 font-mono text-[8.5px] uppercase tracking-[.1em] text-muted-foreground/60 after:h-px after:flex-1 after:bg-att-divider">
                     Trigger
                   </div>
-                  <div className="flex items-start gap-2.5 rounded-md border border-[#1f2024] bg-[#151618] px-3 py-2.5">
-                    <div className="mt-0.5 flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded bg-[rgba(91,124,246,.12)] text-[11px] text-[#5b7cf6]">
+                  <div className="flex items-start gap-2.5 rounded-md border border-att-divider bg-att-surface px-3 py-2.5">
+                    <div className="mt-0.5 flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded bg-att-blue/12 text-[11px] text-att-blue">
                       <Zap className="h-3 w-3" />
                     </div>
-                    <div className="text-[12px] leading-snug text-[#7a7d85]">
+                    <div className="text-[12px] leading-snug text-muted-foreground">
                       {workflow.triggerText}
                     </div>
                   </div>
@@ -898,18 +923,18 @@ export function WorkflowAdder(): React.JSX.Element {
                 {/* Steps */}
                 {workflow.steps.length > 0 && (
                   <div className="mb-4">
-                    <div className="mb-2 flex items-center gap-1.5 font-mono text-[8.5px] uppercase tracking-[.1em] text-[#4a4d55] after:h-px after:flex-1 after:bg-[#1f2024]">
+                    <div className="mb-2 flex items-center gap-1.5 font-mono text-[8.5px] uppercase tracking-[.1em] text-muted-foreground/60 after:h-px after:flex-1 after:bg-att-divider">
                       Steps
                     </div>
                     <div className="flex flex-col gap-1.5">
                       {workflow.steps.map((step, i) => (
                         <div
                           key={i}
-                          className={`flex items-start gap-2 rounded-md border border-[#1f2024] bg-[#151618] px-3 py-2 ${
+                          className={`flex items-start gap-2 rounded-md border border-att-divider bg-att-surface px-3 py-2 ${
                             step.pending ? 'border-dashed opacity-40' : ''
                           }`}
                         >
-                          <div className="mt-0.5 flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full bg-[#232428] font-mono text-[9px] text-[#4a4d55]">
+                          <div className="mt-0.5 flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full bg-att-surface-raised font-mono text-[9px] text-muted-foreground/60">
                             {step.num}
                           </div>
                           <div className="flex-1">
@@ -917,7 +942,7 @@ export function WorkflowAdder(): React.JSX.Element {
                               {step.action}
                             </div>
                             {step.detail && (
-                              <div className="mb-1 text-[11px] leading-snug text-[#4a4d55]">
+                              <div className="mb-1 text-[11px] leading-snug text-muted-foreground/60">
                                 {step.detail}
                               </div>
                             )}
@@ -943,22 +968,22 @@ export function WorkflowAdder(): React.JSX.Element {
                 {/* Ambiguities */}
                 {workflow.ambiguities && workflow.ambiguities.length > 0 && (
                   <div className="mb-4">
-                    <div className="mb-2 flex items-center gap-1.5 font-mono text-[8.5px] uppercase tracking-[.1em] text-[#4a4d55] after:h-px after:flex-1 after:bg-[#1f2024]">
+                    <div className="mb-2 flex items-center gap-1.5 font-mono text-[8.5px] uppercase tracking-[.1em] text-muted-foreground/60 after:h-px after:flex-1 after:bg-att-divider">
                       Active ambiguities
                     </div>
                     <div className="flex flex-col gap-1.5">
                       {workflow.ambiguities.map((amb, i) => (
                         <div
                           key={i}
-                          className="flex items-start gap-2 rounded-md border border-[rgba(212,168,67,.25)] bg-[rgba(212,168,67,.05)] px-3 py-2.5"
+                          className="flex items-start gap-2 rounded-md border border-att-orange/25 bg-att-orange/5 px-3 py-2.5"
                         >
-                          <div className="mt-0.5 shrink-0 text-[#d4a843]">
+                          <div className="mt-0.5 shrink-0 text-att-orange">
                             <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
                               <path d="M8 2a6 6 0 100 12A6 6 0 008 2zm0 9a.75.75 0 110-1.5A.75.75 0 018 11zm.75-3.25a.75.75 0 01-1.5 0V5.75a.75.75 0 011.5 0v2z" />
                             </svg>
                           </div>
-                          <div className="text-[11px] leading-snug text-[#7a7d85]">
-                            <strong className="font-medium text-[#d4a843]">{amb.aspect}</strong>{' '}
+                          <div className="text-[11px] leading-snug text-muted-foreground">
+                            <strong className="font-medium text-att-orange">{amb.aspect}</strong>{' '}
                             {amb.text}
                           </div>
                         </div>
@@ -970,14 +995,14 @@ export function WorkflowAdder(): React.JSX.Element {
                 {/* Tools */}
                 {workflow.tools && workflow.tools.length > 0 && (
                   <div className="mb-2">
-                    <div className="mb-2 flex items-center gap-1.5 font-mono text-[8.5px] uppercase tracking-[.1em] text-[#4a4d55] after:h-px after:flex-1 after:bg-[#1f2024]">
+                    <div className="mb-2 flex items-center gap-1.5 font-mono text-[8.5px] uppercase tracking-[.1em] text-muted-foreground/60 after:h-px after:flex-1 after:bg-att-divider">
                       Required tools
                     </div>
                     <div className="flex flex-wrap gap-1.5">
                       {workflow.tools.map((tool, i) => (
                         <div
                           key={i}
-                          className="flex items-center gap-1.5 rounded border border-[#1f2024] bg-[#151618] px-2 py-1 font-mono text-[9px] text-[#7a7d85]"
+                          className="flex items-center gap-1.5 rounded border border-att-divider bg-att-surface px-2 py-1 font-mono text-[9px] text-muted-foreground"
                         >
                           <div
                             className={`h-[5px] w-[5px] rounded-full ${TOOL_DOT_CLASSES[tool.dot] ?? TOOL_DOT_CLASSES.default}`}
@@ -993,17 +1018,36 @@ export function WorkflowAdder(): React.JSX.Element {
           </div>
 
           {/* Activate button */}
-          <div className="flex shrink-0 flex-col gap-2 border-t border-[#1f2024] px-5 py-3.5">
+          <div className="flex shrink-0 flex-col gap-2 border-t border-att-divider px-5 py-3.5">
             {activated ? (
-              <div className="flex items-center justify-center gap-2 text-[12.5px] text-[#4caf82]">
-                <Check className="h-3.5 w-3.5" strokeWidth={2.5} />
-                Workflow activated
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center justify-center gap-2 text-[12.5px] text-att-green">
+                  <Check className="h-3.5 w-3.5" strokeWidth={2.5} />
+                  Workflow activated
+                </div>
+                <button
+                  onClick={() => {
+                    setConvoState('empty')
+                    setMessages([])
+                    setClarifyCard(null)
+                    setWorkflow(null)
+                    setInput('')
+                    setActivated(false)
+                    setActivating(false)
+                    setSelectedOption(null)
+                    pendingSessionRef.current = null
+                  }}
+                  className="flex w-full items-center justify-center gap-1.5 rounded-md border border-att-divider py-2 text-[12px] text-muted-foreground transition-colors hover:bg-att-surface-hover hover:text-foreground"
+                >
+                  <ArrowLeft className="h-3 w-3" />
+                  Create another workflow
+                </button>
               </div>
             ) : (
               <button
                 onClick={() => void handleActivate()}
                 disabled={convoState !== 'ready' || !workflow || activating}
-                className="flex w-full items-center justify-center gap-1.5 rounded-md bg-[#5b7cf6] py-2.5 text-[12.5px] font-medium text-white transition-opacity hover:opacity-85 disabled:cursor-not-allowed disabled:opacity-30"
+                className="flex w-full items-center justify-center gap-1.5 rounded-md bg-att-blue py-2.5 text-[12.5px] font-medium text-white transition-opacity hover:opacity-85 disabled:cursor-not-allowed disabled:opacity-30"
               >
                 {activating ? (
                   <RefreshCw className="h-3 w-3 animate-spin" />
@@ -1013,7 +1057,7 @@ export function WorkflowAdder(): React.JSX.Element {
                 Activate workflow
               </button>
             )}
-            <div className="text-center text-[10.5px] leading-snug text-[#4a4d55]">
+            <div className="text-center text-[10.5px] leading-snug text-muted-foreground/60">
               {convoState === 'ready'
                 ? 'Review the steps and tools before activating.'
                 : convoState === 'clarifying'
@@ -1025,11 +1069,11 @@ export function WorkflowAdder(): React.JSX.Element {
 
         {/* Library */}
         <div className="flex h-[220px] shrink-0 flex-col overflow-hidden">
-          <div className="flex shrink-0 items-center justify-between border-b border-[#1f2024] px-5 pb-2.5 pt-3">
-            <span className="font-mono text-[9px] uppercase tracking-[.1em] text-[#4a4d55]">
+          <div className="flex shrink-0 items-center justify-between border-b border-att-divider px-5 pb-2.5 pt-3">
+            <span className="font-mono text-[9px] uppercase tracking-[.1em] text-muted-foreground/60">
               Active workflows
             </span>
-            <span className="rounded bg-[#232428] px-1.5 py-0.5 font-mono text-[9px] text-[#4a4d55]">
+            <span className="rounded bg-att-surface-raised px-1.5 py-0.5 font-mono text-[9px] text-muted-foreground/60">
               {activeCount} active
             </span>
           </div>
@@ -1038,21 +1082,21 @@ export function WorkflowAdder(): React.JSX.Element {
             style={{ scrollbarWidth: 'thin', scrollbarColor: '#2a2b2f transparent' }}
           >
             {library.length === 0 ? (
-              <div className="px-2 pt-2 text-[11px] text-[#4a4d55]">No workflows yet.</div>
+              <div className="px-2 pt-2 text-[11px] text-muted-foreground/60">No workflows yet.</div>
             ) : (
               library.map((entry) => (
                 <div
                   key={entry.id}
-                  className="group flex items-center gap-2.5 rounded-md px-2 py-1.5 transition-colors hover:bg-[#1c1d20]"
+                  className="group flex items-center gap-2.5 rounded-md px-2 py-1.5 transition-colors hover:bg-att-surface-hover"
                 >
                   <div
                     className={`h-1.5 w-1.5 shrink-0 rounded-full ${
                       entry.status === 'active'
-                        ? 'bg-[#4caf82] shadow-[0_0_4px_#4caf82]'
-                        : 'bg-[#d4a843]'
+                        ? 'bg-att-green shadow-[0_0_4px_var(--att-green)]'
+                        : 'bg-att-orange'
                     }`}
                   />
-                  <div className="flex-1 truncate text-[12px] text-[#7a7d85]">{entry.name}</div>
+                  <div className="flex-1 truncate text-[12px] text-muted-foreground">{entry.name}</div>
                   {/* Run button — visible on hover */}
                   <button
                     onClick={() => {
@@ -1060,14 +1104,14 @@ export function WorkflowAdder(): React.JSX.Element {
                       setRunMessages([])
                       setRunInput('')
                     }}
-                    disabled={connectionState !== 'connected' || entry.status === 'paused'}
-                    className="hidden shrink-0 items-center gap-1 rounded bg-[rgba(91,124,246,.12)] px-1.5 py-0.5 font-mono text-[8px] text-[#5b7cf6] transition-colors hover:bg-[rgba(91,124,246,.2)] disabled:cursor-not-allowed disabled:opacity-40 group-hover:flex"
+                    disabled={entry.status === 'paused'}
+                    className="hidden shrink-0 items-center gap-1 rounded bg-att-blue/12 px-1.5 py-0.5 font-mono text-[8px] text-att-blue transition-colors hover:bg-att-blue/20 disabled:cursor-not-allowed disabled:opacity-40 group-hover:flex"
                   >
                     <Play className="h-2.5 w-2.5" />
                     Run
                   </button>
                   <div
-                    className={`shrink-0 font-mono text-[9px] text-[#4a4d55] ${entry.status !== 'paused' ? 'group-hover:hidden' : ''}`}
+                    className={`shrink-0 font-mono text-[9px] text-muted-foreground/60 ${entry.status !== 'paused' ? 'group-hover:hidden' : ''}`}
                   >
                     {entry.status === 'paused' ? 'paused' : `×${entry.runs}`}
                   </div>

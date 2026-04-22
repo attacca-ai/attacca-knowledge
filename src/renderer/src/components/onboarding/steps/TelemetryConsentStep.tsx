@@ -39,7 +39,7 @@ export function TelemetryConsentStep({
           <div className="space-y-4 text-sm text-muted-foreground">
             <div>
               <div className="mb-1 flex items-center gap-1.5 font-medium text-foreground">
-                <ShieldCheck className="h-4 w-4 text-green-500" />
+                <ShieldCheck className="h-4 w-4 text-att-green" />
                 What we collect
               </div>
               <ul className="ml-5.5 list-disc space-y-1 pl-1">
@@ -52,7 +52,7 @@ export function TelemetryConsentStep({
 
             <div>
               <div className="mb-1 flex items-center gap-1.5 font-medium text-foreground">
-                <ShieldCheck className="h-4 w-4 text-green-500" />
+                <ShieldCheck className="h-4 w-4 text-att-green" />
                 What we never collect
               </div>
               <ul className="ml-5.5 list-disc space-y-1 pl-1">

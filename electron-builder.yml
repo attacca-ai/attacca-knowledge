@@ -38,10 +38,6 @@ files:
 asarUnpack:
   - resources/**
 extraResources:
-  - from: node_modules/openclaw
-    to: openclaw
-    filter:
-      - '**/*'
   - from: models/all-MiniLM-L6-v2
     to: models/all-MiniLM-L6-v2
     filter:
@@ -98,5 +94,4 @@ linux:
       arch:
         - x64
 npmRebuild: true
-afterPack: scripts/fix-openclaw-deps.js
 afterSign: scripts/notarize.js

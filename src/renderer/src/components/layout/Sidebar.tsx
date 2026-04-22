@@ -1,14 +1,15 @@
 import { useState } from 'react'
 import { Settings } from 'lucide-react'
 import { useAgentStore } from '@/stores/agent-store'
-import { useGatewayStore } from '@/stores/gateway-store'
 import { cn } from '@/lib/utils'
 import { useTranslation } from '@/i18n'
 
 export type SidebarView =
   | 'dashboard'
   | 'capture'
+  | 'tasks'
   | 'schedule'
+  | 'knowledge-base'
   | 'workflows'
   | 'takeover'
   | 'meta-agent'
@@ -100,6 +101,32 @@ const IconTakeOver = (): React.JSX.Element => (
   </svg>
 )
 
+const IconTasks = (): React.JSX.Element => (
+  <svg
+    className="h-[14px] w-[14px] shrink-0"
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+  >
+    <path d="M3 4h10M3 8h10M3 12h7" />
+    <path d="M12 11l1 1 2-2.5" />
+  </svg>
+)
+
+const IconKnowledgeBase = (): React.JSX.Element => (
+  <svg
+    className="h-[14px] w-[14px] shrink-0"
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+  >
+    <path d="M3 2h10a1 1 0 011 1v10a1 1 0 01-1 1H3a1 1 0 01-1-1V3a1 1 0 011-1z" />
+    <path d="M5 5h6M5 8h4M5 11h5" />
+  </svg>
+)
+
 const IconConnections = (): React.JSX.Element => (
   <svg
     className="h-[14px] w-[14px] shrink-0"
@@ -138,13 +165,13 @@ function IconBtn({
       className={cn(
         'relative mx-auto flex h-9 w-9 items-center justify-center rounded transition-colors',
         isActive
-          ? 'bg-[rgba(91,124,246,.12)] text-[#5b7cf6]'
+          ? 'bg-att-blue/12 text-att-blue'
           : 'text-muted-foreground/60 hover:bg-muted/20 hover:text-foreground'
       )}
     >
       {icon}
       {badge !== undefined && badge > 0 && (
-        <span className="absolute right-[5px] top-[5px] flex h-[13px] min-w-[13px] items-center justify-center rounded-full bg-[#5b7cf6] px-[2px] font-mono text-[7px] text-white">
+        <span className="absolute right-[5px] top-[5px] flex h-[13px] min-w-[13px] items-center justify-center rounded-full bg-att-blue px-[2px] font-mono text-[7px] text-white">
           {badge > 9 ? '9+' : badge}
         </span>
       )}
@@ -176,14 +203,14 @@ function NavItem({
       className={cn(
         'flex w-full items-center gap-[9px] rounded px-2 py-[7px] text-left text-[12.5px] transition-colors',
         isActive
-          ? 'bg-[rgba(91,124,246,.12)] text-[#5b7cf6]'
+          ? 'bg-att-blue/12 text-att-blue'
           : 'text-muted-foreground hover:bg-muted/30 hover:text-foreground'
       )}
     >
       <span className={cn('shrink-0', isActive ? 'opacity-100' : 'opacity-[.7]')}>{icon}</span>
       <span className="flex-1">{label}</span>
       {badge !== undefined && badge > 0 && (
-        <span className="min-w-[18px] rounded-[10px] bg-[#5b7cf6] px-[5px] py-[1px] text-center font-mono text-[9px] text-white">
+        <span className="min-w-[18px] rounded-[10px] bg-att-blue px-[5px] py-[1px] text-center font-mono text-[9px] text-white">
           {badge}
         </span>
       )}
@@ -195,16 +222,14 @@ export function Sidebar({ activeView, onViewChange }: SidebarProps): React.JSX.E
   const [collapsed, setCollapsed] = useState(false)
   const { t } = useTranslation()
   const rawCapturesCount = useAgentStore((s) => s.rawCapturesCount)
-  const connectionState = useGatewayStore((s) => s.connectionState)
   const isProcessing = useAgentStore((s) => s.isProcessing)
 
-  const agentStatus =
-    connectionState !== 'connected' ? 'offline' : isProcessing ? 'working' : 'watching'
+  const agentStatus = isProcessing ? 'working' : 'watching'
 
   // ── Collapsed: icon-only rail ─────────────────────────────────────────────
   if (collapsed) {
     return (
-      <div className="flex w-11 shrink-0 flex-col border-r border-[#1f2024] bg-background py-2">
+      <div className="flex w-11 shrink-0 flex-col border-r border-att-divider bg-background py-2">
         {/* Expand toggle */}
         <button
           onClick={() => setCollapsed(false)}
@@ -231,13 +256,27 @@ export function Sidebar({ activeView, onViewChange }: SidebarProps): React.JSX.E
           onViewChange={onViewChange}
         />
         <IconBtn
+          view="tasks"
+          icon={<IconTasks />}
+          title={t('sidebar.tasks')}
+          isActive={activeView === 'tasks'}
+          onViewChange={onViewChange}
+        />
+        <IconBtn
           view="schedule"
           icon={<IconSchedule />}
           title={t('sidebar.schedule')}
           isActive={activeView === 'schedule'}
           onViewChange={onViewChange}
         />
-        <div className="mx-auto my-2 h-px w-6 bg-[#1f2024]" />
+        <IconBtn
+          view="knowledge-base"
+          icon={<IconKnowledgeBase />}
+          title={t('sidebar.knowledgeBase')}
+          isActive={activeView === 'knowledge-base'}
+          onViewChange={onViewChange}
+        />
+        <div className="mx-auto my-2 h-px w-6 bg-att-divider" />
 
         {/* Agent icons */}
         <IconBtn
@@ -264,7 +303,7 @@ export function Sidebar({ activeView, onViewChange }: SidebarProps): React.JSX.E
 
         {/* Bottom */}
         <div className="mt-auto">
-          <div className="mx-auto mb-1 h-px w-6 bg-[#1f2024]" />
+          <div className="mx-auto mb-1 h-px w-6 bg-att-divider" />
           <IconBtn
             view="settings"
             icon={<Settings className="h-[14px] w-[14px]" />}
@@ -280,11 +319,9 @@ export function Sidebar({ activeView, onViewChange }: SidebarProps): React.JSX.E
             <div
               className={cn(
                 'h-[7px] w-[7px] rounded-full',
-                agentStatus === 'offline'
-                  ? 'bg-muted-foreground/40'
-                  : agentStatus === 'working'
-                    ? 'animate-pulse bg-[#5b7cf6]'
-                    : 'animate-pulse bg-[#4caf82] shadow-[0_0_5px_#4caf82]'
+                agentStatus === 'working'
+                  ? 'animate-pulse bg-att-blue'
+                  : 'animate-pulse bg-att-green shadow-[0_0_5px_var(--att-green)]'
               )}
             />
           </div>
@@ -295,7 +332,7 @@ export function Sidebar({ activeView, onViewChange }: SidebarProps): React.JSX.E
 
   // ── Expanded: full sidebar with labels ────────────────────────────────────
   return (
-    <div className="flex w-[220px] shrink-0 flex-col border-r border-[#1f2024] bg-background py-4">
+    <div className="flex w-[220px] shrink-0 flex-col border-r border-att-divider bg-background py-4">
       {/* ── Collapse toggle ── */}
       <div className="mb-2 flex items-center justify-between px-3 pb-1">
         <p className="mb-1 px-2 font-mono text-[9px] uppercase tracking-[.12em] text-muted-foreground/50">
@@ -329,16 +366,30 @@ export function Sidebar({ activeView, onViewChange }: SidebarProps): React.JSX.E
             onViewChange={onViewChange}
           />
           <NavItem
+            view="tasks"
+            label={t('sidebar.tasks')}
+            icon={<IconTasks />}
+            isActive={activeView === 'tasks'}
+            onViewChange={onViewChange}
+          />
+          <NavItem
             view="schedule"
             label={t('sidebar.schedule')}
             icon={<IconSchedule />}
             isActive={activeView === 'schedule'}
             onViewChange={onViewChange}
           />
+          <NavItem
+            view="knowledge-base"
+            label={t('sidebar.knowledgeBase')}
+            icon={<IconKnowledgeBase />}
+            isActive={activeView === 'knowledge-base'}
+            onViewChange={onViewChange}
+          />
         </nav>
       </div>
 
-      <div className="mx-3 my-[10px] h-px bg-[#1f2024]" />
+      <div className="mx-3 my-[10px] h-px bg-att-divider" />
 
       {/* ── AGENT ── */}
       <div className="px-3">
@@ -372,7 +423,7 @@ export function Sidebar({ activeView, onViewChange }: SidebarProps): React.JSX.E
 
       {/* ── BOTTOM ── */}
       <div className="mt-auto px-3">
-        <div className="mb-[10px] h-px bg-[#1f2024]" />
+        <div className="mb-[10px] h-px bg-att-divider" />
 
         <NavItem
           view="settings"
@@ -383,15 +434,13 @@ export function Sidebar({ activeView, onViewChange }: SidebarProps): React.JSX.E
         />
 
         {/* Agent status widget */}
-        <div className="mt-2 flex items-center gap-2 rounded-[6px] border border-[#1f2024] bg-[#151618] px-2 py-[10px]">
+        <div className="mt-2 flex items-center gap-2 rounded-[6px] border border-att-divider bg-att-surface px-2 py-[10px]">
           <div
             className={cn(
               'h-[7px] w-[7px] shrink-0 rounded-full',
-              agentStatus === 'offline'
-                ? 'bg-muted-foreground/50'
-                : agentStatus === 'working'
-                  ? 'animate-pulse bg-[#5b7cf6]'
-                  : 'animate-pulse bg-[#4caf82] shadow-[0_0_6px_#4caf82]'
+              agentStatus === 'working'
+                ? 'animate-pulse bg-att-blue'
+                : 'animate-pulse bg-att-green shadow-[0_0_6px_var(--att-green)]'
             )}
           />
           <span className="text-[11px] text-muted-foreground">

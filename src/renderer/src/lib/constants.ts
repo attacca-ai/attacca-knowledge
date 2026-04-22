@@ -1,6 +1,3 @@
-export const GATEWAY_WS_URL = 'ws://127.0.0.1:18789'
-export const GATEWAY_PORT = 18789
-
 export const APP_NAME = 'Attacca'
 export const APP_DESCRIPTION = 'AI Productivity Assistant'
 

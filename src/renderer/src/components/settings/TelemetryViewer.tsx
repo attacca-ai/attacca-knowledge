@@ -66,17 +66,17 @@ export function TelemetryViewer({ onClose }: { onClose: () => void }): React.JSX
     >
       <div
         className="w-[560px] max-h-[80vh] rounded-[12px] overflow-hidden flex flex-col"
-        style={{ background: '#151618', border: '1px solid #1f2024' }}
+        style={{ background: 'var(--att-surface)', border: '1px solid var(--att-divider)' }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div
           className="px-5 py-4 flex items-center justify-between"
-          style={{ borderBottom: '1px solid #1f2024' }}
+          style={{ borderBottom: '1px solid var(--att-divider)' }}
         >
           <div>
-            <div className="text-[14px] text-[#e8e9eb] font-light">Datos de telemetria</div>
-            <div className="text-[11px] text-[#4a4d55] mt-0.5" style={{ fontFamily: MONO }}>
+            <div className="text-[14px] text-foreground font-light">Datos de telemetria</div>
+            <div className="text-[11px] text-muted-foreground/60 mt-0.5" style={{ fontFamily: MONO }}>
               {status
                 ? `${status.queueSize} eventos en cola${status.lastFlush ? ` · ultimo envio: ${formatTime(status.lastFlush)}` : ''} · ${status.optedIn ? 'activo' : 'desactivado'}`
                 : 'Cargando...'}
@@ -84,7 +84,7 @@ export function TelemetryViewer({ onClose }: { onClose: () => void }): React.JSX
           </div>
           <button
             onClick={onClose}
-            className="text-[#4a4d55] hover:text-[#7a7d85] text-[18px] cursor-pointer"
+            className="text-muted-foreground/60 hover:text-muted-foreground text-[18px] cursor-pointer"
             style={{ background: 'none', border: 'none', fontFamily: 'inherit' }}
           >
             x
@@ -94,7 +94,7 @@ export function TelemetryViewer({ onClose }: { onClose: () => void }): React.JSX
         {/* Events list */}
         <div className="flex-1 overflow-y-auto px-5 py-3 [scrollbar-width:thin]">
           {events.length === 0 ? (
-            <div className="text-[12px] text-[#4a4d55] text-center py-8">
+            <div className="text-[12px] text-muted-foreground/60 text-center py-8">
               No hay eventos en cola.
             </div>
           ) : (
@@ -102,7 +102,7 @@ export function TelemetryViewer({ onClose }: { onClose: () => void }): React.JSX
               <div
                 key={i}
                 className="mb-1.5 rounded-[6px] overflow-hidden"
-                style={{ background: '#1c1d20', border: '1px solid #232428' }}
+                style={{ background: 'var(--att-surface-hover)', border: '1px solid var(--att-surface-raised)' }}
               >
                 <button
                   onClick={() => toggleExpand(i)}
@@ -110,22 +110,22 @@ export function TelemetryViewer({ onClose }: { onClose: () => void }): React.JSX
                   style={{ background: 'none', border: 'none', fontFamily: 'inherit' }}
                 >
                   {expanded.has(i) ? (
-                    <ChevronDown className="w-3 h-3 text-[#4a4d55] flex-shrink-0" />
+                    <ChevronDown className="w-3 h-3 text-muted-foreground/60 flex-shrink-0" />
                   ) : (
-                    <ChevronRight className="w-3 h-3 text-[#4a4d55] flex-shrink-0" />
+                    <ChevronRight className="w-3 h-3 text-muted-foreground/60 flex-shrink-0" />
                   )}
-                  <span className="text-[11px] text-[#e8e9eb]" style={{ fontFamily: MONO }}>
+                  <span className="text-[11px] text-foreground" style={{ fontFamily: MONO }}>
                     {evt.eventType}
                   </span>
-                  <span className="text-[10px] text-[#4a4d55] ml-auto" style={{ fontFamily: MONO }}>
+                  <span className="text-[10px] text-muted-foreground/60 ml-auto" style={{ fontFamily: MONO }}>
                     {formatTime(evt.timestamp)}
                   </span>
                 </button>
 
                 {expanded.has(i) && (
-                  <div className="px-3 pb-2.5" style={{ borderTop: '1px solid #232428' }}>
+                  <div className="px-3 pb-2.5" style={{ borderTop: '1px solid var(--att-surface-raised)' }}>
                     <pre
-                      className="text-[10px] text-[#7a7d85] mt-2 whitespace-pre-wrap break-all"
+                      className="text-[10px] text-muted-foreground mt-2 whitespace-pre-wrap break-all"
                       style={{ fontFamily: MONO }}
                     >
                       {JSON.stringify(evt.payload, null, 2)}

@@ -1,7 +1,5 @@
 import { useState, useEffect } from 'react'
 import { useOnboardingStore } from '@/stores/onboarding-store'
-import { gatewayClient } from '@/lib/gateway-client'
-import { useGatewayStore } from '@/stores/gateway-store'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { ArrowLeft, ArrowRight, Loader2, RefreshCw, MessageSquare } from 'lucide-react'
@@ -13,8 +11,6 @@ interface UseCase {
 
 export function UseCaseStep({ onComplete: _ }: { onComplete: () => void }): React.JSX.Element {
   const { connectedTools, setSelectedUseCases, nextStep, prevStep } = useOnboardingStore()
-  const connectionState = useGatewayStore((s) => s.connectionState)
-
   const [useCases, setUseCases] = useState<UseCase[]>([])
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null)
   const [loading, setLoading] = useState(false)
@@ -29,10 +25,25 @@ export function UseCaseStep({ onComplete: _ }: { onComplete: () => void }): Reac
     setSelectedIndex(null)
 
     try {
-      if (connectionState === 'connected') {
-        const result = await gatewayClient.rpc<{ useCases: UseCase[] }>('agent.request', {
-          prompt: `Based on these connected productivity tools: ${connectedTools.join(', ')}, generate exactly 3 concrete use case proposals. Each should describe what the agent will do, which tools it will use, and give a specific example scenario. Return as JSON: { "useCases": [{ "title": string, "description": string }] }`
+      {
+        const sessionKey = `usecase-${crypto.randomUUID()}`
+        const prompt = `Based on these connected productivity tools: ${connectedTools.join(', ')}, generate exactly 3 concrete use case proposals. Each should describe what the agent will do, which tools it will use, and give a specific example scenario. Return as JSON: { "useCases": [{ "title": string, "description": string }] }`
+        const raw = await new Promise<string>((resolve, reject) => {
+          const unsubFinal = window.api.agent.onFinal((data) => {
+            if (data.sessionKey !== sessionKey) return
+            unsubFinal()
+            unsubErr()
+            resolve(data.message)
+          })
+          const unsubErr = window.api.agent.onError((data) => {
+            if (data.sessionKey !== sessionKey) return
+            unsubFinal()
+            unsubErr()
+            reject(new Error(data.error))
+          })
+          window.api.agent.send(sessionKey, prompt, sessionKey)
         })
+        const result = JSON.parse(raw) as { useCases?: UseCase[] }
         if (result.useCases?.length) {
           setUseCases(result.useCases)
           return
@@ -60,10 +71,25 @@ export function UseCaseStep({ onComplete: _ }: { onComplete: () => void }): Reac
     setError(null)
 
     try {
-      if (connectionState === 'connected') {
-        const result = await gatewayClient.rpc<{ useCases: UseCase[] }>('agent.request', {
-          prompt: `The user described their workflow: "${customDescription}". Connected tools: ${connectedTools.join(', ')}. Generate 1 custom use case proposal that matches their description. Return as JSON: { "useCases": [{ "title": string, "description": string }] }`
+      {
+        const sessionKey = `usecase-${crypto.randomUUID()}`
+        const prompt = `The user described their workflow: "${customDescription}". Connected tools: ${connectedTools.join(', ')}. Generate 1 custom use case proposal that matches their description. Return as JSON: { "useCases": [{ "title": string, "description": string }] }`
+        const raw = await new Promise<string>((resolve, reject) => {
+          const unsubFinal = window.api.agent.onFinal((data) => {
+            if (data.sessionKey !== sessionKey) return
+            unsubFinal()
+            unsubErr()
+            resolve(data.message)
+          })
+          const unsubErr = window.api.agent.onError((data) => {
+            if (data.sessionKey !== sessionKey) return
+            unsubFinal()
+            unsubErr()
+            reject(new Error(data.error))
+          })
+          window.api.agent.send(sessionKey, prompt, sessionKey)
         })
+        const result = JSON.parse(raw) as { useCases?: UseCase[] }
         if (result.useCases?.length) {
           setUseCases(result.useCases)
           setShowCustomInput(false)

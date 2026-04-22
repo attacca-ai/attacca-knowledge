@@ -7,14 +7,21 @@ let embedder: any = null
 let loadingPromise: Promise<any> | null = null
 
 /**
- * Resolve the model cache directory.
- * Production: bundled in app resources (extraResources).
- * Development: downloaded to {userData}/attacca-models/ on first run.
+ * Resolve the writable model cache directory.
+ * Always uses {userData}/attacca-models/ because the install directory
+ * (C:\Program Files\...) is read-only on Windows.
  */
-function getModelCacheDir(): string {
-  const resourcePath = join(process.resourcesPath || '', 'models')
-  if (existsSync(resourcePath)) return resourcePath
+function getWritableCacheDir(): string {
   return join(app.getPath('userData'), 'attacca-models')
+}
+
+/**
+ * Check if bundled model weights exist in app resources (read-only).
+ */
+function getBundledModelDir(): string | null {
+  const resourcePath = join(process.resourcesPath || '', 'models')
+  if (existsSync(join(resourcePath, 'onnx'))) return resourcePath
+  return null
 }
 
 /**
@@ -27,14 +34,14 @@ async function getEmbedder(): Promise<any> {
 
   loadingPromise = (async () => {
     const { pipeline } = await import('@huggingface/transformers')
-    const cacheDir = getModelCacheDir()
-    const hasBundled = existsSync(join(cacheDir, 'onnx'))
+    const bundledDir = getBundledModelDir()
+    const writableDir = getWritableCacheDir()
 
     const pipe = await pipeline('feature-extraction', EMBEDDING_MODEL_ID, {
-      // Use bundled weights if available, otherwise download from HuggingFace Hub
-      ...(hasBundled
-        ? { local_files_only: true, cache_dir: cacheDir }
-        : { cache_dir: getModelCacheDir() }),
+      // Use bundled weights if available (read-only), otherwise download to writable dir
+      ...(bundledDir
+        ? { local_files_only: true, cache_dir: bundledDir }
+        : { cache_dir: writableDir }),
       dtype: 'fp32'
     })
     return pipe

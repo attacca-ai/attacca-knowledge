@@ -1,19 +1,16 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { gatewayClient } from '@/lib/gateway-client'
 import {
   useAgentStore,
   type AgentThread,
   type LandscapeTheme,
   type MorningLandscape
 } from '@/stores/agent-store'
-import { useGatewayStore } from '@/stores/gateway-store'
 import { useOnboardingStore } from '@/stores/onboarding-store'
 import { normalizeComposioSlugs } from '@/lib/constants'
 import { useSettingsStore } from '@/stores/settings-store'
-import { ArrowLeft, ArrowUp, Loader2, RefreshCw, X } from 'lucide-react'
+import { ArrowLeft, ArrowUp, Loader2, RefreshCw, X, ListTodo, ArchiveX } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { cn, extractMessageText } from '@/lib/utils'
-import type { OcEvent } from '@/types/gateway'
+import { cn } from '@/lib/utils'
 
 const LANDSCAPE_TIMEOUT_MS = 120_000
 const LANDSCAPE_REFRESH_MS = 6 * 60 * 60 * 1000 // 6 hours
@@ -44,7 +41,8 @@ const TOOL_ACTIONS: Record<string, string> = {
 function buildLandscapePrompt(
   connectedTools: string[],
   recentCaptureLines: string[],
-  openThreadLines: string[]
+  openThreadLines: string[],
+  archivedThemeLines: string[]
 ): string {
   const toolLines = connectedTools.filter((t) => TOOL_ACTIONS[t]).map((t) => `- ${TOOL_ACTIONS[t]}`)
 
@@ -56,6 +54,11 @@ function buildLandscapePrompt(
   if (openThreadLines.length > 0) {
     contextParts.push(
       `Open threads (unresolved questions the agent is holding):\n${openThreadLines.join('\n')}`
+    )
+  }
+  if (archivedThemeLines.length > 0) {
+    contextParts.push(
+      `DISMISSED THEMES (the user archived these — do NOT resurface them or similar topics):\n${archivedThemeLines.join('\n')}`
     )
   }
   const contextSection =
@@ -100,10 +103,10 @@ function truncateToSentences(text: string, max: number): string {
 }
 
 const WEIGHT_STYLES: Record<LandscapeTheme['weight'], { strip: string; label: string }> = {
-  high: { strip: 'bg-[#e05c5c]', label: 'text-[#e05c5c]' },
-  mid: { strip: 'bg-[#d4a843]', label: 'text-[#d4a843]' },
-  low: { strip: 'bg-[#4caf82]', label: 'text-[#4caf82]' },
-  neutral: { strip: 'bg-[#5b7cf6]', label: 'text-[#5b7cf6]' }
+  high: { strip: 'bg-att-red', label: 'text-att-red' },
+  mid: { strip: 'bg-att-orange', label: 'text-att-orange' },
+  low: { strip: 'bg-att-green', label: 'text-att-green' },
+  neutral: { strip: 'bg-att-blue', label: 'text-att-blue' }
 }
 
 const WEIGHT_LABELS: Record<LandscapeTheme['weight'], string> = {
@@ -136,7 +139,7 @@ function formatThreadAge(createdAt: number): { label: string; colorClass: string
   const label =
     diffDays >= 1 ? `${diffDays}d open` : diffHours >= 1 ? `${diffHours}h open` : 'just opened'
   const colorClass =
-    diffDays >= 7 ? 'text-red-500' : diffDays >= 3 ? 'text-yellow-500' : 'text-muted-foreground/50'
+    diffDays >= 7 ? 'text-att-red' : diffDays >= 3 ? 'text-att-orange' : 'text-muted-foreground/50'
   return { label, colorClass }
 }
 
@@ -157,12 +160,6 @@ function formatTimestamp(timeZone?: string): string {
   return `${base} · ${city.toUpperCase()}`
 }
 
-interface ThreadMessage {
-  role: 'agent' | 'user'
-  text: string
-  ts: number
-}
-
 function ThreadChatPanel({
   thread,
   onBack
@@ -170,25 +167,31 @@ function ThreadChatPanel({
   thread: AgentThread
   onBack: () => void
 }): React.JSX.Element {
-  const [messages, setMessages] = useState<ThreadMessage[]>([
-    { role: 'agent', text: thread.holdingNote || 'Procesando…', ts: thread.createdAt }
-  ])
+  const messages = useAgentStore((s) => s.threadMessages[thread.id] ?? [])
+  const addThreadMessage = useAgentStore((s) => s.addThreadMessage)
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const pendingSessionKeyRef = useRef<string | null>(null)
   const { updateThreadNote, closeThread } = useAgentStore()
-  const connectionState = useGatewayStore((s) => s.connectionState)
+
+  // Seed the initial holding note message for each thread that has no messages yet.
+  // Per-thread guard — uses messages.length for the active thread so switching
+  // threads re-seeds the new one (prior ref-based guard was component-scoped).
+  useEffect(() => {
+    if (messages.length === 0) {
+      addThreadMessage(thread.id, {
+        role: 'agent',
+        text: thread.holdingNote || 'Procesando…',
+        ts: thread.createdAt
+      })
+    }
+  }, [thread.id, thread.holdingNote, thread.createdAt, messages.length, addThreadMessage])
 
   useEffect(() => {
-    const handler = (ev: OcEvent): void => {
-      if (ev.event !== 'chat') return
-      const payload = (ev.payload ?? {}) as Record<string, unknown>
-      if (payload.state !== 'final') return
-      if (!pendingSessionKeyRef.current || payload.sessionKey !== pendingSessionKeyRef.current)
+    const unsub = window.api.agent.onFinal((data) => {
+      if (!pendingSessionKeyRef.current || data.sessionKey !== pendingSessionKeyRef.current)
         return
-      const rawText = extractMessageText(
-        payload.message as Parameters<typeof extractMessageText>[0]
-      )
+      const rawText = data.message
       pendingSessionKeyRef.current = null
       setSending(false)
       let note = rawText
@@ -209,7 +212,7 @@ function ThreadChatPanel({
           /* use raw */
         }
       }
-      setMessages((prev) => [...prev, { role: 'agent', text: note, ts: Date.now() }])
+      addThreadMessage(thread.id, { role: 'agent', text: note, ts: Date.now() })
       if (typeof newHoldingNote === 'string') {
         updateThreadNote(thread.id, newHoldingNote)
       }
@@ -217,16 +220,15 @@ function ThreadChatPanel({
         closeThread(thread.id)
         onBack()
       }
-    }
-    gatewayClient.on('*', handler)
-    return () => gatewayClient.off('*', handler)
-  }, [thread.id, thread.holdingNote, updateThreadNote, closeThread, onBack])
+    })
+    return unsub
+  }, [thread.id, thread.holdingNote, updateThreadNote, closeThread, onBack, addThreadMessage])
 
   const handleSend = async (): Promise<void> => {
-    if (!input.trim() || sending || connectionState !== 'connected') return
+    if (!input.trim() || sending) return
     const userText = input.trim()
     setInput('')
-    setMessages((prev) => [...prev, { role: 'user', text: userText, ts: Date.now() }])
+    addThreadMessage(thread.id, { role: 'user', text: userText, ts: Date.now() })
     setSending(true)
     const sessionKey = `agent:main:thread-${thread.id}-${crypto.randomUUID()}`
     pendingSessionKeyRef.current = sessionKey
@@ -238,11 +240,7 @@ function ThreadChatPanel({
       `{"note":"Tu respuesta conversacional.","holdingNote":"Qué sigues esperando (null si resuelto).","resolvedThreadIds":[]}\n` +
       `- Incluye "${thread.id}" en resolvedThreadIds si este hilo queda completamente resuelto.`
     try {
-      await gatewayClient.rpc('chat.send', {
-        sessionKey,
-        message: prompt,
-        idempotencyKey: sessionKey
-      })
+      await window.api.agent.send(sessionKey, prompt, sessionKey)
     } catch {
       setSending(false)
       pendingSessionKeyRef.current = null
@@ -252,7 +250,7 @@ function ThreadChatPanel({
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       {/* Header */}
-      <div className="flex items-center gap-3 border-b border-[#1f2024] px-6 py-4">
+      <div className="flex items-center gap-3 border-b border-att-divider px-6 py-4">
         <button
           onClick={onBack}
           className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground"
@@ -273,8 +271,8 @@ function ThreadChatPanel({
               className={cn(
                 'max-w-[80%] rounded-lg px-3 py-2 text-[12.5px] leading-[1.5]',
                 m.role === 'user'
-                  ? 'bg-[rgba(91,124,246,.15)] text-foreground'
-                  : 'bg-[#232428] italic text-muted-foreground'
+                  ? 'bg-att-blue/15 text-foreground'
+                  : 'bg-att-surface-raised italic text-muted-foreground'
               )}
             >
               {m.text}
@@ -283,7 +281,7 @@ function ThreadChatPanel({
         ))}
         {sending && (
           <div className="flex justify-start">
-            <div className="rounded-lg bg-[#232428] px-3 py-2">
+            <div className="rounded-lg bg-att-surface-raised px-3 py-2">
               <span className="animate-pulse text-[11px] text-muted-foreground/50">pensando…</span>
             </div>
           </div>
@@ -291,7 +289,7 @@ function ThreadChatPanel({
       </div>
 
       {/* Input */}
-      <div className="shrink-0 border-t border-[#1f2024] px-6 py-4">
+      <div className="shrink-0 border-t border-att-divider px-6 py-4">
         <div className="flex gap-2">
           <input
             value={input}
@@ -303,12 +301,12 @@ function ThreadChatPanel({
               }
             }}
             placeholder="Responde al agente…"
-            className="flex-1 rounded-md border border-[#1f2024] bg-[#151618] px-3 py-2 text-[12.5px] text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-[#5b7cf6]/50"
+            className="flex-1 rounded-md border border-att-divider bg-att-surface px-3 py-2 text-[12.5px] text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-att-blue/50"
           />
           <button
             onClick={() => void handleSend()}
-            disabled={!input.trim() || sending || connectionState !== 'connected'}
-            className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-md bg-[#5b7cf6] text-white transition-opacity disabled:opacity-40"
+            disabled={!input.trim() || sending}
+            className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-md bg-att-blue text-white transition-opacity disabled:opacity-40"
           >
             <ArrowUp className="h-4 w-4" />
           </button>
@@ -323,17 +321,23 @@ export function LandscapeView(): React.JSX.Element {
     morningLandscape,
     themes,
     threads,
+    activeThreadId,
     setMorningLandscape,
     setThemes,
     setThreads,
-    closeThread
+    setActiveThreadId,
+    closeThread,
+    addLocalTask,
+    archiveTheme
   } = useAgentStore()
-  const connectionState = useGatewayStore((s) => s.connectionState)
   const connectedTools = useOnboardingStore((s) => s.connectedTools)
   const userTimezone = useSettingsStore((s) => s.userTimezone)
   const [loading, setLoading] = useState(false)
   const [timestamp, setTimestamp] = useState(() => formatTimestamp(userTimezone))
-  const [activeThread, setActiveThread] = useState<AgentThread | null>(null)
+  const [taskCreatedId, setTaskCreatedId] = useState<string | null>(null)
+  const [archivingThemeId, setArchivingThemeId] = useState<string | null>(null)
+  const [archiveNoteInput, setArchiveNoteInput] = useState('')
+  const activeThread = threads.find((t) => t.id === activeThreadId) ?? null
   // Ensures auto-trigger fires at most once per app session
   const hasAutoTriggeredRef = useRef(false)
 
@@ -353,18 +357,13 @@ export function LandscapeView(): React.JSX.Element {
       focusCapture((payload.text as string) || '')
       return
     }
-    if (connectionState !== 'connected') return
-    gatewayClient
-      .rpc('chat.send', {
-        sessionKey: 'agent:main:main',
-        message: JSON.stringify({ type: action.actionType, payload: action.payload }),
-        idempotencyKey: crypto.randomUUID()
-      })
+    window.api.agent
+      .send('main', JSON.stringify({ type: action.actionType, payload: action.payload }), crypto.randomUUID())
       .catch(() => undefined)
   }
 
   const generateLandscape = useCallback(async (): Promise<void> => {
-    if (connectionState !== 'connected' || loading) return
+    if (loading) return
     setLoading(true)
 
     // Always fetch the latest connected apps so we never use a stale snapshot.
@@ -385,6 +384,10 @@ export function LandscapeView(): React.JSX.Element {
     const openThreadLines = storeState.threads
       .slice(0, 3)
       .map((t) => `  "${t.title}": ${t.holdingNote}`)
+    const archivedThemeLines = storeState.themes
+      .filter((t) => t.archived)
+      .slice(0, 10)
+      .map((t) => `  - "${t.title}"${t.archiveNote ? ` (reason: ${t.archiveNote})` : ''}`)
 
     // Use a unique session per generation so the agent starts with clean context
     // and won't carry over stale "tool disconnected" memory from previous turns.
@@ -392,38 +395,28 @@ export function LandscapeView(): React.JSX.Element {
     const sessionKey = `agent:main:landscape-${idempotencyKey}`
 
     try {
-      await gatewayClient.rpc('chat.send', {
-        sessionKey,
-        message: buildLandscapePrompt(liveTools, recentCaptureLines, openThreadLines),
-        idempotencyKey
-      })
-
       let done = false
       const timeoutId = setTimeout(() => {
         if (!done) {
           done = true
-          gatewayClient.off('*', handler)
+          unsubFinal()
+          unsubError()
           setLoading(false)
         }
       }, LANDSCAPE_TIMEOUT_MS)
 
-      const handler = (event: OcEvent): void => {
-        if (event.event !== 'chat') return
-        const payload = (event.payload ?? {}) as Record<string, unknown>
-        const state = payload.state as string
-
+      const unsubFinal = window.api.agent.onFinal((data) => {
         // Only process events from this landscape session
-        if (payload.sessionKey !== undefined && payload.sessionKey !== sessionKey) return
+        if (data.sessionKey !== sessionKey) return
 
-        if (state === 'final' && !done) {
+        if (!done) {
           done = true
           clearTimeout(timeoutId)
-          gatewayClient.off('*', handler)
+          unsubFinal()
+          unsubError()
           setLoading(false)
 
-          const rawText = extractMessageText(
-            payload.message as Parameters<typeof extractMessageText>[0]
-          )
+          const rawText = data.message
 
           // Extract JSON — strip possible markdown code fences
           const jsonMatch = rawText.match(/\{[\s\S]*\}/)
@@ -479,23 +472,28 @@ export function LandscapeView(): React.JSX.Element {
           } catch {
             // JSON parse failed — silently ignore, user can retry
           }
-        } else if (state === 'error' && !done) {
+        }
+      })
+
+      const unsubError = window.api.agent.onError((data) => {
+        if (data.sessionKey !== sessionKey) return
+        if (!done) {
           done = true
           clearTimeout(timeoutId)
-          gatewayClient.off('*', handler)
+          unsubFinal()
+          unsubError()
           setLoading(false)
         }
-      }
+      })
 
-      gatewayClient.on('*', handler)
+      await window.api.agent.send(sessionKey, buildLandscapePrompt(liveTools, recentCaptureLines, openThreadLines, archivedThemeLines), idempotencyKey)
     } catch {
       setLoading(false)
     }
-  }, [connectionState, loading, connectedTools, setMorningLandscape, setThemes, setThreads])
+  }, [loading, connectedTools, setMorningLandscape, setThemes, setThreads])
 
   // Auto-trigger landscape when connected if missing or stale (>6h since last generation)
   useEffect(() => {
-    if (connectionState !== 'connected') return
     if (hasAutoTriggeredRef.current) return
 
     const landscape = useAgentStore.getState().morningLandscape
@@ -504,7 +502,7 @@ export function LandscapeView(): React.JSX.Element {
       hasAutoTriggeredRef.current = true
       generateLandscape()
     }
-  }, [connectionState]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
@@ -525,7 +523,7 @@ export function LandscapeView(): React.JSX.Element {
             {/* Agent question */}
             {morningLandscape.question && (
               <p className="mt-3 border-l-2 border-border pl-3 text-sm italic text-muted-foreground">
-                <strong className="font-normal not-italic text-blue-400">
+                <strong className="font-normal not-italic text-att-blue">
                   {morningLandscape.question}
                 </strong>
               </p>
@@ -558,7 +556,7 @@ export function LandscapeView(): React.JSX.Element {
                 variant="ghost"
                 size="icon-xs"
                 onClick={generateLandscape}
-                disabled={loading || connectionState !== 'connected'}
+                disabled={loading}
                 title="Refresh landscape"
                 className="ml-auto"
               >
@@ -580,7 +578,7 @@ export function LandscapeView(): React.JSX.Element {
                 size="sm"
                 variant="outline"
                 onClick={generateLandscape}
-                disabled={connectionState !== 'connected'}
+                disabled={false}
               >
                 Generate Landscape
               </Button>
@@ -591,7 +589,7 @@ export function LandscapeView(): React.JSX.Element {
 
       {/* ── Body ── */}
       {activeThread ? (
-        <ThreadChatPanel thread={activeThread} onBack={() => setActiveThread(null)} />
+        <ThreadChatPanel thread={activeThread} onBack={() => setActiveThreadId(null)} />
       ) : null}
       <div className={cn('flex-1 overflow-y-auto px-6 py-5', activeThread ? 'hidden' : '')}>
         {/* Themes */}
@@ -600,14 +598,14 @@ export function LandscapeView(): React.JSX.Element {
             What I&apos;m noticing · themes
           </p>
 
-          {themes.length > 0 ? (
+          {themes.filter((t) => !t.archived).length > 0 ? (
             <div className="grid grid-cols-2 gap-[10px]">
-              {themes.slice(0, 4).map((theme) => {
+              {themes.filter((t) => !t.archived).slice(0, 4).map((theme) => {
                 const styles = WEIGHT_STYLES[theme.weight]
                 return (
                   <div
                     key={theme.id}
-                    className="relative cursor-pointer overflow-hidden rounded-lg border border-[#1f2024] bg-[#151618] px-4 py-[14px] transition-colors hover:bg-[#1c1d20]"
+                    className="relative cursor-pointer overflow-hidden rounded-lg border border-att-divider bg-att-surface px-4 py-[14px] transition-colors hover:bg-att-surface-hover"
                   >
                     {/* Left accent strip */}
                     <div className={cn('absolute bottom-0 left-0 top-0 w-[3px]', styles.strip)} />
@@ -628,7 +626,7 @@ export function LandscapeView(): React.JSX.Element {
                       {theme.tags.map((tag) => (
                         <span
                           key={tag}
-                          className="rounded-[3px] bg-[#232428] px-[6px] py-[2px] font-mono text-[9px] text-muted-foreground/60"
+                          className="rounded-[3px] bg-att-surface-raised px-[6px] py-[2px] font-mono text-[9px] text-muted-foreground/60"
                         >
                           {tag}
                         </span>
@@ -637,6 +635,76 @@ export function LandscapeView(): React.JSX.Element {
                         <span className="ml-auto font-mono text-[9px] text-muted-foreground/50">
                           ×{theme.mentionCount} esta semana
                         </span>
+                      )}
+                    </div>
+                    <div className="mt-2 flex flex-col gap-1.5">
+                      {archivingThemeId === theme.id ? (
+                        <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            autoFocus
+                            value={archiveNoteInput}
+                            onChange={(e) => setArchiveNoteInput(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                archiveTheme(theme.id, archiveNoteInput.trim() || 'Dismissed')
+                                setArchivingThemeId(null)
+                                setArchiveNoteInput('')
+                              }
+                              if (e.key === 'Escape') {
+                                setArchivingThemeId(null)
+                                setArchiveNoteInput('')
+                              }
+                            }}
+                            placeholder="Why dismiss? (Enter to confirm)"
+                            className="flex-1 rounded border border-att-divider bg-att-surface px-2 py-1 text-[10px] text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-att-blue/50"
+                          />
+                          <button
+                            onClick={() => {
+                              archiveTheme(theme.id, archiveNoteInput.trim() || 'Dismissed')
+                              setArchivingThemeId(null)
+                              setArchiveNoteInput('')
+                            }}
+                            className="rounded bg-att-red/12 px-2 py-1 text-[10px] text-att-red"
+                          >
+                            Dismiss
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex justify-end gap-1">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setArchivingThemeId(theme.id)
+                          setArchiveNoteInput('')
+                        }}
+                        className="flex items-center gap-1 rounded px-2 py-1 text-[10px] text-muted-foreground/50 transition-colors hover:bg-muted/20 hover:text-muted-foreground"
+                        title="Archive theme — won't appear in future landscapes"
+                      >
+                        <ArchiveX className="h-3 w-3" />
+                        Dismiss
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          addLocalTask({
+                            description: `${theme.title}: ${theme.description}`,
+                            sourceType: 'theme',
+                            sourceId: theme.id
+                          })
+                          setTaskCreatedId(theme.id)
+                          setTimeout(() => setTaskCreatedId(null), 2000)
+                        }}
+                        className={cn(
+                          'flex items-center gap-1 rounded px-2 py-1 text-[10px] transition-colors',
+                          taskCreatedId === theme.id
+                            ? 'bg-att-green/12 text-att-green'
+                            : 'text-att-blue hover:bg-att-blue/12'
+                        )}
+                      >
+                        <ListTodo className="h-3 w-3" />
+                        {taskCreatedId === theme.id ? 'Added to Tasks' : 'Work on this'}
+                      </button>
+                        </div>
                       )}
                     </div>
                   </div>
@@ -666,8 +734,8 @@ export function LandscapeView(): React.JSX.Element {
                 return (
                   <div
                     key={thread.id}
-                    onClick={() => setActiveThread(thread)}
-                    className="cursor-pointer rounded-lg border border-[#1f2024] bg-[#151618] px-[15px] py-[13px] transition-colors hover:bg-[#1c1d20]"
+                    onClick={() => setActiveThreadId(thread.id)}
+                    className="cursor-pointer rounded-lg border border-att-divider bg-att-surface px-[15px] py-[13px] transition-colors hover:bg-att-surface-hover"
                   >
                     <div className="mb-[6px] flex items-center gap-[10px]">
                       <span className="flex-1 text-[12.5px] font-medium text-foreground">
@@ -686,7 +754,7 @@ export function LandscapeView(): React.JSX.Element {
                       </button>
                     </div>
                     {thread.holdingNote && (
-                      <p className="rounded-[4px] border-l-2 border-border bg-[#232428] px-[10px] py-[6px] text-[11.5px] italic text-muted-foreground before:mr-1 before:font-mono before:text-[9px] before:not-italic before:uppercase before:tracking-[.06em] before:text-muted-foreground/50 before:content-['esperando_→']">
+                      <p className="rounded-[4px] border-l-2 border-border bg-att-surface-raised px-[10px] py-[6px] text-[11.5px] italic text-muted-foreground before:mr-1 before:font-mono before:text-[9px] before:not-italic before:uppercase before:tracking-[.06em] before:text-muted-foreground/50 before:content-['esperando_→']">
                         {thread.holdingNote}
                       </p>
                     )}

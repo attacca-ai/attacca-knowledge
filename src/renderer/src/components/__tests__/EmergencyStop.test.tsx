@@ -2,17 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, act } from '@testing-library/react'
 import { EmergencyStop } from '../dashboard/EmergencyStop'
 import { useAgentStore } from '../../stores/agent-store'
-import { useGatewayStore } from '../../stores/gateway-store'
 import { installMockApi, cleanupMockApi } from '../../../../../tests/helpers'
-
-// Mock gateway client module
-const mockRpc = vi.fn().mockResolvedValue(undefined)
-
-vi.mock('@/lib/gateway-client', () => ({
-  gatewayClient: {
-    rpc: (...args: unknown[]) => mockRpc(...args)
-  }
-}))
 
 describe('EmergencyStop', () => {
   beforeEach(() => {
@@ -27,8 +17,6 @@ describe('EmergencyStop', () => {
       morningBriefing: null,
       briefingDate: null
     })
-    useGatewayStore.setState({ connectionState: 'connected' })
-    mockRpc.mockClear()
   })
 
   afterEach(() => {
@@ -48,17 +36,15 @@ describe('EmergencyStop', () => {
     expect(screen.getByText(/CONFIRM/i)).toBeInTheDocument()
   })
 
-  it('second click executes emergencyStop and sends RPC', async () => {
+  it('second click executes emergencyStop and calls agent.stop', async () => {
     render(<EmergencyStop />)
 
-    // First click
     fireEvent.click(screen.getByRole('button'))
-    // Second click
     fireEvent.click(screen.getByRole('button'))
 
     expect(useAgentStore.getState().currentTask).toBeNull()
     expect(useAgentStore.getState().isProcessing).toBe(false)
-    expect(mockRpc).toHaveBeenCalledWith('agent.stop')
+    expect(window.api.agent.stop).toHaveBeenCalledWith('main')
   })
 
   it('auto-resets confirmation after 3 seconds', () => {
@@ -74,24 +60,13 @@ describe('EmergencyStop', () => {
     expect(screen.getByText('Emergency Stop')).toBeInTheDocument()
   })
 
-  it('sends RPC only when gateway is connected', () => {
-    useGatewayStore.setState({ connectionState: 'connected' })
+  it('calls agent.stop on second click', () => {
     render(<EmergencyStop />)
 
     fireEvent.click(screen.getByRole('button'))
     fireEvent.click(screen.getByRole('button'))
 
-    expect(mockRpc).toHaveBeenCalledWith('agent.stop')
-  })
-
-  it('does not send RPC when disconnected', () => {
-    useGatewayStore.setState({ connectionState: 'disconnected' })
-    render(<EmergencyStop />)
-
-    fireEvent.click(screen.getByRole('button'))
-    fireEvent.click(screen.getByRole('button'))
-
-    expect(mockRpc).not.toHaveBeenCalled()
+    expect(window.api.agent.stop).toHaveBeenCalledWith('main')
   })
 
   it('resets confirming state after executing stop', () => {

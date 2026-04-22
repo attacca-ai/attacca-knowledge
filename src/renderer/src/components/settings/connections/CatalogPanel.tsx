@@ -46,23 +46,23 @@ export function CatalogPanel({
 
   return (
     <div
-      className="flex w-[260px] shrink-0 flex-col overflow-y-auto border-l border-[#1f2024] bg-[#0e0f11]"
+      className="flex w-[260px] shrink-0 flex-col overflow-y-auto border-l border-att-divider bg-background"
       style={{ scrollbarWidth: 'thin', scrollbarColor: '#2a2b2f transparent' }}
     >
-      <div className="sticky top-0 bg-[#0e0f11] p-5 pb-0">
-        <div className="mb-[8px] font-mono text-[9px] uppercase tracking-[.1em] text-[#4a4d55]">
+      <div className="sticky top-0 bg-background p-5 pb-0">
+        <div className="mb-[8px] font-mono text-[9px] uppercase tracking-[.1em] text-muted-foreground/60">
           {t('catalog.title')}
         </div>
 
         {/* Search */}
         <div className="relative mb-[10px]">
-          <Search className="absolute left-[9px] top-1/2 h-[11px] w-[11px] -translate-y-1/2 text-[#4a4d55]" />
+          <Search className="absolute left-[9px] top-1/2 h-[11px] w-[11px] -translate-y-1/2 text-muted-foreground/60" />
           <input
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={t('catalog.search')}
-            className="w-full rounded-[6px] border border-[#2a2b2f] bg-[#151618] py-2 pl-7 pr-3 font-sans text-[12px] text-[#e8e9eb] outline-none placeholder:text-[#4a4d55] focus:border-[#5b7cf6]"
+            className="w-full rounded-[6px] border border-att-divider bg-att-surface py-2 pl-7 pr-3 font-sans text-[12px] text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-att-blue"
           />
         </div>
       </div>
@@ -72,17 +72,17 @@ export function CatalogPanel({
           <div className="flex flex-col gap-2 py-2">
             {Array.from({ length: 8 }).map((_, i) => (
               <div key={i} className="flex items-center gap-2 rounded-[5px] px-2 py-[6px]">
-                <div className="h-[22px] w-[22px] animate-pulse rounded-[4px] bg-[#232428]" />
-                <div className="h-3 flex-1 animate-pulse rounded bg-[#1c1d20]" />
+                <div className="h-[22px] w-[22px] animate-pulse rounded-[4px] bg-att-surface-raised" />
+                <div className="h-3 flex-1 animate-pulse rounded bg-att-surface-hover" />
               </div>
             ))}
           </div>
         ) : filtered.length === 0 ? (
           <div className="py-4 text-center">
-            <div className="mb-1 text-[12px] text-[#4a4d55]">{t('catalog.no_results')}</div>
+            <div className="mb-1 text-[12px] text-muted-foreground/60">{t('catalog.no_results')}</div>
             <button
               onClick={() => onNavigateToCustomTools(query.trim())}
-              className="text-[11px] text-[#5b7cf6] hover:underline"
+              className="text-[11px] text-att-blue hover:underline"
             >
               {t('catalog.custom_link')}
             </button>
@@ -97,16 +97,16 @@ export function CatalogPanel({
                   onClick={() => {
                     if (!isConnected) onConnectTool(app.slug)
                   }}
-                  className="flex cursor-pointer items-center gap-2 rounded-[5px] px-2 py-[6px] transition-colors hover:bg-[#1c1d20]"
+                  className="flex cursor-pointer items-center gap-2 rounded-[5px] px-2 py-[6px] transition-colors hover:bg-att-surface-hover"
                 >
-                  <div className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-[4px] bg-[#232428] text-[11px]">
+                  <div className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-[4px] bg-att-surface-raised text-[11px]">
                     {app.name.charAt(0)}
                   </div>
-                  <span className="flex-1 truncate text-[12px] text-[#7a7d85] hover:text-[#e8e9eb]">
+                  <span className="flex-1 truncate text-[12px] text-muted-foreground hover:text-foreground">
                     {app.name}
                   </span>
                   {isConnected && (
-                    <span className="shrink-0 rounded-[2px] bg-[rgba(76,175,130,.1)] px-[4px] py-[1px] font-mono text-[8px] text-[#4caf82]">
+                    <span className="shrink-0 rounded-[2px] bg-att-green/10 px-[4px] py-[1px] font-mono text-[8px] text-att-green">
                       ✓
                     </span>
                   )}

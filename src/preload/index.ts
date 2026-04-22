@@ -73,6 +73,13 @@ const api = {
     getDefaults: () => ipcRenderer.invoke('composio:get-defaults')
   },
 
+  // Direct integrations
+  clickup: {
+    connect: (token: string) => ipcRenderer.invoke('clickup:connect', token),
+    disconnect: () => ipcRenderer.invoke('clickup:disconnect'),
+    status: () => ipcRenderer.invoke('clickup:status')
+  },
+
   // Relay (remaining — moved to local in Phase 3)
   relay: {
     getUsage: () => ipcRenderer.invoke('relay:get-usage'),

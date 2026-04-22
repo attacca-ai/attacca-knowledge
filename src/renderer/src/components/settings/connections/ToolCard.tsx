@@ -23,6 +23,7 @@ interface ToolCardProps {
   isDisconnecting: boolean
   onConnect: () => void
   onDisconnect: () => void
+  onAddAccount?: () => void
 }
 
 export function ToolCard({
@@ -34,7 +35,8 @@ export function ToolCard({
   isConnecting,
   isDisconnecting,
   onConnect,
-  onDisconnect
+  onDisconnect,
+  onAddAccount
 }: ToolCardProps): React.JSX.Element {
   const { t } = useTranslation()
   return (
@@ -42,38 +44,52 @@ export function ToolCard({
       className={cn(
         'flex cursor-pointer items-center gap-[10px] rounded-lg border p-3 transition-all duration-[120ms]',
         isConnected
-          ? 'border-[rgba(76,175,130,.25)] bg-[#151618] hover:bg-[#1c1d20]'
-          : 'border-[#1f2024] bg-[#151618] hover:border-[#2a2b2f] hover:bg-[#1c1d20]'
+          ? 'border-att-green/25 bg-att-surface hover:bg-att-surface-hover'
+          : 'border-att-divider bg-att-surface hover:border-att-divider hover:bg-att-surface-hover'
       )}
       onClick={() => {
         if (!isConnected && !isConnecting) onConnect()
       }}
     >
       {/* Logo */}
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[#1c1d20] text-sm">
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-att-surface-hover text-sm">
         {emoji}
       </div>
 
       {/* Info */}
       <div className="min-w-0 flex-1">
-        <div className="text-[12.5px] font-medium text-[#e8e9eb]">{label}</div>
-        <div className="overflow-hidden text-ellipsis whitespace-nowrap text-[10.5px] text-[#4a4d55]">
+        <div className="text-[12.5px] font-medium text-foreground">{label}</div>
+        <div className="overflow-hidden text-ellipsis whitespace-nowrap text-[10.5px] text-muted-foreground/60">
           {description}
         </div>
       </div>
 
       {/* Status badge / action */}
       {isConnecting ? (
-        <span className="flex shrink-0 items-center gap-1 rounded-[10px] bg-[rgba(91,124,246,.12)] px-[6px] py-[2px] font-mono text-[8px] text-[#5b7cf6]">
+        <span className="flex shrink-0 items-center gap-1 rounded-[10px] bg-att-blue/12 px-[6px] py-[2px] font-mono text-[8px] text-att-blue">
           <Loader2 className="h-2.5 w-2.5 animate-spin" />
           {t('toolCard.connecting')}
         </span>
       ) : isConnected ? (
-        <AlertDialog>
+        <div className="flex shrink-0 items-center gap-1">
+          {onAddAccount && (
+            <button
+              type="button"
+              aria-label={t('toolCard.addAccountAriaLabel')}
+              onClick={(e) => {
+                e.stopPropagation()
+                onAddAccount()
+              }}
+              className="cursor-pointer rounded-[10px] bg-att-blue/8 px-[5px] py-[2px] font-mono text-[8px] text-att-blue/70 transition-colors hover:bg-att-blue/15 hover:text-att-blue focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-att-blue"
+            >
+              {t('toolCard.addAccount')}
+            </button>
+          )}
+          <AlertDialog>
           <AlertDialogTrigger asChild>
             <span
               onClick={(e) => e.stopPropagation()}
-              className="shrink-0 cursor-pointer rounded-[10px] bg-[rgba(76,175,130,.1)] px-[6px] py-[2px] font-mono text-[8px] text-[#4caf82] transition-colors hover:bg-[rgba(224,92,92,.1)] hover:text-[#e05c5c]"
+              className="shrink-0 cursor-pointer rounded-[10px] bg-att-green/10 px-[6px] py-[2px] font-mono text-[8px] text-att-green transition-colors hover:bg-att-red/10 hover:text-att-red"
             >
               {isDisconnecting ? (
                 <span className="flex items-center gap-1">
@@ -97,8 +113,9 @@ export function ToolCard({
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+        </div>
       ) : (
-        <span className="shrink-0 rounded-[10px] bg-[rgba(91,124,246,.12)] px-[6px] py-[2px] font-mono text-[8px] text-[#5b7cf6]">
+        <span className="shrink-0 rounded-[10px] bg-att-blue/12 px-[6px] py-[2px] font-mono text-[8px] text-att-blue">
           {t('toolCard.connect')}
         </span>
       )}

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What is Attacca
 
-Attacca is a consumer-facing Electron desktop app that wraps the OpenClaw open-source agent runtime into a productivity assistant for knowledge workers. It syncs calendars, email, project management, file storage, and communication tools into a single action dashboard where an AI agent works through tasks sequentially under human oversight.
+Attacca is a consumer-facing Electron desktop app that calls the Anthropic Messages API directly to power a productivity assistant for knowledge workers. It syncs calendars, email, project management, file storage, and communication tools into a single action dashboard where an AI agent works through tasks sequentially under human oversight.
 
 ## Commands
 
@@ -35,25 +35,50 @@ npm run build:linux    # AppImage (x64)
 
 The app follows Electron's standard three-process architecture, built with `electron-vite`:
 
-- **Main process** (`src/main/`): Node.js — manages window lifecycle, system tray, spawns the OpenClaw gateway as a child process, handles IPC, user identity, local Composio service, local usage tracking, OAuth flows, telemetry, and file watchers.
-- **Preload** (`src/preload/index.ts`): Bridges main↔renderer via `contextBridge`. Exposes `window.api` with namespaced methods (gateway, onboarding, oauth, llm, app, settings, fs, activecollab, composio, **permission**, scheduler, telemetry, **kb**, **memory**). All renderer↔main communication goes through this typed API.
+- **Main process** (`src/main/`): Node.js — manages window lifecycle, system tray, the agent runtime (direct Anthropic API calls), handles IPC, user identity, local Composio service, local usage tracking, OAuth flows, telemetry, and file watchers.
+- **Preload** (`src/preload/index.ts`): Bridges main↔renderer via `contextBridge`. Exposes `window.api` with namespaced methods (agent, onboarding, oauth, llm, app, settings, fs, activecollab, composio, **permission**, scheduler, telemetry, **kb**, **memory**). All renderer↔main communication goes through this typed API.
 - **Renderer** (`src/renderer/src/`): React 19 + TypeScript SPA with Tailwind CSS v4, Zustand stores, and shadcn/ui (New York style) components.
 
 ### Path Aliases
 
 - `@/` and `@renderer/` both resolve to `src/renderer/src/` (configured in `electron.vite.config.ts` and `tsconfig.web.json`).
 
-### OpenClaw Gateway
+### Agent Runtime
 
-The main process spawns `openclaw.mjs` (from the `openclaw` npm package) as a child process on port 18789. The renderer connects to it via WebSocket using a JSON-RPC 2.0 protocol (`src/renderer/src/lib/rpc.ts`). The `GatewayClient` class (`src/renderer/src/lib/gateway-client.ts`) is a singleton that manages the WebSocket connection with auto-reconnect and pending request tracking.
+The main process runs an Anthropic-native agent runtime in `src/main/runtime/`. No external gateway process, no WebSocket, no JSON-RPC. The renderer communicates with the agent via IPC channels.
 
-Gateway lifecycle: `src/main/gateway/lifecycle.ts` — has auto-restart with exponential backoff (max 5 restarts per 60s). Config stored at `~/.openclaw/openclaw.json`. LLM calls route directly to provider APIs using the user's own BYOK keys (configured in settings). Memory search points to `localhost:3101` (local memory server). **No relay server** — all LLM completion, URL extraction, and usage tracking run locally in the main process. The `relay:` IPC channel prefix is legacy naming; handlers route to local implementations.
+**Core loop**: User message → Anthropic Messages API (streaming) → if `tool_use` block → permission gate → Composio SDK execution → `tool_result` back to API → repeat (max 10 tool calls per turn). Responses are streamed to the renderer via IPC events.
 
-On startup, the gateway checks `isOnboardingComplete()` before initializing Composio (fetching connected apps, writing skills, setting up MCP). This prevents premature Composio connections when an API key exists from a previous install but the user hasn't finished onboarding yet.
+**Key files**:
+
+- `src/main/runtime/agent.ts` — core agent loop, request queue (serialized, feature sessions prioritized), abort support via `AbortController`
+- `src/main/runtime/sessions.ts` — in-memory session management (no persistence for v1). Two types: `main` (dashboard chat) and `feature` (capture, workflow, etc. — with feature-specific instructions)
+- `src/main/runtime/system-prompt.ts` — assembles identity traits + principles + timezone + tool instructions + CONTEXT.md into a compact prompt (~800-1,000 base tokens, ~1,200-1,500 with 5 tools). Only includes instructions for connected tools (conditional loading). Timezone auto-detected from system (`Intl.DateTimeFormat`), injected as both IANA name and UTC offset.
+- `src/main/runtime/streaming.ts` — Anthropic SSE stream handler, parses `content_block_delta` / `content_block_start` events, emits IPC events to renderer for each text delta and tool use block
+- `src/main/runtime/compaction.ts` — when conversation history exceeds ~35K char/4 token estimate, summarizes oldest 60% of turns using Haiku (`claude-haiku-4-5-20251001`), preserving decisions, action items, and preferences
+- `src/main/runtime/tools.ts` — native Anthropic tool definitions with minimal schemas (~80-120 tokens/tool vs ~500+ for MCP). Maps short tool names (e.g., `search_emails`) to Composio action names (e.g., `GMAIL_FETCH_EMAILS`). Only tools for connected toolkits are included in API requests. Also defines internal tools (`memory_search`, `memory_save`).
+- `src/main/runtime/tool-executor.ts` — routes tool calls: internal tools (memory) execute directly against SQLite; external tools go through permission gate → Composio SDK → REST fallback. Emits telemetry on success/failure.
+
+**LLM configuration**: `src/main/config/llm-config.ts` — Anthropic-only provider. Reads/writes `{userData}/llm-config.json`. Default model: `claude-sonnet-4-6`.
 
 ### IPC Channel Pattern
 
 All IPC channels are defined as string constants in `src/main/ipc/channels.ts` (the `IPC` object). Handlers are registered in `src/main/ipc/handlers.ts`. New IPC channels must be added to both the `IPC` constant map and the preload bridge (`src/preload/index.ts`).
+
+Agent channels (exposed as `window.api.agent`):
+
+- `agent:chat:send` — send a user message to the agent runtime. Args: `(sessionKey, message)`
+- `agent:chat:stop` — abort the current in-flight request for a session
+- `agent:session:list` — list all active sessions
+- `agent:session:clear` — clear a specific session's history
+
+Agent events (main → renderer):
+
+- `event:agent:stream` — text delta from the streaming response. Payload: `{ sessionKey, delta, text }`
+- `event:agent:tool-call` — agent is calling a tool. Payload: `{ sessionKey, toolName, toolInput }`
+- `event:agent:tool-result` — tool execution completed. Payload: `{ sessionKey, toolName, result }`
+- `event:agent:final` — agent turn completed. Payload: `{ sessionKey, text, usage }`
+- `event:agent:error` — agent error. Payload: `{ sessionKey, error }`
 
 Key Composio channels (exposed as `window.api.composio`):
 
@@ -62,22 +87,21 @@ Key Composio channels (exposed as `window.api.composio`):
 - `composio:call-tool` — executes a Composio tool action
 - `composio:list-apps` — fetches the full toolkit catalog
 
-Key local channels (legacy `relay:` prefix — all run locally in the main process, no external relay server):
+Local utility channels (legacy `relay:` prefix — all run locally in the main process):
 
-- `relay:llm-completion` — local LLM completion using BYOK provider keys (`src/main/llm/completion.ts`); exposed as `window.api.relay.llmCompletion(messages, opts?)`
+- `relay:llm-completion` — local LLM completion using Anthropic API (`src/main/llm/completion.ts`); exposed as `window.api.relay.llmCompletion(messages, opts?)`
 - `relay:extract-url` — local URL content extraction; exposed as `window.api.relay.extractUrl(url)`
 - `relay:get-usage` — local SQLite usage tracking (`src/main/usage/`); exposed as `window.api.relay.getUsage()`
-- `gateway:get-token` — reads the auth token from `~/.openclaw/openclaw.json`; exposed as `window.api.gateway.getToken()`
 
 Knowledge Base channels (exposed as `window.api.kb`):
 
-- `kb:save-capture` — writes a capture as markdown to `{userData}/attacca-kb/inbox/YYYY-MM-DD/`, updates `memory/CONTEXT.md`, appends to `daily/YYYY-MM-DD.md`, **and persists to the memory SQLite DB with async embedding generation**
+- `kb:save-capture` — writes a capture as markdown with YAML frontmatter to `{userData}/attacca-kb/inbox/YYYY-MM-DD/`, updates `memory/CONTEXT.md`, appends to `daily/YYYY-MM-DD.md`, **and persists to the memory SQLite DB with async embedding generation**
 - `kb:read-context` — returns the contents of `memory/CONTEXT.md` (empty string if not yet created)
 - `kb:append-daily-log` — appends an entry to today's daily log file
 
 Permission channels (exposed as `window.api.permission`):
 
-- `event:permission-request` — main→renderer event: Composio server requests user approval for a tool call. Payload: `{ requestId, actionName, toolkit, tier, description, params }`
+- `event:permission-request` — main→renderer event: the tool executor requests user approval for a tool call. Payload: `{ requestId, actionName, toolkit, tier, description, params }`
 - `permission:resolve` — renderer→main: resolves a pending permission request. Args: `(requestId, approved, standing)`
 
 Memory channels (exposed as `window.api.memory`):
@@ -89,13 +113,13 @@ Memory channels (exposed as `window.api.memory`):
 
 ### State Management
 
-Zustand stores in `src/renderer/src/stores/` — one store per domain (agent, app, gateway, notification, onboarding, permission, settings, trust, usage). Tests can set state directly via `useXxxStore.setState({...})`.
+Zustand stores in `src/renderer/src/stores/` — one store per domain (agent, app, notification, onboarding, permission, settings, trust, usage). Tests can set state directly via `useXxxStore.setState({...})`.
 
 ### Permission Engine & Permission Gate
 
 Three-tier risk classification (low/medium/high) defined in `src/renderer/src/lib/permission-engine.ts`. Actions are classified against a static risk floor map; context (shared resources, attendees) can escalate but never downgrade risk.
 
-**Permission Gate** (`src/main/composio/permission-gate.ts`): Enforces trust profiles by gating Composio tool execution in `src/main/composio/server.ts`. Before any tool call executes, the gate:
+**Permission Gate** (`src/main/composio/permission-gate.ts`): Enforces trust profiles by gating tool execution in `src/main/runtime/tool-executor.ts`. Before any external tool call executes, the gate:
 
 1. Classifies the Composio action name by verb: `GET/LIST/FETCH/FIND/READ/SEARCH` → low, `CREATE/UPDATE/MODIFY/ARCHIVE/LABEL` → medium, `SEND/DELETE/REMOVE/POST/CANCEL` → high. Unknown actions default to high.
 2. Reads the user's trust profile from `{userData}/settings.json`.
@@ -115,7 +139,7 @@ Three-tier risk classification (low/medium/high) defined in `src/renderer/src/li
 
 **Key files**:
 - `src/main/composio/permission-gate.ts` — risk classification, gate logic, standing approvals
-- `src/main/composio/server.ts` — calls `checkPermission()` before `proxyToolAction()`
+- `src/main/runtime/tool-executor.ts` — calls `checkPermission()` before Composio execution
 - `src/renderer/src/lib/permission-engine.ts` — static risk floor map, `getActionBehavior()`
 - `src/renderer/src/stores/permission-store.ts` — grants, pending approvals, IPC resolve on grant/deny
 - `src/renderer/src/components/permissions/ApprovalDialog.tsx` — high-risk blocking modal (mounted in AppShell)
@@ -124,10 +148,8 @@ Three-tier risk classification (low/medium/high) defined in `src/renderer/src/li
 
 ### Local Services
 
-The main process starts several local services alongside the OpenClaw gateway:
+The main process runs these local services:
 
-- **Memory server** (port 3101): HTTP server (`src/main/memory/server.ts`) exposing `/search`, `/save`, `/stats`, `/identity`, and `/embeddings`. Provides semantic search over the Attacca memory SQLite DB and serves OpenClaw-compatible embedding endpoints for memory indexing.
-- **Composio server** (port 3102): Local HTTP server (`src/main/composio/server.ts`) that handles agent tool execution requests. The OpenClaw `attacca-tools` skill calls this to run Composio actions (e.g., send email, create calendar event) using the user's own Composio API key. **Every tool call passes through the permission gate** (`src/main/composio/permission-gate.ts`) — actions are classified by risk tier and gated based on the user's trust profile before execution. Emits `agent.tool_call.succeeded` / `agent.tool_call.failed` telemetry events on every tool call.
 - **Usage tracking**: Local SQLite-based usage tracking for LLM token consumption and tool calls — no external server required.
 - **Telemetry** (`src/main/telemetry/`): Optional, opt-in anonymous telemetry sent to Datadog Logs API. Events are queued locally and flushed every 60s. `DD_CLIENT_KEY` must be injected at build time via `electron.vite.config.ts` `define` (reads from `.env`). Without the key, events queue locally but never send. Tracks: permission decisions, trust profile changes, kill switch, Take Over mode, agent task outcomes, and Composio tool call success/failure (with action name and toolkit, no params/content).
 
@@ -148,22 +170,22 @@ Local file-based knowledge store at `{userData}/attacca-kb/`:
 
 ```
 attacca-kb/
-├── inbox/YYYY-MM-DD/     # Raw markdown captures (written on "Guardar en memoria")
-├── knowledge/            # Agent-organized by topic (projects/, people/, decisions/)
+├── inbox/YYYY-MM-DD/     # Raw captures with YAML frontmatter
+├── decisions/            # Decision records with frontmatter
+├── artifacts/            # Generated artifacts (reports, summaries)
+├── knowledge/            # Agent-organized by topic (projects/, people/)
 ├── daily/                # Daily activity logs (YYYY-MM-DD.md)
 └── memory/
-    └── CONTEXT.md        # Always-loaded user context (agent-managed, max ~200 lines)
+    └── CONTEXT.md        # Always-loaded user context (agent-managed, max 150 lines)
 ```
 
-**CONTEXT.md injection**: `readKbContext()` in `src/main/gateway/config.ts` builds a two-tier context block: (1) identity traits from the memory SQLite DB (`identity` table, confidence >= 0.4), then (2) raw CONTEXT.md content. This is prepended to SKILL.md on every gateway restart.
+All KB files use YAML frontmatter for metadata (type, date, tags, source).
 
-**SKILL.md generation**: The `attacca-tools` skill at `~/.openclaw/workspace/skills/attacca-tools/SKILL.md` is regenerated on every gateway start by `ensureComposioSkill()` in `config.ts`. It only includes documentation for **connected tools** (conditional loading). Edit `buildSkillContent()` to change what the agent sees — never edit the runtime file directly. Timezone is auto-detected from the user's system via `Intl.DateTimeFormat().resolvedOptions().timeZone` and injected into calendar instructions (both offset like `-05:00` and IANA name like `America/Bogota`). Calendar create/update commands include an explicit `timeZone` parameter to prevent Composio/Google from misinterpreting the offset as UTC.
-
-**Token optimization**: SKILL.md uses conditional tool loading — only tool documentation for connected integrations is included. Principles are compressed to ~40% of original size. A user with 2 tools connected sees ~3,500 base tokens vs ~14,000 before optimization.
+**CONTEXT.md injection**: `system-prompt.ts` loads identity traits from the memory SQLite DB (`identity` table, confidence >= 0.4), then appends raw CONTEXT.md content (capped at 150 lines / 4KB). This is included in the system prompt on every agent call.
 
 ### Memory System (Second Brain)
 
-Local-first memory system that lets the agent learn user preferences, decisions, and context over time.
+Local-first memory system that lets the agent learn user preferences, decisions, and context over time. Single SQLite storage — no HTTP memory server, no dual-write.
 
 **Storage**: SQLite via `better-sqlite3` at `{userData}/attacca-memory/memory.db`. Three tables:
 
@@ -175,13 +197,9 @@ Local-first memory system that lets the agent learn user preferences, decisions,
 
 **Embedding generation**: Local ONNX model (`all-MiniLM-L6-v2`, 384 dims, ~23MB). Runs in Node.js main process via `@huggingface/transformers`. No API key required. Embeddings are generated asynchronously after save; memories are immediately available via keyword search before embeddings complete.
 
-**OpenClaw native memory search (primary)**: Configured via `agents.defaults.memorySearch` in `openclaw.json` (written by `ensureRelayProviderConfig()` in `config.ts`). OpenClaw indexes `~/.openclaw/workspace/memory/*.md` files into its own SQLite (`~/.openclaw/memory/main.sqlite`) using `sqlite-vec`. Config: `provider: "openai"`, `remote.baseUrl: "http://localhost:3101"`, `batch.enabled: false`, `sync.onSearch: true`, `sync.watch: true`. The agent's `memory_search` tool uses hybrid BM25 + vector search over this index.
+**Agent memory tools**: `memory_search` and `memory_save` are native Anthropic tool definitions in `src/main/runtime/tools.ts`. When the API returns a `tool_use` block for these, `tool-executor.ts` routes them directly to SQLite (no Composio, no permission gate). `memory_search` generates an embedding for the query and runs cosine similarity search, falling back to keyword search if embedding fails. `memory_save` inserts the memory and generates an embedding asynchronously.
 
-**Attacca memory server (secondary)**: Local HTTP server (`src/main/memory/server.ts`, port 3101) exposes `/search`, `/save`, `/stats`, `/identity`. Available to the agent via `memory-search.cjs` in SKILL.md as a fallback. Uses Attacca's own SQLite at `{userData}/attacca-memory/memory.db`.
-
-**Dual write on capture**: `kb:save-capture` writes to (1) Attacca SQLite via `insertMemory()`, (2) `.md` file in `~/.openclaw/workspace/memory/` for OpenClaw indexing. Filenames must be ASCII-only — accented characters are normalized via `normalize('NFD').replace(/[\u0300-\u036f]/g, '')` to avoid Windows ENOENT errors.
-
-**Memory Synthesis**: Daily and weekly synthesis runs via `src/main/memory/synthesizer.ts`, triggered by the background scheduler. Daily synthesis reviews recent memories (last 24h) and distills recurring patterns into identity traits with confidence scores. Weekly synthesis performs broader pattern recognition, adjusts trait confidence based on reinforcement or contradiction, and applies importance decay to unused memories. Synthesis results are logged in the `synthesis_log` table to prevent duplicate runs.
+**Memory Synthesis**: Daily and weekly synthesis runs via `src/main/memory/synthesizer.ts`, triggered by the background scheduler. Uses Haiku (`claude-haiku-4-5-20251001`) exclusively. Daily synthesis reviews recent memories (last 24h) and distills recurring patterns into identity traits with confidence scores. Weekly synthesis performs broader pattern recognition, adjusts trait confidence based on reinforcement or contradiction, and applies importance decay to unused memories. Synthesis results are logged in the `synthesis_log` table to prevent duplicate runs.
 
 **Key files**:
 
@@ -190,69 +208,40 @@ Local-first memory system that lets the agent learn user preferences, decisions,
 - `src/main/memory/local-embeddings.ts` — local ONNX embedding generation (`all-MiniLM-L6-v2`)
 - `src/main/memory/migrate-embeddings.ts` — migration utility for re-embedding with new model dimensions
 - `src/main/memory/synthesizer.ts` — daily/weekly memory synthesis into identity traits
-- `src/main/memory/server.ts` — local HTTP server for agent skill access (port 3101)
-- `src/main/gateway/config.ts` — writes `memorySearch` config to `openclaw.json` in `ensureRelayProviderConfig()`
-- `~/.openclaw/workspace/memory/` — `.md` files indexed by OpenClaw (do not delete)
-- `~/.openclaw/memory/main.sqlite` — OpenClaw's vector search index (auto-managed)
+- `src/main/runtime/tool-executor.ts` — `executeInternalTool()` handles `memory_search` and `memory_save`
+- `src/main/runtime/tools.ts` — Anthropic tool definitions for memory tools
 
 ### Integration Approach
 
 OAuth-based integrations (Gmail, Slack, Google Drive, etc.) are managed through Composio locally via `src/main/composio/service.ts` using the user's own Composio API key. Non-OAuth integrations (ActiveCollab credential auth, Telegram bot token) have dedicated connectors in `src/main/integrations/`.
 
+**Multi-account support**: `src/main/composio/connections.ts` tracks multiple accounts per toolkit with labels (`Work` / `Personal` / `Shared`). Stored at `{userData}/composio-connections.json`. `getConnectedAccounts()` in `service.ts` returns full connection details.
+
+**Tool execution flow**: Agent returns `tool_use` → `tool-executor.ts` resolves the Composio action name → permission gate checks trust profile → Composio SDK executes the action → REST fallback if SDK fails → `tool_result` returned to the API.
+
 **Composio slug normalization**: Composio returns toolkit slugs (e.g., `googlecalendar`, `one_drive`) that differ from frontend tool IDs (e.g., `google-calendar`, `onedrive`). The shared `normalizeComposioSlugs()` function in `src/renderer/src/lib/constants.ts` handles the mapping. All call sites that consume `composio.getConnected()` results must normalize through this function to prevent duplicate tools in the UI. The backend `getConnectedApps()` in `service.ts` also deduplicates via `new Set()` since Composio can return duplicate connected accounts.
 
 **Composio IPC response normalization**: The Composio SDK returns `{ successful, data, error }` but frontend callers expect `{ success, result, error }`. The `COMPOSIO_CALL_TOOL` IPC handler normalizes this shape. It also has SDK→REST fallback: if the SDK `tools.execute()` fails, it retries via `executeActionDirect()` (raw REST API).
 
-**Composio MCP server** (`src/main/composio/mcp.ts`): Manages a hosted MCP server on Composio's backend. On startup (after onboarding), `ensureComposioMcpServer()` runs:
-
-1. Lists ALL existing MCP servers (`composio.mcp.list({ limit: 20 })`) — no name filter
-2. Prefers any server named `attacca-tools`; otherwise reuses any existing server (handles users who created their own)
-3. Deletes duplicate `attacca-tools` servers (orphans from failed setups)
-4. Only creates a new server if none exist at all
-5. Calls `mcp.generate(entityId, serverId, { manuallyManageConnections: true })` to get a user-specific instance URL — the `manuallyManageConnections` flag must match between `create` and `generate`
-6. Writes the URL to `~/.mcporter/mcporter.json` for the OpenClaw agent
-
-Local config cached at `{userData}/composio-mcp.json` (serverId, mcpUrl, toolkits). Skips API calls if toolkits haven't changed since last run.
-
 ### Production Build (Windows NSIS)
 
-The Windows build uses an `afterPack` hook (`scripts/fix-openclaw-deps.js`) to handle OpenClaw's ~50 runtime dependencies that electron-builder strips from `extraResources`.
+Standard electron-builder build — no custom afterPack hooks.
 
 **Build pipeline**:
 
 1. `electron-vite build` compiles main/preload/renderer
-2. `electron-builder --win --x64` packages the app
-3. `afterPack` hook runs `scripts/fix-openclaw-deps.js`:
-   - Restores `openclaw/node_modules` stripped by electron-builder
-   - Recursively resolves hoisted dependencies from root `node_modules`
-   - Resolves nested package dependencies (e.g., `grammy/node_modules/node-fetch` → `whatwg-url`)
-   - Restores extension `node_modules`
-   - Syncs `docs/reference/templates/` (runtime-critical for OpenClaw workspace init)
-   - Strips non-runtime files (docs, tests, type declarations, source maps)
-   - **Windows only**: Packs `node_modules/` into `openclaw-deps.7z` archive using `7za.exe` (from `7zip-bin`), reducing NSIS file count from ~13K to 1
-4. NSIS installer (`build/installer.nsh`) extracts the 7z archive during install via `customInstall` macro
-
-**Key constraints for `fix-openclaw-deps.js`**:
-
-- Do NOT add runtime directories to `SKIP_DIRS` — `doc/`, `locales/`, `languages/` all contain runtime code in some packages (e.g., `yaml/dist/doc/`, `zod/v4/locales/`, `highlight.js/lib/languages/`)
-- `shouldSkipFile()` uses `isDocFile()` to only strip documentation extensions (.md, .txt, .rst, .html), not runtime `.js` files with doc-like names (e.g., `changelog.js`)
-- Do NOT strip `openclaw/docs/` — templates are runtime-critical
-- `execSync` for 7za must use `stdio: 'ignore'` to prevent pipe buffer deadlock (7za outputs per-file progress for 13K files)
-- Archive uses `-mx0` (store, no compression) since NSIS compresses the whole installer anyway
-
-**Origin handling**: Packaged Electron uses `file://` URLs which have opaque origin `"null"` (not `"file://"`) per URL spec. OpenClaw's `controlUi.allowedOrigins` must include `"null"`.
+2. `electron-builder --win --x64` packages the app and produces the NSIS installer
 
 **Config files**:
 
-- `electron-builder.yml` — `afterPack: scripts/fix-openclaw-deps.js`, `nsis.include: build/installer.nsh`
-- `build/installer.nsh` — NSIS branding + `customInstall` macro for 7z extraction
-- `scripts/fix-openclaw-deps.js` — afterPack hook (dependency resolution + 7z packing)
+- `electron-builder.yml` — build configuration
+- `build/installer.nsh` — NSIS branding
 
 ## Testing
 
 - Framework: Vitest with jsdom environment and React Testing Library
 - Setup file: `tests/setup.ts` (imports `@testing-library/jest-dom/vitest`)
-- Test helpers: `tests/helpers.ts` — provides `installMockApi()` / `cleanupMockApi()` for mocking `window.api`, `MockWebSocket` for gateway client tests, and `createMockNotification()`
+- Test helpers: `tests/helpers.ts` — provides `installMockApi()` / `cleanupMockApi()` for mocking `window.api` and `createMockNotification()`
 - Tests live in `__tests__/` directories adjacent to the code they test
 - Pattern: `beforeEach` installs mock API + resets Zustand stores via `.setState()`, `afterEach` cleans up
 - Test file pattern: `src/**/*.test.ts` and `src/**/*.test.tsx`
@@ -271,7 +260,7 @@ Setup Wizard (if first run) → Dashboard. The `App.tsx` router uses `useAppStor
 
 Step 4 (Tool Connections) shows a grid of available tools and lets users connect integrations via OAuth during onboarding. Uses `normalizeComposioSlugs()` to map Composio slugs to frontend tool IDs. Skippable if no tools are connected yet.
 
-On completion, `handleFinish()` calls `gateway.restart()` which triggers the Composio setup (MCP server, skill generation). The gateway startup **gates** Composio setup on `isOnboardingComplete()` — if onboarding hasn't finished, the gateway skips Composio entirely even if an API key exists from a previous install.
+On completion, `handleFinish()` initializes the agent runtime. The runtime gates Composio setup on `isOnboardingComplete()` — if onboarding hasn't finished, it skips Composio entirely even if an API key exists from a previous install.
 
 State is persisted to `{userData}/onboarding.json`. The `completed: true` flag determines whether the app shows the wizard or the dashboard on launch.
 
@@ -297,8 +286,8 @@ type SidebarView =
 
 Wraps two panels side-by-side:
 
-- **`LandscapeView.tsx`** — Morning briefing, 2×2 themes grid, open threads, thread detail chat panel. Auto-triggers once per 6-hour window on gateway connect. Fetches connected tools via `window.api.composio.getConnected()` (normalizes via shared `normalizeComposioSlugs()`), builds a structured prompt, calls `chat.send`, parses JSON response `{ message, question, themes[], threads[], suggestedActions[] }`. `TOOL_ACTIONS` maps tool IDs to agent instructions.
-- **`CapturePanel.tsx`** — Textarea with type-selector pills (thought/action/question), recent captures list (last 20), activity strip showing live agent tool calls. Communicates via `chat.send` + `chat` event listener.
+- **`LandscapeView.tsx`** — Morning briefing, 2×2 themes grid, open threads, thread detail chat panel. Auto-triggers once per 6-hour window. Fetches connected tools via `window.api.composio.getConnected()` (normalizes via shared `normalizeComposioSlugs()`), builds a structured prompt, sends via `window.api.agent.send`, parses JSON response `{ message, question, themes[], threads[], suggestedActions[] }`. `TOOL_ACTIONS` maps tool IDs to agent instructions.
+- **`CapturePanel.tsx`** — Textarea with type-selector pills (thought/action/question), recent captures list (last 20), activity strip showing live agent tool calls. Communicates via `window.api.agent` send/stream events.
 
 ### capture → `CaptureView.tsx`
 
@@ -308,7 +297,7 @@ Wraps two panels side-by-side:
 - **`processing`** — Animated step feed (5 steps, `setInterval` every 5s), linear progress bar, cancel button. Step copy differs by source type (text/url vs file/transcript)
 - **`review`** — Two-column layout: main panel (summary, action items with checkboxes, decisions ✓, open questions ?) + aside (source info, "Guardar en memoria" / "Descartar" buttons, entity badges for people/projects/dates)
 
-Agent session key: `agent:main:capture-{uuid}`. Sends structured JSON prompt via `chat.send`, listens for `chat` event `state='final'` + sessionKey match, parses `CaptureResult` JSON from response.
+Agent session key: `agent:main:capture-{uuid}`. Sends structured JSON prompt via `agent.send`, listens for `event:agent:final` + sessionKey match, parses `CaptureResult` JSON from response.
 
 "Guardar en memoria" calls `window.api.kb.saveCapture()` to write the markdown file to disk and update `CONTEXT.md` + daily log. Failure is non-fatal (local recents still saved).
 
@@ -336,9 +325,9 @@ Conversational 3-state UI (left panel) + workflow preview + library (right panel
 
 Right panel: live `WorkflowPreview` (updates as agent responds) + `LibraryList` (active/paused workflows).
 
-**Activate** calls `skill.create` and saves to `localStorage['attacca:workflows:library']`.
+**Activate** saves to `localStorage['attacca:workflows:library']`.
 
-**Run mode**: clicking ▶ on a library entry switches left panel to run mode — sends a prompt to a new session, listens for `chat` event, extracts `html` code blocks from response, shows raw text + code/preview toggle. Run counter incremented on success.
+**Run mode**: clicking ▶ on a library entry switches left panel to run mode — sends a prompt to a new session, listens for agent stream events, extracts `html` code blocks from response, shows raw text + code/preview toggle. Run counter incremented on success.
 
 Agent session keys: `workflow-{uuid}` (building) vs `workflow-run-{uuid}` (execution). Both distinguished by `pendingRunRef` vs `pendingSessionRef`.
 
@@ -368,7 +357,7 @@ Two-column: main panel (curated tool grid) + `CatalogPanel` (260px right sidebar
 
 ### settings → `SettingsPage.tsx`
 
-LLM provider config (BYOK toggle, API key, model selector), trust profile (cautious/balanced/autonomous), telemetry opt-in, folder watch path.
+LLM provider config (Anthropic API key, model selector), trust profile (cautious/balanced/autonomous), telemetry opt-in, folder watch path.
 
 ## Connections & Custom Tools
 

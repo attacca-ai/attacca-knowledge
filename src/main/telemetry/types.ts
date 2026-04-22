@@ -270,30 +270,6 @@ export interface WorkflowRun extends BaseEvent {
   }
 }
 
-// ── Gateway lifecycle events ──
-
-export interface GatewayStarted extends BaseEvent {
-  eventType: 'gateway.started'
-  payload: {
-    startupMs: number
-  }
-}
-
-export interface GatewayError extends BaseEvent {
-  eventType: 'gateway.error'
-  payload: {
-    error: string
-  }
-}
-
-export interface GatewayRestarted extends BaseEvent {
-  eventType: 'gateway.restarted'
-  payload: {
-    restartCount: number
-    reason: string
-  }
-}
-
 // ── Tool connection events ──
 
 export interface ToolConnected extends BaseEvent {
@@ -359,9 +335,6 @@ export type TelemetryEventType =
   | CaptureDiscarded
   | WorkflowCreated
   | WorkflowRun
-  | GatewayStarted
-  | GatewayError
-  | GatewayRestarted
   | ToolConnected
   | ToolDisconnected
   | AgentChatSent

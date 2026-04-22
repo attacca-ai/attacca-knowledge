@@ -307,15 +307,26 @@ export function registerIpcHandlers(): void {
   })
 
   ipcMain.handle(IPC.COMPOSIO_GET_CONNECTED, async () => {
+    // Merge direct providers + Composio connected apps
+    let composioApps: string[] = []
     try {
       const entityId = getComposioEntityId()
-      const connected = await composioGetConnected(entityId)
-      console.log('[composio] Connected tools:', connected)
-      return connected
-    } catch (err) {
-      console.error('[composio] Failed to get connected tools:', err)
-      return []
+      composioApps = await composioGetConnected(entityId)
+    } catch {
+      // Composio may not be configured
     }
+
+    let directApps: string[] = []
+    try {
+      const { getDirectConnectedSlugs } = await import('../integrations/registry')
+      directApps = await getDirectConnectedSlugs()
+    } catch {
+      // No direct providers registered yet
+    }
+
+    const merged = [...new Set([...directApps, ...composioApps])]
+    console.log('[ipc] Connected tools (merged):', merged)
+    return merged
   })
 
   ipcMain.handle(IPC.COMPOSIO_LIST_APPS, async () => {
@@ -337,11 +348,26 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC.COMPOSIO_CALL_TOOL,
     async (_event, actionName: string, params: Record<string, unknown>) => {
+      // Check direct provider first — bypasses Composio entirely
+      const { getProvider: getDirectProvider } = await import('../integrations/registry')
+      const toolkitSlug = (actionName.split('_')[0] ?? '').toLowerCase()
+      const directProvider = getDirectProvider(toolkitSlug)
+      if (directProvider) {
+        try {
+          if (await directProvider.hasConnections()) {
+            const result = await directProvider.executeAction(actionName, params)
+            return { success: true, result, error: null }
+          }
+        } catch (directErr) {
+          return { success: false, error: (directErr as Error).message }
+        }
+      }
+
+      // Composio fallback for services not yet migrated
       try {
         const entityId = getComposioEntityId()
         let raw: Record<string, unknown>
 
-        // Try SDK first, fall back to REST API (same pattern as composio server)
         try {
           raw = (await composioCallTool(entityId, actionName, params)) as Record<string, unknown>
         } catch (sdkErr) {
@@ -355,8 +381,6 @@ export function registerIpcHandlers(): void {
           >
         }
 
-        // Normalize Composio SDK response { successful, data, error }
-        // to the shape callers expect { success, result, error }
         return {
           success: raw?.successful ?? true,
           result: raw?.data ?? raw,
@@ -367,6 +391,36 @@ export function registerIpcHandlers(): void {
       }
     }
   )
+
+  // ── Direct Integrations ──
+
+  ipcMain.handle(IPC.CLICKUP_CONNECT, async (_event, token: string) => {
+    try {
+      const { connectClickUp } = await import('../integrations/clickup/provider')
+      return await connectClickUp(token)
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : 'Connection failed' }
+    }
+  })
+
+  ipcMain.handle(IPC.CLICKUP_DISCONNECT, async () => {
+    try {
+      const { clickupProvider } = await import('../integrations/clickup/provider')
+      await clickupProvider.disconnect()
+      return { success: true }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : 'Disconnect failed' }
+    }
+  })
+
+  ipcMain.handle(IPC.CLICKUP_STATUS, async () => {
+    try {
+      const { getClickUpStatus } = await import('../integrations/clickup/provider')
+      return getClickUpStatus()
+    } catch {
+      return { connected: false, workspaceName: null }
+    }
+  })
 
   // ── Usage (local) ──
   ipcMain.handle(IPC.RELAY_GET_USAGE, () => {
@@ -601,6 +655,16 @@ Date: ${dateStr}
         ? readFileSync(ctxPath, 'utf-8')
         : `# Attacca User Context\n\n## Recent Captures (last 5)\n<!-- agent-managed: do not edit manually -->\n\n## Active Projects\n<!-- agent-managed: do not edit manually -->\n\n## Key People\n<!-- agent-managed: do not edit manually -->\n`
 
+      // Self-heal: if section headers are missing (e.g. after 150-line trim), rebuild scaffold
+      const hasAllHeaders =
+        ctxContent.includes('## Recent Captures') &&
+        ctxContent.includes('## Active Projects') &&
+        ctxContent.includes('## Key People')
+      if (!hasAllHeaders) {
+        console.warn('[kb] CONTEXT.md missing section headers — rebuilding scaffold')
+        ctxContent = `# Attacca User Context\n\n## Recent Captures (last 5)\n<!-- agent-managed: do not edit manually -->\n\n## Active Projects\n<!-- agent-managed: do not edit manually -->\n\n## Key People\n<!-- agent-managed: do not edit manually -->\n`
+      }
+
       // Update Recent Captures section
       const newCaptureEntry = `- [${data.sourceType}] "${data.title}" — ${dateStr} ${timeStr}`
       const recentMatch = ctxContent.match(
@@ -617,6 +681,8 @@ Date: ${dateStr}
           /(## Recent Captures[^\n]*\n<!-- agent-managed[^\n]*\n)[\s\S]*?(## Active Projects)/,
           `$1${updated}\n\n$2`
         )
+      } else {
+        console.warn('[kb] CONTEXT.md: Recent Captures regex did not match after rebuild')
       }
 
       // Update Active Projects section
@@ -650,10 +716,23 @@ Date: ${dateStr}
         }
       }
 
-      // Enforce 150-line cap — trim oldest content from the top
+      // Enforce 150-line cap — keep scaffold (headers, agent-managed markers)
+      // plus the most recent content lines. Previous logic could keep the
+      // OLDEST 150 lines or drop headers that appeared after the window.
       const ctxLines = ctxContent.split('\n')
       if (ctxLines.length > 150) {
-        const trimmed = ctxLines.slice(ctxLines.length - 150).join('\n')
+        const isScaffold = (line: string): boolean =>
+          line.startsWith('# ') || line.startsWith('## ') || line.startsWith('<!-- agent')
+        const scaffold: string[] = []
+        const content: string[] = []
+        for (const line of ctxLines) {
+          if (isScaffold(line)) scaffold.push(line)
+          else content.push(line)
+        }
+        const budget = Math.max(0, 150 - scaffold.length)
+        const trimmedContent = content.slice(-budget)
+        const trimmed = [...scaffold, ...trimmedContent].join('\n')
+        console.log(`[kb] CONTEXT.md trimmed from ${ctxLines.length} to ${scaffold.length + trimmedContent.length} lines`)
         writeFileSync(ctxPath, trimmed, 'utf-8')
       } else {
         writeFileSync(ctxPath, ctxContent, 'utf-8')

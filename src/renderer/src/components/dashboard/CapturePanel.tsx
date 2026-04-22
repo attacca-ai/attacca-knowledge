@@ -1,35 +1,32 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { gatewayClient } from '@/lib/gateway-client'
 import { useAgentStore, type CaptureEntry } from '@/stores/agent-store'
-import { useGatewayStore } from '@/stores/gateway-store'
 import { useSettingsStore } from '@/stores/settings-store'
-import { Loader2, OctagonX } from 'lucide-react'
-import { cn, extractMessageText } from '@/lib/utils'
+import { Loader2, OctagonX, Archive, Trash2 } from 'lucide-react'
+import { cn } from '@/lib/utils'
 import { useTranslation } from '@/i18n'
-import type { OcEvent } from '@/types/gateway'
 
 type CaptureType = 'thought' | 'action' | 'question'
 
 // Badge colors for capture list entries
 const TYPE_BADGE_COLORS: Record<CaptureType, string> = {
-  thought: 'bg-blue-500/10 text-blue-400',
-  action: 'bg-green-500/10 text-green-500',
-  question: 'bg-yellow-500/10 text-yellow-500'
+  thought: 'bg-att-blue/10 text-att-blue',
+  action: 'bg-att-green/10 text-att-green',
+  question: 'bg-att-orange/10 text-att-orange'
 }
 
 // Active pill colors for the type selector (per-type, not always blue)
 const ACTIVE_PILL_COLORS: Record<CaptureType, string> = {
-  thought: 'border-blue-500/60 bg-blue-500/10 text-blue-400',
-  action: 'border-green-500/60 bg-green-500/10 text-green-500',
-  question: 'border-yellow-500/60 bg-yellow-500/10 text-yellow-500'
+  thought: 'border-att-blue/60 bg-att-blue/10 text-att-blue',
+  action: 'border-att-green/60 bg-att-green/10 text-att-green',
+  question: 'border-att-orange/60 bg-att-orange/10 text-att-orange'
 }
 
 const DOT_COLORS: Record<string, string> = {
   info: 'bg-muted-foreground/50',
-  action: 'bg-green-500',
-  tool_call: 'bg-blue-500 animate-pulse',
-  tool_result: 'bg-green-500',
-  error: 'bg-red-500',
+  action: 'bg-att-green',
+  tool_call: 'bg-att-blue animate-pulse',
+  tool_result: 'bg-att-green',
+  error: 'bg-att-red',
   message: 'bg-foreground/60'
 }
 
@@ -62,9 +59,10 @@ export function CapturePanel({
     updateThreadNote,
     updateCaptureNote,
     setCaptureConfirmation,
+    deleteCapture,
+    archiveCapture,
     emergencyStop
   } = useAgentStore()
-  const connectionState = useGatewayStore((s) => s.connectionState)
   const userTimezone = useSettingsStore((s) => s.userTimezone)
 
   const [text, setText] = useState('')
@@ -113,20 +111,13 @@ export function CapturePanel({
 
   // Listen for agent note coming back for pending capture
   useEffect(() => {
-    if (connectionState !== 'connected') return
-
-    const handler = (event: OcEvent): void => {
-      if (event.event !== 'chat') return
-      const payload = (event.payload ?? {}) as Record<string, unknown>
-      if (payload.state !== 'final') return
+    const unsub = window.api.agent.onFinal((data) => {
       if (!pendingCaptureIdRef.current) return
       // Ignore events from other sessions (e.g. landscape generation)
-      if (pendingSessionKeyRef.current && payload.sessionKey !== pendingSessionKeyRef.current)
+      if (pendingSessionKeyRef.current && data.sessionKey !== pendingSessionKeyRef.current)
         return
 
-      const rawText = extractMessageText(
-        payload.message as Parameters<typeof extractMessageText>[0]
-      )
+      const rawText = data.message
       if (!rawText) return
 
       // Try to parse structured JSON response {note, holdingNote, thread, resolvedThreadIds, pendingConfirmation}
@@ -179,11 +170,10 @@ export function CapturePanel({
       }
       pendingCaptureIdRef.current = null
       pendingSessionKeyRef.current = null
-    }
+    })
 
-    gatewayClient.on('*', handler)
-    return () => gatewayClient.off('*', handler)
-  }, [connectionState, updateCaptureNote, updateThreadNote, addThread, closeThread])
+    return unsub
+  }, [updateCaptureNote, updateThreadNote, addThread, closeThread, setCaptureConfirmation])
 
   const handleSend = useCallback(async (): Promise<void> => {
     const trimmed = text.trim()
@@ -196,7 +186,7 @@ export function CapturePanel({
     const sessionKey = `agent:main:capture-${crypto.randomUUID()}`
 
     // Add capture entry (agentNote starts null, sessionKey stored for confirmation flow)
-    addRawCapture({ text: trimmed, type, agentNote: null, sessionKey })
+    addRawCapture({ text: trimmed, type, sourceType: 'landscape-chat', agentNote: null, sessionKey })
     const currentCaptures = useAgentStore.getState().rawCaptures
     const captureId = currentCaptures[0]?.id ?? null
     pendingCaptureIdRef.current = captureId
@@ -214,10 +204,9 @@ export function CapturePanel({
     }
 
     // Send to agent with type-appropriate prompt
-    if (connectionState === 'connected') {
-      pendingSessionKeyRef.current = sessionKey
+    pendingSessionKeyRef.current = sessionKey
 
-      // Include open threads so the agent can close the ones this capture resolves
+    // Include open threads so the agent can close the ones this capture resolves
       const openThreads = useAgentStore.getState().threads
       const threadContext =
         openThreads.length > 0
@@ -269,11 +258,7 @@ export function CapturePanel({
           `- "resolvedThreadIds": incluye IDs solo si el contenido resuelve explícitamente un thread abierto.`
       }
       try {
-        await gatewayClient.rpc('chat.send', {
-          sessionKey,
-          message: structuredMessage,
-          idempotencyKey: crypto.randomUUID()
-        })
+        await window.api.agent.send(sessionKey, structuredMessage, crypto.randomUUID())
         window.api.telemetry.emit('agent.chat.sent', { source: 'capture_panel' })
       } catch {
         if (captureId) {
@@ -281,13 +266,6 @@ export function CapturePanel({
           pendingCaptureIdRef.current = null
           pendingSessionKeyRef.current = null
         }
-      }
-    } else {
-      if (captureId) {
-        updateCaptureNote(captureId, t('capturePanel.offline_queued'))
-        pendingCaptureIdRef.current = null
-        pendingSessionKeyRef.current = null
-      }
     }
 
     setSending(false)
@@ -296,7 +274,6 @@ export function CapturePanel({
     text,
     type,
     sending,
-    connectionState,
     addRawCapture,
     addTask,
     addThread,
@@ -313,18 +290,17 @@ export function CapturePanel({
   }
 
   const handleConfirm = async (captureId: string, captureSessionKey: string): Promise<void> => {
-    if (connectionState !== 'connected') return
     // Re-activate pending state so the event handler updates this capture's note
     pendingCaptureIdRef.current = captureId
     pendingSessionKeyRef.current = captureSessionKey
     // Clear confirmation UI immediately (spinner will show again via agentNote null logic isn't needed — note is already set)
     setCaptureConfirmation(captureId, null)
     try {
-      await gatewayClient.rpc('chat.send', {
-        sessionKey: captureSessionKey,
-        message: 'Confirmado, procede con la acción exactamente como la propusiste.',
-        idempotencyKey: crypto.randomUUID()
-      })
+      await window.api.agent.send(
+        captureSessionKey,
+        'Confirmado, procede con la acción exactamente como la propusiste.',
+        crypto.randomUUID()
+      )
     } catch {
       pendingCaptureIdRef.current = null
       pendingSessionKeyRef.current = null
@@ -334,17 +310,11 @@ export function CapturePanel({
   const handleCancel = (captureId: string, captureSessionKey: string): void => {
     setCaptureConfirmation(captureId, null)
     updateCaptureNote(captureId, 'Acción cancelada.')
-    if (connectionState === 'connected') {
-      gatewayClient
-        .rpc('chat.send', {
-          sessionKey: captureSessionKey,
-          message: 'Cancelado, no ejecutes la acción.',
-          idempotencyKey: crypto.randomUUID()
-        })
-        .catch(() => {
-          /* best effort */
-        })
-    }
+    window.api.agent
+      .send(captureSessionKey, 'Cancelado, no ejecutes la acción.', crypto.randomUUID())
+      .catch(() => {
+        /* best effort */
+      })
   }
 
   const handleEmergencyStop = async (): Promise<void> => {
@@ -355,16 +325,14 @@ export function CapturePanel({
     setConfirming(false)
     emergencyStop()
     window.api.telemetry.emit('trust.kill_switch.activated', {})
-    if (connectionState === 'connected') {
-      try {
-        await gatewayClient.rpc('agent.stop')
-      } catch {
-        /* best effort */
-      }
+    try {
+      await window.api.agent.stop('*')
+    } catch {
+      /* best effort */
     }
   }
 
-  const recentCaptures = rawCaptures.slice(0, 20)
+  const recentCaptures = rawCaptures.filter((c) => !c.archived).slice(0, 20)
   const recentActivity = activityFeed.slice(-3).reverse()
 
   return (
@@ -380,45 +348,45 @@ export function CapturePanel({
           </span>
         </div>
 
-        <textarea
-          ref={textareaRef}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder={t('capturePanel.placeholder')}
-          className={cn(
-            'h-[80px] w-full resize-none rounded-md border border-border bg-[#151618] px-3 py-[10px]',
-            'font-sans text-[12.5px] leading-relaxed text-foreground placeholder:text-muted-foreground/50',
-            'outline-none focus:border-border focus:ring-1 focus:ring-ring/30'
-          )}
-        />
+        {/* Type pills — above textarea */}
+        <div className="mb-2 flex gap-1">
+          {(['thought', 'action', 'question'] as CaptureType[]).map((ct) => (
+            <button
+              key={ct}
+              onClick={() => setType(ct)}
+              className={cn(
+                'rounded-full border px-[7px] py-[3px] font-mono text-[9px] transition-colors',
+                type === ct
+                  ? ACTIVE_PILL_COLORS[ct]
+                  : 'border-border text-muted-foreground/60 hover:text-muted-foreground'
+              )}
+            >
+              {t(`capturePanel.type.${ct}`)}
+            </button>
+          ))}
+        </div>
 
-        <div className="mt-2 flex items-center justify-between">
-          {/* Type pills */}
-          <div className="flex gap-1">
-            {(['thought', 'action', 'question'] as CaptureType[]).map((ct) => (
-              <button
-                key={ct}
-                onClick={() => setType(ct)}
-                className={cn(
-                  'rounded-full border px-[7px] py-[3px] font-mono text-[9px] transition-colors',
-                  type === ct
-                    ? ACTIVE_PILL_COLORS[ct]
-                    : 'border-border text-muted-foreground/60 hover:text-muted-foreground'
-                )}
-              >
-                {t(`capturePanel.type.${ct}`)}
-              </button>
-            ))}
-          </div>
+        <div className="relative">
+          <textarea
+            ref={textareaRef}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder={t('capturePanel.placeholder')}
+            className={cn(
+              'h-[80px] w-full resize-none rounded-md border border-border bg-att-surface px-3 py-[10px] pr-10',
+              'font-sans text-[12.5px] leading-relaxed text-foreground placeholder:text-muted-foreground/50',
+              'outline-none focus:border-border focus:ring-1 focus:ring-ring/30'
+            )}
+          />
 
-          {/* Send button */}
+          {/* Send button — inside textarea, bottom-right */}
           <button
             onClick={handleSend}
             disabled={!text.trim() || sending}
             className={cn(
-              'flex h-[26px] w-[26px] items-center justify-center rounded',
-              'bg-blue-500 text-white transition-opacity',
+              'absolute bottom-2 right-2 flex h-[26px] w-[26px] items-center justify-center rounded',
+              'bg-att-blue text-white transition-opacity',
               'disabled:opacity-30'
             )}
           >
@@ -453,7 +421,7 @@ export function CapturePanel({
             {recentCaptures.map((entry: CaptureEntry) => (
               <div
                 key={entry.id}
-                className="cursor-pointer border-b border-border/40 py-[9px] last:border-b-0 hover:bg-muted/10"
+                className="group cursor-pointer border-b border-border/40 py-[9px] last:border-b-0 hover:bg-muted/10"
               >
                 <div className="mb-[3px] flex items-center gap-1.5">
                   <span className="font-mono text-[9px] text-muted-foreground/50">
@@ -467,23 +435,40 @@ export function CapturePanel({
                   >
                     {entry.type}
                   </span>
+                  <span className="flex-1" />
+                  <span className="flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); archiveCapture(entry.id) }}
+                      title="Archive"
+                      className="rounded p-0.5 text-muted-foreground/40 hover:bg-muted/30 hover:text-muted-foreground"
+                    >
+                      <Archive className="h-2.5 w-2.5" />
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); deleteCapture(entry.id) }}
+                      title="Delete"
+                      className="rounded p-0.5 text-muted-foreground/40 hover:bg-att-red/10 hover:text-att-red"
+                    >
+                      <Trash2 className="h-2.5 w-2.5" />
+                    </button>
+                  </span>
                 </div>
                 <p className="text-[12px] leading-[1.4] text-muted-foreground">{entry.text}</p>
                 {entry.agentNote !== null ? (
                   <>
                     <p className="mt-[5px] flex items-start gap-1 text-[10.5px] italic text-muted-foreground/60">
-                      <span className="shrink-0 text-blue-400 not-italic">↳</span>
+                      <span className="shrink-0 text-att-blue not-italic">↳</span>
                       {entry.agentNote}
                     </p>
                     {entry.pendingConfirmation && entry.sessionKey && (
-                      <div className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-2.5">
-                        <p className="mb-2 text-[10.5px] text-amber-400/90">
+                      <div className="mt-2 rounded-md border border-att-orange/30 bg-att-orange/5 p-2.5">
+                        <p className="mb-2 text-[10.5px] text-att-orange/90">
                           {entry.pendingConfirmation}
                         </p>
                         <div className="flex gap-2">
                           <button
                             onClick={() => handleConfirm(entry.id, entry.sessionKey!)}
-                            className="flex-1 rounded border border-green-500/40 bg-green-500/10 px-2 py-1 font-mono text-[9px] text-green-400 transition-colors hover:bg-green-500/20"
+                            className="flex-1 rounded border border-att-green/40 bg-att-green/10 px-2 py-1 font-mono text-[9px] text-att-green transition-colors hover:bg-att-green/20"
                           >
                             ✓ {t('capturePanel.confirm_action')}
                           </button>
@@ -546,8 +531,8 @@ export function CapturePanel({
           className={cn(
             'flex items-center gap-1.5 rounded border px-3 py-1.5 font-mono text-[10px] tracking-wide transition-all',
             confirming
-              ? 'animate-pulse border-red-500 bg-red-500 text-white'
-              : 'border-red-500/30 text-red-500 hover:border-red-500/60 dark:text-red-400'
+              ? 'animate-pulse border-att-red bg-att-red text-white'
+              : 'border-att-red/30 text-att-red hover:border-att-red/60 dark:text-att-red'
           )}
         >
           <OctagonX className="h-3 w-3" />

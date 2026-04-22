@@ -32,8 +32,8 @@ export function CompletionStep({ onComplete }: { onComplete: () => void }): Reac
     <div className="flex flex-1 flex-col items-center justify-center p-8">
       <div className="mx-auto w-full max-w-md">
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-green-500/10">
-            <Rocket className="h-8 w-8 text-green-500" />
+          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-att-green/10">
+            <Rocket className="h-8 w-8 text-att-green" />
           </div>
           <h2 className="mb-2 text-2xl font-bold text-foreground">You're all set!</h2>
           <p className="text-muted-foreground">
@@ -45,7 +45,7 @@ export function CompletionStep({ onComplete }: { onComplete: () => void }): Reac
           {/* Connected Tools */}
           <div className="rounded-md border border-border p-3">
             <div className="mb-2 flex items-center gap-2 text-sm">
-              <Check className="h-4 w-4 text-green-500" />
+              <Check className="h-4 w-4 text-att-green" />
               <span className="text-muted-foreground">
                 Connected Tools ({connectedTools.length})
               </span>
@@ -62,7 +62,7 @@ export function CompletionStep({ onComplete }: { onComplete: () => void }): Reac
           {/* Telemetry Status */}
           <div className="flex items-center justify-between rounded-md border border-border p-3">
             <div className="flex items-center gap-2 text-sm">
-              <Check className="h-4 w-4 text-green-500" />
+              <Check className="h-4 w-4 text-att-green" />
               <span className="text-muted-foreground">Research Telemetry</span>
             </div>
             <Badge variant="secondary">{telemetryOptIn ? 'Opted in' : 'Opted out'}</Badge>
@@ -72,7 +72,7 @@ export function CompletionStep({ onComplete }: { onComplete: () => void }): Reac
           {selectedUseCases.length > 0 && (
             <div className="rounded-md border border-border p-3">
               <div className="mb-2 flex items-center gap-2 text-sm">
-                <Check className="h-4 w-4 text-green-500" />
+                <Check className="h-4 w-4 text-att-green" />
                 <span className="text-muted-foreground">Active Workflow</span>
               </div>
               <p className="text-sm text-foreground">{selectedUseCases[0]}</p>
