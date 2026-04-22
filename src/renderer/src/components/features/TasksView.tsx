@@ -120,14 +120,14 @@ export function TasksView(): React.JSX.Element {
     setError(null)
     try {
       // Direct ClickUp API — no Composio, no action discovery needed
-      const teamsRes = await window.api.composio.callTool('CLICKUP_AUTHORIZATION_GET_WORK_SPACE_LIST', {})
+      const teamsRes = await window.api.clickup.callAction('CLICKUP_AUTHORIZATION_GET_WORK_SPACE_LIST', {})
       if (!teamsRes.success) throw new Error(teamsRes.error ?? 'Failed to fetch workspaces')
 
       const teams = (teamsRes.result as { teams?: Array<{ id: string }> })?.teams ?? []
       const teamId = teams[0]?.id
       if (!teamId) throw new Error('No ClickUp workspace found — check your API token in Settings → Connections')
 
-      const tasksRes = await window.api.composio.callTool('CLICKUP_GET_FILTERED_TEAM_TASKS', {
+      const tasksRes = await window.api.clickup.callAction('CLICKUP_GET_FILTERED_TEAM_TASKS', {
         team_id: teamId,
         include_closed: false
       })
@@ -652,7 +652,7 @@ function ClickUpTaskDetail({ task }: { task: ClickUpTask }): React.JSX.Element |
     if (!task?.id) return
     let cancelled = false
     setLoadingComments(true)
-    window.api.composio.callTool('CLICKUP_GET_TASK_COMMENTS', { task_id: String(task.id) })
+    window.api.clickup.callAction('CLICKUP_GET_TASK_COMMENTS', { task_id: String(task.id) })
       .then((res) => {
         if (cancelled) return
         if (res.success && res.result) {

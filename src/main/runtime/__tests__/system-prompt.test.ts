@@ -67,28 +67,14 @@ describe('system-prompt', () => {
       expect(prompt).not.toContain('Line 199')
     })
 
-    it('includes tool instructions for connected tools', () => {
-      const prompt = buildFullSystemPrompt(['gmail', 'googlecalendar', 'slack'])
-      expect(prompt).toContain('Gmail')
-      expect(prompt).toContain('Google Calendar')
-      expect(prompt).toContain('Slack')
-      expect(prompt).not.toContain('Trello')
-    })
-
-    it('stays under 2000 tokens with 5 connected tools', () => {
+    it('stays under 2000 tokens with identity + context present', () => {
       mockGetIdentityTraits.mockReturnValue([
         { key: 'role', value: 'Product Manager', confidence: 0.9, evidence: '[]', updated_at: Date.now() }
       ])
       mockExistsSync.mockReturnValue(true)
       mockReadFileSync.mockReturnValue('## Context\nSome brief user context here.')
 
-      const prompt = buildFullSystemPrompt([
-        'gmail',
-        'googlecalendar',
-        'slack',
-        'trello',
-        'clickup'
-      ])
+      const prompt = buildFullSystemPrompt()
       const estimatedTokens = Math.ceil(prompt.length / 4)
       expect(estimatedTokens).toBeLessThan(2000)
     })

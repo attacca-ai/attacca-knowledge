@@ -1,4 +1,4 @@
-import { useRef, useEffect, useMemo, useState } from 'react'
+import { useRef, useEffect, useState } from 'react'
 import { TitleBar } from './TitleBar'
 import { Sidebar, type SidebarView } from './Sidebar'
 import { OfflineBanner } from '@/components/shared/OfflineBanner'
@@ -8,23 +8,14 @@ import { SettingsPage } from '@/components/settings/SettingsPage'
 import { CaptureView } from '@/components/features/CaptureView'
 import { TasksView } from '@/components/features/TasksView'
 import { KnowledgeBasePage } from '@/components/features/KnowledgeBasePage'
-import { ApprovalDialog } from '@/components/permissions/ApprovalDialog'
-import { MidRiskNotification } from '@/components/permissions/MidRiskNotification'
-import { usePermissionStore } from '@/stores/permission-store'
 import { useAgentStore } from '@/stores/agent-store'
 import { useAgent } from '@/hooks/useAgent'
-import type { RiskTier } from '@/lib/permission-engine'
 
 export function AppShell(): React.JSX.Element {
   const [activeView, setActiveView] = useState<SidebarView>('dashboard')
   const prevViewRef = useRef<SidebarView>('dashboard')
   const lastMessageRef = useRef<string | null>(null)
-  const pendingApprovals = usePermissionStore((s) => s.pendingApprovals)
   const { addActivity, completeTask, failTask, hydrate } = useAgentStore()
-  const midRiskApprovals = useMemo(
-    () => pendingApprovals.filter((a) => a.tier === 'medium'),
-    [pendingApprovals]
-  )
 
   // Restore persisted state on mount (runs once, never unmounts)
   useEffect(() => {
@@ -98,31 +89,6 @@ export function AppShell(): React.JSX.Element {
     }
   }, [activeView])
 
-  // Listen for permission requests from the main process (Composio server)
-  useEffect(() => {
-    const unsub = window.api.permission.onRequest((request) => {
-      const { isStandingApprovalActive, addPendingApproval } = usePermissionStore.getState()
-
-      // Check renderer-side standing approval first
-      if (isStandingApprovalActive(request.actionName, request.toolkit)) {
-        window.api.permission.resolve(request.requestId, true, false)
-        return
-      }
-
-      addPendingApproval(
-        {
-          actionType: request.actionName,
-          toolId: request.toolkit,
-          tier: request.tier as RiskTier,
-          description: request.description,
-          params: request.params
-        },
-        request.requestId
-      )
-    })
-    return unsub
-  }, [])
-
   return (
     <div className="flex h-screen flex-col bg-background">
       <TitleBar />
@@ -139,14 +105,6 @@ export function AppShell(): React.JSX.Element {
           </ErrorBoundary>
         </main>
       </div>
-
-      {/* Permission UI — renders globally so it works from any view */}
-      <ApprovalDialog />
-      {midRiskApprovals.map((a) => (
-        <div key={a.id} className="fixed bottom-4 right-4 z-50 w-96">
-          <MidRiskNotification approval={a} />
-        </div>
-      ))}
     </div>
   )
 }

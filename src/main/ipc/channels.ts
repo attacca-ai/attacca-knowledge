@@ -25,25 +25,11 @@ export const IPC = {
   FS_WRITE_FILE: 'fs:write-file',
   FS_SELECT_FOLDER: 'fs:select-folder',
 
-  // Composio (local)
-  COMPOSIO_SET_API_KEY: 'composio:set-api-key',
-  COMPOSIO_GET_API_KEY: 'composio:get-api-key',
-  COMPOSIO_INITIATE_OAUTH: 'composio:initiate-oauth',
-  COMPOSIO_GET_STATUS: 'composio:get-status',
-  COMPOSIO_GET_CONNECTED: 'composio:get-connected',
-  COMPOSIO_LIST_APPS: 'composio:list-apps',
-  COMPOSIO_LIST_ACTIONS: 'composio:list-actions',
-  COMPOSIO_CALL_TOOL: 'composio:call-tool',
-  COMPOSIO_DISCONNECT: 'composio:disconnect',
-  COMPOSIO_GET_ACCOUNTS: 'composio:get-accounts',
-  COMPOSIO_SET_LABEL: 'composio:set-label',
-  COMPOSIO_SET_DEFAULT: 'composio:set-default',
-  COMPOSIO_GET_DEFAULTS: 'composio:get-defaults',
-
   // Direct integrations
   CLICKUP_CONNECT: 'clickup:connect',
   CLICKUP_DISCONNECT: 'clickup:disconnect',
   CLICKUP_STATUS: 'clickup:status',
+  CLICKUP_CALL_ACTION: 'clickup:call-action',
 
   // Relay (remaining — moved to local in Phase 3)
   RELAY_GET_USAGE: 'relay:get-usage',
@@ -81,11 +67,6 @@ export const IPC = {
   SCHEDULER_SET_ENABLED: 'scheduler:set-enabled',
   SCHEDULER_RUN_NOW: 'scheduler:run-now',
 
-  // Permissions
-  PERMISSION_RESOLVE: 'permission:resolve',
-  PERMISSION_LIST_STANDING: 'permission:list-standing',
-  PERMISSION_REVOKE_STANDING: 'permission:revoke-standing',
-
   // Agent Runtime (new — replaces gateway for chat)
   AGENT_CHAT_SEND: 'agent:chat:send',
   AGENT_CHAT_STOP: 'agent:chat:stop',
@@ -93,7 +74,6 @@ export const IPC = {
   AGENT_SESSION_CLEAR: 'agent:session:clear',
 
   // Events (main → renderer)
-  EVENT_PERMISSION_REQUEST: 'event:permission-request',
   EVENT_AGENT_STREAM: 'event:agent:stream',
   EVENT_AGENT_TOOL_CALL: 'event:agent:tool-call',
   EVENT_AGENT_TOOL_RESULT: 'event:agent:tool-result',

@@ -1,33 +1,10 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState } from 'react'
 import { Loader2, Check, ChevronLeft, ChevronRight, Globe } from 'lucide-react'
 import { useTranslation } from '@/i18n'
-import {
-  LLM_PROVIDERS,
-  TOOL_CATEGORIES,
-  normalizeComposioSlugs,
-  type LLMProviderKey
-} from '@/lib/constants'
+import { LLM_PROVIDERS, type LLMProviderKey } from '@/lib/constants'
 
 const MONO = "'IBM Plex Mono', monospace"
-const TOTAL_STEPS = 6
-
-const TOOL_NAMES: Record<string, string> = {
-  'google-calendar': 'Google Calendar',
-  'outlook-calendar': 'Outlook Calendar',
-  gmail: 'Gmail',
-  'outlook-email': 'Outlook',
-  clickup: 'ClickUp',
-  asana: 'Asana',
-  trello: 'Trello',
-  notion: 'Notion',
-  activecollab: 'ActiveCollab',
-  'google-drive': 'Google Drive',
-  onedrive: 'OneDrive',
-  dropbox: 'Dropbox',
-  slack: 'Slack',
-  teams: 'Microsoft Teams',
-  telegram: 'Telegram'
-}
+const TOTAL_STEPS = 4
 
 interface SetupWizardProps {
   onComplete: () => void
@@ -45,51 +22,8 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
   const [llmSaved, setLlmSaved] = useState(false)
   const [llmError, setLlmError] = useState<string | null>(null)
 
-  // Composio state
-  const [composioKey, setComposioKey] = useState('')
-  const [composioSaving, setComposioSaving] = useState(false)
-  const [composioSaved, setComposioSaved] = useState(false)
-  const [composioError, setComposioError] = useState<string | null>(null)
-
-  // Tool connection state
-  const [connectedTools, setConnectedTools] = useState<string[]>([])
-  const [toolConnecting, setToolConnecting] = useState<string | null>(null)
-  const [toolError, setToolError] = useState<string | null>(null)
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  const stopPolling = (): void => {
-    if (pollRef.current) {
-      clearInterval(pollRef.current)
-      pollRef.current = null
-    }
-    if (pollTimeoutRef.current) {
-      clearTimeout(pollTimeoutRef.current)
-      pollTimeoutRef.current = null
-    }
-  }
-
   // Telemetry state
   const [telemetryOptIn, setTelemetryOptIn] = useState(false)
-
-  // Load existing Composio connections when key is saved
-  useEffect(() => {
-    if (!composioSaved) return
-    window.api.composio
-      .getConnected()
-      .then((apps) => {
-        const normalized = normalizeComposioSlugs(apps)
-        setConnectedTools((prev) => [...new Set([...prev, ...normalized])])
-      })
-      .catch(() => {})
-  }, [composioSaved])
-
-  // Cleanup polling on unmount
-  useEffect(() => {
-    return () => {
-      stopPolling()
-    }
-  }, [])
 
   async function handleTestLLM(): Promise<void> {
     if (!llmKey.trim()) return
@@ -116,90 +50,10 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
     }
   }
 
-  async function handleSaveComposio(): Promise<void> {
-    if (!composioKey.trim()) return
-    setComposioSaving(true)
-    setComposioError(null)
-    try {
-      const result = await window.api.composio.setApiKey(composioKey)
-      if (result.success) {
-        setComposioSaved(true)
-        setComposioKey('')
-      } else {
-        setComposioError(result.error || 'Failed to save')
-      }
-    } catch (err) {
-      setComposioError(err instanceof Error ? err.message : 'Error')
-    } finally {
-      setComposioSaving(false)
-    }
-  }
-
-  async function handleToolConnect(tool: string): Promise<void> {
-    if (tool === 'activecollab') {
-      setToolError(t('wizard.tools.activecollab_error'))
-      return
-    }
-    if (tool === 'telegram') {
-      setToolError(t('wizard.tools.telegram_error'))
-      return
-    }
-
-    setToolConnecting(tool)
-    setToolError(null)
-
-    try {
-      const result = await window.api.composio.initiateOAuth(tool)
-      if (!result.success) {
-        setToolError(result.error || 'Could not start connection')
-        setToolConnecting(null)
-        return
-      }
-      if (!result.redirectUrl || !result.connectionId) {
-        setToolError('Missing redirect URL or connection ID')
-        setToolConnecting(null)
-        return
-      }
-      await window.api.app.openExternal(result.redirectUrl)
-
-      const connectionId = result.connectionId
-      window.api.telemetry.emit('oauth.initiated', { toolId: tool })
-      pollRef.current = setInterval(async () => {
-        try {
-          const status = await window.api.composio.getStatus(connectionId)
-          if (status.status === 'active') {
-            stopPolling()
-            setConnectedTools((prev) => [...new Set([...prev, tool])])
-            setToolConnecting(null)
-          } else if (status.status === 'failed' || status.status === 'expired') {
-            stopPolling()
-            setToolError(`Connection ${status.status}. Please try again.`)
-            setToolConnecting(null)
-          }
-        } catch {
-          // Keep polling on network errors
-        }
-      }, 2000)
-      pollTimeoutRef.current = setTimeout(
-        () => {
-          stopPolling()
-          setToolError('Connection timed out after 5 minutes. Try again.')
-          setToolConnecting(null)
-          window.api.telemetry.emit('oauth.timeout', { toolId: tool })
-        },
-        5 * 60 * 1000
-      )
-    } catch (err) {
-      setToolError(err instanceof Error ? err.message : 'Connection failed')
-      setToolConnecting(null)
-    }
-  }
-
   async function handleFinish(): Promise<void> {
     await window.api.telemetry.setOptIn(telemetryOptIn)
     window.api.telemetry.emit('onboarding.completed', {
       llmProvider: llmProvider,
-      connectedTools: connectedTools.length,
       telemetryOptIn
     })
     await window.api.onboarding.complete()
@@ -211,7 +65,7 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
     return true
   }
 
-  const STEP_LABELS = ['welcome', 'llm_provider', 'composio_key', 'tool_connections', 'telemetry', 'ready']
+  const STEP_LABELS = ['welcome', 'llm_provider', 'telemetry', 'ready']
 
   function goNext(): void {
     if (step < TOTAL_STEPS - 1 && canProceed()) {
@@ -384,142 +238,8 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
             </div>
           )}
 
-          {/* Step 2: Composio */}
+          {/* Step 2: Telemetry */}
           {step === 2 && (
-            <div className="flex-1 flex flex-col">
-              <div className="text-[17px] font-light mb-1">{t('wizard.composio.title')}</div>
-              <div className="text-[12.5px] text-muted-foreground leading-[1.5] mb-5">
-                {t('wizard.composio.description')}
-              </div>
-
-              <button
-                onClick={() => window.api.app.openExternal('https://composio.dev')}
-                className="text-[11px] text-att-blue hover:underline cursor-pointer mb-3 text-left"
-                style={{ background: 'none', border: 'none', padding: 0, fontFamily: 'inherit' }}
-              >
-                {t('wizard.composio.get_key')}
-              </button>
-
-              {composioSaved ? (
-                <div className="flex items-center gap-2 py-3">
-                  <Check className="w-4 h-4 text-att-green" />
-                  <span className="text-[12px] text-att-green">{t('wizard.composio.success')}</span>
-                </div>
-              ) : (
-                <>
-                  <div className="flex gap-2">
-                    <input
-                      type="password"
-                      placeholder={t('wizard.composio.key_placeholder')}
-                      value={composioKey}
-                      onChange={(e) => setComposioKey(e.target.value)}
-                      className="flex-1 rounded-[6px] px-3 py-2 text-[11px] text-[#e8e9eb] outline-none"
-                      style={{
-                        background: 'var(--att-surface-hover)',
-                        border: '1px solid #2a2b2f',
-                        fontFamily: MONO
-                      }}
-                      onFocus={(e) => (e.currentTarget.style.borderColor = 'var(--att-blue)')}
-                      onBlur={(e) => (e.currentTarget.style.borderColor = '#2a2b2f')}
-                    />
-                    <button
-                      onClick={handleSaveComposio}
-                      disabled={composioSaving || !composioKey.trim()}
-                      className="px-3.5 py-2 rounded-[6px] text-[12px] border cursor-pointer whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
-                      style={{
-                        background: 'transparent',
-                        border: '1px solid #2a2b2f',
-                        color: '#7a7d85',
-                        fontFamily: 'inherit'
-                      }}
-                    >
-                      {composioSaving && <Loader2 className="w-3 h-3 animate-spin" />}
-                      {composioSaving
-                        ? t('wizard.composio.saving')
-                        : t('wizard.composio.save_button')}
-                    </button>
-                  </div>
-                  {composioError && (
-                    <p className="mt-2 text-[11px] text-att-red">{composioError}</p>
-                  )}
-                </>
-              )}
-            </div>
-          )}
-
-          {/* Step 3: Connect Tools */}
-          {step === 3 && (
-            <div className="flex-1 flex flex-col">
-              <div className="text-[17px] font-light mb-1">{t('wizard.tools.title')}</div>
-              <div className="text-[12.5px] text-muted-foreground leading-[1.5] mb-4">
-                {t('wizard.tools.description')}
-              </div>
-
-              {!composioSaved ? (
-                <div
-                  className="rounded-[8px] p-3.5"
-                  style={{ background: 'var(--att-surface-hover)', border: '1px solid var(--att-surface-raised)' }}
-                >
-                  <div className="text-[12px] text-muted-foreground leading-[1.5]">
-                    {t('wizard.tools.no_composio')}
-                  </div>
-                </div>
-              ) : (
-                <div
-                  className="flex flex-col gap-3 overflow-y-auto max-h-[250px] pr-1"
-                  style={{ scrollbarWidth: 'thin' }}
-                >
-                  {(
-                    Object.entries(TOOL_CATEGORIES) as [
-                      string,
-                      { name: string; tools: readonly string[] }
-                    ][]
-                  ).map(([catKey, category]) => (
-                    <div key={catKey}>
-                      <div className="text-[11px] text-muted-foreground/60 mb-1.5 font-medium">
-                        {category.name}
-                      </div>
-                      <div className="grid grid-cols-2 gap-1.5">
-                        {category.tools.map((tool) => {
-                          const isConnected = connectedTools.includes(tool)
-                          const isConnecting = toolConnecting === tool
-
-                          return (
-                            <button
-                              key={tool}
-                              onClick={() =>
-                                !isConnected && !isConnecting && handleToolConnect(tool)
-                              }
-                              disabled={isConnected || isConnecting}
-                              className="flex items-center justify-between rounded-[6px] px-3 py-2 text-[11px] border transition-colors cursor-pointer disabled:cursor-default"
-                              style={{
-                                background: isConnected ? 'color-mix(in srgb, var(--att-green) 8%, transparent)' : 'var(--att-surface-hover)',
-                                borderColor: isConnected ? 'color-mix(in srgb, var(--att-green) 25%, transparent)' : '#2a2b2f',
-                                color: isConnected ? 'var(--att-green)' : '#7a7d85',
-                                fontFamily: 'inherit'
-                              }}
-                            >
-                              <span>{TOOL_NAMES[tool] || tool}</span>
-                              {isConnecting ? (
-                                <Loader2 className="w-3 h-3 animate-spin" />
-                              ) : isConnected ? (
-                                <Check className="w-3 h-3" />
-                              ) : null}
-                            </button>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {toolError && <p className="mt-2 text-[11px] text-att-red">{toolError}</p>}
-            </div>
-          )}
-
-          {/* Step 4: Telemetry */}
-          {step === 4 && (
             <div className="flex-1 flex flex-col">
               <div className="text-[17px] font-light mb-1">{t('wizard.telemetry.title')}</div>
               <div className="text-[12.5px] text-muted-foreground leading-[1.5] mb-5">
@@ -585,8 +305,8 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
             </div>
           )}
 
-          {/* Step 5: Ready */}
-          {step === 5 && (
+          {/* Step 3: Ready */}
+          {step === 3 && (
             <div className="flex-1 flex flex-col items-center justify-center text-center">
               <div className="text-[24px] font-light mb-5">{t('wizard.ready.title')}</div>
 
@@ -595,28 +315,6 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
                   <Check className="w-3.5 h-3.5 text-att-green" />
                   <span className="text-[12px] text-muted-foreground">
                     {t('wizard.ready.llm_configured')}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Check
-                    className="w-3.5 h-3.5"
-                    style={{ color: composioSaved ? 'var(--att-green)' : '#4a4d55' }}
-                  />
-                  <span className="text-[12px] text-muted-foreground">
-                    {composioSaved
-                      ? t('wizard.ready.composio_configured')
-                      : t('wizard.ready.composio_skipped')}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Check
-                    className="w-3.5 h-3.5"
-                    style={{ color: connectedTools.length > 0 ? 'var(--att-green)' : '#4a4d55' }}
-                  />
-                  <span className="text-[12px] text-muted-foreground">
-                    {connectedTools.length > 0
-                      ? t('wizard.ready.tools_connected', { count: connectedTools.length })
-                      : t('wizard.ready.tools_skipped')}
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
@@ -664,7 +362,7 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
             {t('wizard.nav.step', { current: step + 1, total: TOTAL_STEPS })}
           </span>
 
-          {step < TOTAL_STEPS - 1 && step !== 4 && (
+          {step < TOTAL_STEPS - 1 && step !== 2 && (
             <button
               onClick={goNext}
               disabled={!canProceed()}
@@ -676,18 +374,12 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
                 fontFamily: 'inherit'
               }}
             >
-              {step === 0
-                ? t('wizard.welcome.start')
-                : step === 2 && !composioSaved
-                  ? t('wizard.composio.skip')
-                  : step === 3 && connectedTools.length === 0
-                    ? t('wizard.tools.skip')
-                    : t('wizard.nav.next')}
+              {step === 0 ? t('wizard.welcome.start') : t('wizard.nav.next')}
               <ChevronRight className="w-3.5 h-3.5" />
             </button>
           )}
 
-          {step === 4 && <div />}
+          {step === 2 && <div />}
         </div>
       </div>
     </div>

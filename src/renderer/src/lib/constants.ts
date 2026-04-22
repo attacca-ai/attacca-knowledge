@@ -37,30 +37,3 @@ export const TOOL_CATEGORIES = {
   communication: { name: 'Communication', tools: ['slack', 'teams', 'telegram'] }
 } as const
 
-/**
- * Maps Composio toolkit slugs → frontend tool IDs.
- * Composio returns slugs like "googlecalendar" but our UI uses "google-calendar".
- * Some Composio slugs map to multiple frontend tools (e.g. "outlook" → email + calendar).
- */
-const COMPOSIO_SLUG_TO_FRONTEND: Record<string, string[]> = {
-  googlecalendar: ['google-calendar'],
-  googledrive: ['google-drive'],
-  one_drive: ['onedrive'],
-  outlook: ['outlook-email', 'outlook-calendar'],
-  outlookcalendar: ['outlook-calendar'],
-  microsoftoutlook: ['outlook-email']
-}
-
-/** Normalizes an array of Composio toolkit slugs to frontend tool IDs. */
-export function normalizeComposioSlugs(slugs: string[]): string[] {
-  const result: string[] = []
-  for (const slug of slugs) {
-    const mapped = COMPOSIO_SLUG_TO_FRONTEND[slug]
-    if (mapped) {
-      result.push(...mapped)
-    } else {
-      result.push(slug)
-    }
-  }
-  return [...new Set(result)]
-}

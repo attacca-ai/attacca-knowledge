@@ -29,7 +29,6 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.82.0",
-    "@composio/core": "^0.6.8",
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
     "@fontsource-variable/dm-sans": "^5.2.8",

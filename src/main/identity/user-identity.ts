@@ -54,11 +54,3 @@ export function getUserUUID(): string {
 export function getAnonymousId(): string {
   return createHash('sha256').update(getUserUUID()).digest('hex')
 }
-
-/**
- * Returns a Composio entity ID derived from the user UUID.
- * Uses the same hash chain as the old relay server: SHA256("composio:" + identifier).slice(0, 32)
- */
-export function getComposioEntityId(): string {
-  return createHash('sha256').update(`composio:${getUserUUID()}`).digest('hex').slice(0, 32)
-}

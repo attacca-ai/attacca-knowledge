@@ -10,7 +10,6 @@ import { useTranslation } from '@/i18n'
 import { BYOKGuide } from './BYOKGuide'
 import { TelemetryDataCategories } from './TelemetryDataCategories'
 import { TelemetryViewer } from './TelemetryViewer'
-import { StandingApprovalsSection } from './StandingApprovalsSection'
 import { SystemHealth } from './SystemHealth'
 
 // ── Mono font shorthand ──────────────────────────────────────
@@ -23,7 +22,6 @@ function getSections(t: (key: string) => string) {
     { id: 'rhythm', label: t('settings.section.rhythm'), group: t('settings.group.behavior') },
     { id: 'usage', label: t('settings.section.usage'), group: t('settings.group.advanced') },
     { id: 'byok', label: t('settings.section.byok'), group: t('settings.group.advanced') },
-    { id: 'composio', label: t('settings.section.composio'), group: t('settings.group.advanced') },
     {
       id: 'telemetry',
       label: t('settings.section.telemetry'),
@@ -151,14 +149,6 @@ export function SettingsPage(): React.JSX.Element {
   )
   // Telemetry viewer
   const [showTelemetryViewer, setShowTelemetryViewer] = useState(false)
-  // Composio key state
-  const [composioKey, setComposioKey] = useState('')
-  const [composioKeyHint, setComposioKeyHint] = useState<string | null>(null)
-  const [savingComposio, setSavingComposio] = useState(false)
-  const [composioFeedback, setComposioFeedback] = useState<{
-    type: 'success' | 'error'
-    message: string
-  } | null>(null)
   // Rhythm: inline edit state
   const [editingTime, setEditingTime] = useState<'morning' | 'eod' | null>(null)
 
@@ -178,45 +168,9 @@ export function SettingsPage(): React.JSX.Element {
   useEffect(() => {
     loadSettings()
     loadLLMConfig()
-    loadComposioConfig()
     loadTrustProfile()
     fetchUsage()
   }, [loadSettings, loadTrustProfile, fetchUsage])
-
-  async function loadComposioConfig(): Promise<void> {
-    try {
-      const result = await window.api.composio.getApiKey()
-      if (result?.hint) setComposioKeyHint(result.hint)
-    } catch {
-      // No key configured
-    }
-  }
-
-  async function handleSaveComposioKey(): Promise<void> {
-    if (!composioKey.trim()) return
-    setSavingComposio(true)
-    setComposioFeedback(null)
-    try {
-      const result = await window.api.composio.setApiKey(composioKey)
-      if (result.success) {
-        setComposioKeyHint(composioKey.slice(0, 4) + '...' + composioKey.slice(-4))
-        setComposioKey('')
-        setComposioFeedback({ type: 'success', message: t('settings.composio.success') })
-      } else {
-        setComposioFeedback({
-          type: 'error',
-          message: result.error || t('settings.composio.error_save')
-        })
-      }
-    } catch (err) {
-      setComposioFeedback({
-        type: 'error',
-        message: err instanceof Error ? err.message : t('settings.composio.error_save')
-      })
-    } finally {
-      setSavingComposio(false)
-    }
-  }
 
   // Scroll-spy via IntersectionObserver
   useEffect(() => {
@@ -900,97 +854,6 @@ export function SettingsPage(): React.JSX.Element {
           </div>
         </section>
 
-        {/* ══ §5 Composio ══ */}
-        <section id="s-composio" className="max-w-[620px] mb-12" style={{ scrollMarginTop: 32 }}>
-          <SectionHeader
-            eyebrow={t('settings.composio.eyebrow')}
-            title={t('settings.composio.title')}
-            desc={
-              <>
-                {t('settings.composio.desc')}{' '}
-                <button
-                  onClick={() => window.api.app.openExternal('https://composio.dev')}
-                  className="text-att-blue hover:underline cursor-pointer"
-                  style={{ background: 'none', border: 'none', padding: 0, font: 'inherit' }}
-                >
-                  {t('settings.composio.get_key')}
-                </button>
-              </>
-            }
-          />
-
-          <div
-            className="rounded-[10px] p-4"
-            style={{ background: 'var(--att-surface)', border: '1px solid var(--att-divider)' }}
-          >
-            {composioKeyHint && (
-              <p className="text-[11px] text-muted-foreground/60 mb-2" style={{ fontFamily: MONO }}>
-                {t('settings.composio.current_key', { hint: composioKeyHint })}
-              </p>
-            )}
-
-            <div className="flex gap-2">
-              <input
-                type="password"
-                placeholder={
-                  composioKeyHint
-                    ? t('settings.composio.placeholder_new')
-                    : t('settings.composio.placeholder')
-                }
-                value={composioKey}
-                onChange={(e) => setComposioKey(e.target.value)}
-                className="flex-1 rounded-[6px] px-3 py-2 text-[11px] text-foreground outline-none transition-colors"
-                style={{
-                  background: 'var(--att-surface-hover)',
-                  border: '1px solid #2a2b2f',
-                  fontFamily: MONO
-                }}
-                onFocus={(e) => (e.currentTarget.style.borderColor = 'var(--att-blue)')}
-                onBlur={(e) => (e.currentTarget.style.borderColor = '#2a2b2f')}
-              />
-              <button
-                onClick={handleSaveComposioKey}
-                disabled={savingComposio || !composioKey.trim()}
-                className="px-3.5 py-2 rounded-[6px] text-[12px] border transition-all cursor-pointer whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
-                style={{
-                  background: 'transparent',
-                  border: '1px solid #2a2b2f',
-                  color: '#7a7d85',
-                  fontFamily: 'inherit'
-                }}
-                onMouseEnter={(e) => {
-                  if (!savingComposio && composioKey.trim()) {
-                    e.currentTarget.style.borderColor = 'var(--att-blue)'
-                    e.currentTarget.style.color = 'var(--att-blue)'
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.borderColor = '#2a2b2f'
-                  e.currentTarget.style.color = '#7a7d85'
-                }}
-              >
-                {savingComposio && <Loader2 className="w-3 h-3 animate-spin" />}
-                {savingComposio ? t('settings.composio.saving') : t('settings.composio.save_btn')}
-              </button>
-            </div>
-
-            {composioFeedback && (
-              <p
-                className="mt-2 text-[11px]"
-                style={{ color: composioFeedback.type === 'success' ? 'var(--att-green)' : 'var(--att-red)' }}
-              >
-                {composioFeedback.message}
-              </p>
-            )}
-
-            {!composioKeyHint && (
-              <p className="mt-3 text-[11px] text-muted-foreground/60 leading-[1.4]">
-                {t('settings.composio.no_key_hint')}
-              </p>
-            )}
-          </div>
-        </section>
-
         {/* ══ §6 Telemetry ══ */}
         <section id="s-telemetry" className="max-w-[620px] mb-12" style={{ scrollMarginTop: 32 }}>
           <SectionHeader
@@ -1061,20 +924,6 @@ export function SettingsPage(): React.JSX.Element {
               </button>
             </div>
           </div>
-        </section>
-
-        {/* ══ Standing approvals ══ */}
-        <section
-          id="s-standing-approvals"
-          className="max-w-[620px] mb-12"
-          style={{ scrollMarginTop: 32 }}
-        >
-          <SectionHeader
-            eyebrow="Permissions"
-            title="Standing approvals"
-            desc="Medium-risk actions you approved with 'Don't ask again'. Only persisted on the Balanced trust profile. Expire after 30 days. Cleared automatically when you change your trust profile."
-          />
-          <StandingApprovalsSection />
         </section>
 
         {/* ══ §7 System Health ══ */}

@@ -8,7 +8,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { BrowserWindow } from 'electron'
 import { readLLMConfig } from '../config/llm-config'
 import { buildFullSystemPrompt, buildSlimSystemPrompt } from './system-prompt'
-import { buildToolDefinitions, buildToolDefinitionsForMain } from './tools'
+import { buildToolDefinitions } from './tools'
 import { executeTool } from './tool-executor'
 import {
   getOrCreateSession,
@@ -112,50 +112,13 @@ async function executeRequest(sessionKey: string, message: string): Promise<void
 
   const session = getOrCreateSession(sessionKey, isMain ? 'main' : 'feature')
 
-  // Two-stage routing: main sessions use router meta-tools + loaded-toolkit set.
-  // Feature and workflow-run sessions still receive all connected toolkits upfront.
-  const useTwoStageRouting =
-    isMain || (sessionKey.startsWith('workflow-') && !sessionKey.startsWith('workflow-run-'))
-
-  let systemPrompt: string
-  let tools: Anthropic.Tool[] = []
-
-  /**
-   * Rebuild systemPrompt + tools. For main sessions this runs every loop iteration
-   * so that a `load_toolkit` call in the previous iteration takes effect on the next
-   * Anthropic request (the tool schemas and instruction blocks expand mid-turn).
-   */
-  const rebuildPromptAndTools = async (): Promise<void> => {
-    if (useTwoStageRouting) {
-      const loadedArr = Array.from(session.loadedToolkits)
-      systemPrompt = buildFullSystemPrompt(loadedArr)
-      tools = buildToolDefinitionsForMain(session.loadedToolkits)
-    } else if (sessionKey.startsWith('workflow-run-')) {
-      // Workflow run sessions get tools but slim prompt
-      let connectedTools: string[] = []
-      try {
-        const { getConnectedApps } = require('../composio/service') as typeof import('../composio/service')
-        const { getComposioEntityId } = require('../identity/user-identity') as typeof import('../identity/user-identity')
-        connectedTools = await getConnectedApps(getComposioEntityId())
-      } catch { /* */ }
-      systemPrompt = buildSlimSystemPrompt(session.featureInstructions)
-      tools = buildToolDefinitions(connectedTools)
-    } else {
-      // Feature sessions: all connected toolkits upfront, single-turn UX preserved
-      let connectedTools: string[] = []
-      try {
-        const { getConnectedApps } = require('../composio/service') as typeof import('../composio/service')
-        const { getComposioEntityId } = require('../identity/user-identity') as typeof import('../identity/user-identity')
-        connectedTools = await getConnectedApps(getComposioEntityId())
-      } catch { /* */ }
-      systemPrompt = buildSlimSystemPrompt(session.featureInstructions)
-      tools = buildToolDefinitions(connectedTools)
-    }
-  }
-
-  // Initial build — guarantees systemPrompt + tools are set before entering the loop
-  systemPrompt = ''
-  await rebuildPromptAndTools()
+  // External integrations (Composio) removed in Phase 0 Life OS pivot. Every
+  // session gets the same static tool set (memory tools only) and a system
+  // prompt chosen by session type.
+  const systemPrompt = isMain
+    ? buildFullSystemPrompt()
+    : buildSlimSystemPrompt(session.featureInstructions)
+  const tools = buildToolDefinitions()
 
   // Add user message to history
   addMessageToSession(sessionKey, { role: 'user', content: message })
@@ -185,12 +148,6 @@ async function executeRequest(sessionKey: string, message: string): Promise<void
       if (abortController.signal.aborted) {
         emit('event:agent:final', { sessionKey, message: '[Request cancelled]', usage: totalUsage })
         return
-      }
-
-      // Rebuild tools + system prompt each iteration so that a `load_toolkit` call
-      // in the previous iteration takes effect on this request.
-      if (useTwoStageRouting) {
-        await rebuildPromptAndTools()
       }
 
       const requestParams: Anthropic.MessageCreateParams = {

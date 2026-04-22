@@ -6,7 +6,6 @@ import {
   type MorningLandscape
 } from '@/stores/agent-store'
 import { useOnboardingStore } from '@/stores/onboarding-store'
-import { normalizeComposioSlugs } from '@/lib/constants'
 import { useSettingsStore } from '@/stores/settings-store'
 import { ArrowLeft, ArrowUp, Loader2, RefreshCw, X, ListTodo, ArchiveX } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -366,15 +365,10 @@ export function LandscapeView(): React.JSX.Element {
     if (loading) return
     setLoading(true)
 
-    // Always fetch the latest connected apps so we never use a stale snapshot.
-    let liveTools = connectedTools
-    try {
-      const relayApps = await window.api.composio.getConnected()
-      // Normalize Composio slugs (e.g. "googlecalendar" → "google-calendar")
-      if (relayApps.length > 0) liveTools = normalizeComposioSlugs(relayApps)
-    } catch {
-      // Relay unavailable — fall back to store
-    }
+    // External integrations removed in Phase 0 Life OS pivot — the agent runs
+    // with no connected tools. The builder below still accepts this list so
+    // later phases can reintroduce direct-API tools without a UI rewrite.
+    const liveTools = connectedTools
 
     // Build context from store state at call time (avoids stale closure issues)
     const storeState = useAgentStore.getState()

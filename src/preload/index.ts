@@ -53,31 +53,13 @@ const api = {
     disconnect: () => ipcRenderer.invoke('activecollab:disconnect')
   },
 
-  // Composio (local)
-  composio: {
-    setApiKey: (apiKey: string) => ipcRenderer.invoke('composio:set-api-key', apiKey),
-    getApiKey: () => ipcRenderer.invoke('composio:get-api-key'),
-    initiateOAuth: (appName: string) => ipcRenderer.invoke('composio:initiate-oauth', appName),
-    getStatus: (connectionId: string) => ipcRenderer.invoke('composio:get-status', connectionId),
-    getConnected: () => ipcRenderer.invoke('composio:get-connected'),
-    listApps: () => ipcRenderer.invoke('composio:list-apps'),
-    listActions: (appSlug: string) => ipcRenderer.invoke('composio:list-actions', appSlug),
-    callTool: (actionName: string, params: Record<string, unknown>) =>
-      ipcRenderer.invoke('composio:call-tool', actionName, params),
-    disconnect: (toolkitSlug: string) => ipcRenderer.invoke('composio:disconnect', toolkitSlug),
-    getAccounts: () => ipcRenderer.invoke('composio:get-accounts'),
-    setLabel: (connectionId: string, label: string, customName?: string | null) =>
-      ipcRenderer.invoke('composio:set-label', connectionId, label, customName ?? null),
-    setDefault: (toolkit: string, connectionId: string | null) =>
-      ipcRenderer.invoke('composio:set-default', toolkit, connectionId),
-    getDefaults: () => ipcRenderer.invoke('composio:get-defaults')
-  },
-
   // Direct integrations
   clickup: {
     connect: (token: string) => ipcRenderer.invoke('clickup:connect', token),
     disconnect: () => ipcRenderer.invoke('clickup:disconnect'),
-    status: () => ipcRenderer.invoke('clickup:status')
+    status: () => ipcRenderer.invoke('clickup:status'),
+    callAction: (actionName: string, params: Record<string, unknown>) =>
+      ipcRenderer.invoke('clickup:call-action', actionName, params)
   },
 
   // Relay (remaining — moved to local in Phase 3)
@@ -121,30 +103,6 @@ const api = {
     setEnabled: (taskId: string, enabled: boolean) =>
       ipcRenderer.invoke('scheduler:set-enabled', taskId, enabled),
     runNow: (taskId: string) => ipcRenderer.invoke('scheduler:run-now', taskId)
-  },
-
-  // Permissions
-  permission: {
-    onRequest: (
-      callback: (request: {
-        requestId: string
-        actionName: string
-        toolkit: string
-        tier: 'low' | 'medium' | 'high'
-        description: string
-        params: Record<string, unknown>
-      }) => void
-    ) => {
-      const handler = (_event: unknown, request: unknown): void =>
-        callback(request as Parameters<typeof callback>[0])
-      ipcRenderer.on('event:permission-request', handler)
-      return () => ipcRenderer.removeListener('event:permission-request', handler)
-    },
-    resolve: (requestId: string, approved: boolean, standing: boolean) =>
-      ipcRenderer.invoke('permission:resolve', requestId, approved, standing),
-    listStanding: () => ipcRenderer.invoke('permission:list-standing'),
-    revokeStanding: (actionName: string) =>
-      ipcRenderer.invoke('permission:revoke-standing', actionName)
   },
 
   // Telemetry

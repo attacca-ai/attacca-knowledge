@@ -8,33 +8,6 @@ import { llmCompletion } from '../llm/completion'
 import { extractUrl } from '../capture/extractor'
 import { getMonthlyUsage, ensureUsageTables } from '../usage/tracker'
 import { getTaskStatuses, setTaskEnabled, runTaskNow } from '../scheduler'
-import { getComposioEntityId } from '../identity/user-identity'
-import {
-  resolvePermission,
-  clearAllStandingApprovals,
-  revokeStandingApproval,
-  listStandingApprovals
-} from '../composio/permission-gate'
-import {
-  saveComposioApiKey,
-  getComposioApiKeyHint,
-  initiateOAuth as composioInitiateOAuth,
-  getConnectionStatus as composioGetStatus,
-  getConnectedApps as composioGetConnected,
-  listApps as composioListApps,
-  listAppActions as composioListActions,
-  proxyToolAction as composioCallTool,
-  executeActionDirect as composioCallToolDirect,
-  disconnectAccount as composioDisconnect,
-  invalidateConnectedAppsCache,
-  getAccountsWithLabels as composioGetAccounts
-} from '../composio/service'
-import { setConnectionLabel, isValidLabel, type AccountLabel } from '../composio/connections'
-import {
-  setDefaultAccount,
-  removeDefaultAccount,
-  getAllDefaults
-} from '../composio/defaults'
 import { getTelemetryCollector } from '../telemetry/collector'
 import { insertMemory, updateEmbedding, getMemoryStats, getIdentityTraits } from '../memory/db'
 import { generateEmbedding, float32ToBuffer } from '../memory/embeddings'
@@ -156,241 +129,9 @@ export function registerIpcHandlers(): void {
       }
     }
 
-    // DVR-4: changing trust profile clears all standing approvals atomically.
-    // `clearAllStandingApprovals` updates both the in-memory Map and the
-    // on-disk `standingApprovals` key BEFORE the new profile is written, so
-    // no in-flight gate check can observe the new profile with old grants.
-    if (key === 'trustProfile' && settings.trustProfile !== value) {
-      // M1: Snapshot the old profile BEFORE any mutation. Previously we
-      // re-read settings.json after clearAllStandingApprovals and read
-      // `settings.trustProfile` — correct in practice but fragile to changes
-      // in the re-read path. Capture once, use throughout.
-      const oldProfile = settings.trustProfile
-      try {
-        const cleared = clearAllStandingApprovals()
-        if (cleared > 0) {
-          console.log(
-            `[settings] Trust profile changed — cleared ${cleared} standing approvals (DVR-4)`
-          )
-          // Re-read so our next write doesn't clobber the standingApprovals
-          // reset that clearAllStandingApprovals just performed.
-          settings = JSON.parse(readFileSync(filePath, 'utf-8'))
-        }
-        getTelemetryCollector().emit('standing_approval.cleared_on_profile_change', {
-          count: cleared,
-          oldProfile,
-          newProfile: value
-        })
-      } catch (err) {
-        console.error('[settings] Failed to clear standing approvals on profile change:', err)
-      }
-    }
-
     settings[key] = value
     writeFileSync(filePath, JSON.stringify(settings, null, 2), 'utf-8')
   })
-
-  // ── Composio (local) ──
-  ipcMain.handle(IPC.COMPOSIO_SET_API_KEY, (_event, apiKey: string) => {
-    try {
-      saveComposioApiKey(apiKey)
-      return { success: true }
-    } catch (err) {
-      return { success: false, error: err instanceof Error ? err.message : 'Failed to save key' }
-    }
-  })
-
-  ipcMain.handle(IPC.COMPOSIO_GET_API_KEY, () => {
-    return { hint: getComposioApiKeyHint() }
-  })
-
-  ipcMain.handle(IPC.COMPOSIO_INITIATE_OAUTH, async (_event, appName: string) => {
-    try {
-      const entityId = getComposioEntityId()
-      const result = await composioInitiateOAuth(entityId, appName)
-      return { success: true, ...result }
-    } catch (err) {
-      console.error('[composio] OAuth initiation failed:', err)
-      return {
-        success: false,
-        error: err instanceof Error ? err.message : 'OAuth initiation failed'
-      }
-    }
-  })
-
-  ipcMain.handle(IPC.COMPOSIO_GET_STATUS, async (_event, connectionId: string) => {
-    try {
-      const status = await composioGetStatus(connectionId)
-      // A newly-active connection changes the connected-apps list — drop the cache
-      // so the next agent turn and the next ConnectionsPage read pick it up.
-      if (status.status === 'active') {
-        invalidateConnectedAppsCache()
-      }
-      return status
-    } catch (err) {
-      return { status: 'failed', error: err instanceof Error ? err.message : 'Status check failed' }
-    }
-  })
-
-  ipcMain.handle(IPC.COMPOSIO_DISCONNECT, async (_event, toolkitSlug: string) => {
-    try {
-      const entityId = getComposioEntityId()
-      const result = await composioDisconnect(entityId, toolkitSlug)
-      return result
-    } catch (err) {
-      return {
-        success: false,
-        deleted: 0,
-        error: err instanceof Error ? err.message : 'Disconnect failed'
-      }
-    }
-  })
-
-  ipcMain.handle(IPC.COMPOSIO_GET_ACCOUNTS, async () => {
-    try {
-      const entityId = getComposioEntityId()
-      const accounts = await composioGetAccounts(entityId)
-      return { success: true, accounts }
-    } catch (err) {
-      return {
-        success: false,
-        accounts: [],
-        error: err instanceof Error ? err.message : 'Failed to get accounts'
-      }
-    }
-  })
-
-  ipcMain.handle(
-    IPC.COMPOSIO_SET_LABEL,
-    (_event, connectionId: string, label: string, customName?: string | null) => {
-      try {
-        if (!isValidLabel(label)) {
-          return { success: false, error: `Invalid label: ${label}` }
-        }
-        const ok = setConnectionLabel(connectionId, label as AccountLabel, customName)
-        if (!ok) {
-          return { success: false, error: 'Unknown connection' }
-        }
-        return { success: true }
-      } catch (err) {
-        return { success: false, error: err instanceof Error ? err.message : 'Set label failed' }
-      }
-    }
-  )
-
-  ipcMain.handle(
-    IPC.COMPOSIO_SET_DEFAULT,
-    (_event, toolkit: string, connectionId: string | null) => {
-      try {
-        if (connectionId) {
-          setDefaultAccount(toolkit, connectionId)
-        } else {
-          removeDefaultAccount(toolkit)
-        }
-        return { success: true }
-      } catch (err) {
-        return { success: false, error: err instanceof Error ? err.message : 'Set default failed' }
-      }
-    }
-  )
-
-  ipcMain.handle(IPC.COMPOSIO_GET_DEFAULTS, () => {
-    try {
-      return { success: true, defaults: getAllDefaults() }
-    } catch (err) {
-      return {
-        success: false,
-        defaults: {},
-        error: err instanceof Error ? err.message : 'Get defaults failed'
-      }
-    }
-  })
-
-  ipcMain.handle(IPC.COMPOSIO_GET_CONNECTED, async () => {
-    // Merge direct providers + Composio connected apps
-    let composioApps: string[] = []
-    try {
-      const entityId = getComposioEntityId()
-      composioApps = await composioGetConnected(entityId)
-    } catch {
-      // Composio may not be configured
-    }
-
-    let directApps: string[] = []
-    try {
-      const { getDirectConnectedSlugs } = await import('../integrations/registry')
-      directApps = await getDirectConnectedSlugs()
-    } catch {
-      // No direct providers registered yet
-    }
-
-    const merged = [...new Set([...directApps, ...composioApps])]
-    console.log('[ipc] Connected tools (merged):', merged)
-    return merged
-  })
-
-  ipcMain.handle(IPC.COMPOSIO_LIST_APPS, async () => {
-    try {
-      return await composioListApps()
-    } catch {
-      return []
-    }
-  })
-
-  ipcMain.handle(IPC.COMPOSIO_LIST_ACTIONS, async (_event, appSlug: string) => {
-    try {
-      return await composioListActions(appSlug)
-    } catch {
-      return []
-    }
-  })
-
-  ipcMain.handle(
-    IPC.COMPOSIO_CALL_TOOL,
-    async (_event, actionName: string, params: Record<string, unknown>) => {
-      // Check direct provider first — bypasses Composio entirely
-      const { getProvider: getDirectProvider } = await import('../integrations/registry')
-      const toolkitSlug = (actionName.split('_')[0] ?? '').toLowerCase()
-      const directProvider = getDirectProvider(toolkitSlug)
-      if (directProvider) {
-        try {
-          if (await directProvider.hasConnections()) {
-            const result = await directProvider.executeAction(actionName, params)
-            return { success: true, result, error: null }
-          }
-        } catch (directErr) {
-          return { success: false, error: (directErr as Error).message }
-        }
-      }
-
-      // Composio fallback for services not yet migrated
-      try {
-        const entityId = getComposioEntityId()
-        let raw: Record<string, unknown>
-
-        try {
-          raw = (await composioCallTool(entityId, actionName, params)) as Record<string, unknown>
-        } catch (sdkErr) {
-          console.warn(
-            `[ipc] SDK call failed for ${actionName}, trying REST:`,
-            (sdkErr as Error).message
-          )
-          raw = (await composioCallToolDirect(entityId, actionName, params)) as Record<
-            string,
-            unknown
-          >
-        }
-
-        return {
-          success: raw?.successful ?? true,
-          result: raw?.data ?? raw,
-          error: raw?.error ?? null
-        }
-      } catch (err) {
-        return { success: false, error: err instanceof Error ? err.message : 'Tool call failed' }
-      }
-    }
-  )
 
   // ── Direct Integrations ──
 
@@ -421,6 +162,22 @@ export function registerIpcHandlers(): void {
       return { connected: false, workspaceName: null }
     }
   })
+
+  ipcMain.handle(
+    IPC.CLICKUP_CALL_ACTION,
+    async (_event, actionName: string, params: Record<string, unknown>) => {
+      try {
+        const { clickupProvider } = await import('../integrations/clickup/provider')
+        if (!(await clickupProvider.hasConnections())) {
+          return { success: false, error: 'ClickUp is not connected.' }
+        }
+        const result = await clickupProvider.executeAction(actionName, params)
+        return { success: true, result, error: null }
+      } catch (err) {
+        return { success: false, error: err instanceof Error ? err.message : 'ClickUp action failed' }
+      }
+    }
+  )
 
   // ── Usage (local) ──
   ipcMain.handle(IPC.RELAY_GET_USAGE, () => {
@@ -923,36 +680,6 @@ Date: ${dateStr}
       return { success: true }
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : 'Task failed' }
-    }
-  })
-
-  // ── Permissions ──
-  ipcMain.handle(
-    IPC.PERMISSION_RESOLVE,
-    (_event, requestId: string, approved: boolean, standing: boolean) => {
-      resolvePermission(requestId, approved, standing)
-      return { success: true }
-    }
-  )
-
-  ipcMain.handle(IPC.PERMISSION_LIST_STANDING, () => {
-    try {
-      return { success: true, approvals: listStandingApprovals() }
-    } catch (err) {
-      return {
-        success: false,
-        approvals: [],
-        error: err instanceof Error ? err.message : 'List failed'
-      }
-    }
-  })
-
-  ipcMain.handle(IPC.PERMISSION_REVOKE_STANDING, (_event, actionName: string) => {
-    try {
-      const revoked = revokeStandingApproval(actionName)
-      return { success: true, revoked }
-    } catch (err) {
-      return { success: false, error: err instanceof Error ? err.message : 'Revoke failed' }
     }
   })
 

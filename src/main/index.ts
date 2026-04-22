@@ -3,10 +3,6 @@ import { electronApp, optimizer } from '@electron-toolkit/utils'
 import { createMainWindow, destroyMainWindow, getMainWindow } from './window/main-window'
 import { createTray, destroyTray } from './tray/tray'
 import { registerIpcHandlers } from './ipc/handlers'
-import { invalidateConnectedAppsCache, runMultiAccountMigration } from './composio/service'
-import { getComposioEntityId } from './identity/user-identity'
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
-import { join, dirname } from 'path'
 import { ensureUsageTables } from './usage/tracker'
 import { registerAllTasks } from './scheduler/tasks'
 import { stopAll as stopScheduler } from './scheduler'
@@ -34,13 +30,6 @@ if (!gotTheLock) {
 
     app.on('browser-window-created', (_, window) => {
       optimizer.watchWindowShortcuts(window)
-    })
-
-    // When the main window regains focus (user returning from an external OAuth
-    // browser tab), drop the connected-apps cache so the next read reflects any
-    // connection made out-of-band.
-    app.on('browser-window-focus', () => {
-      invalidateConnectedAppsCache()
     })
 
     // Initialize telemetry collector
@@ -75,11 +64,6 @@ if (!gotTheLock) {
 
     // Register background scheduler tasks
     registerAllTasks()
-
-    // One-time multi-account migration (Spec B PR B2). Idempotent — gated by
-    // settings.migrationsApplied.multi_account_v1. Runs in the background so
-    // app boot isn't blocked on a Composio round-trip.
-    void runOneTimeMigrations()
   })
 
   // Keep app running when all windows are closed (tray mode)
@@ -92,41 +76,6 @@ if (!gotTheLock) {
       createMainWindow()
     }
   })
-}
-
-async function runOneTimeMigrations(): Promise<void> {
-  try {
-    const settingsPath = join(app.getPath('userData'), 'settings.json')
-    let settings: Record<string, any> = {}
-    if (existsSync(settingsPath)) {
-      try {
-        settings = JSON.parse(readFileSync(settingsPath, 'utf-8'))
-      } catch {
-        settings = {}
-      }
-    }
-    const migrationsApplied = (settings.migrationsApplied ?? {}) as Record<string, boolean>
-    if (migrationsApplied.multi_account_v1) {
-      return
-    }
-
-    const entityId = getComposioEntityId()
-    const count = await runMultiAccountMigration(entityId)
-    console.log(`[migration] multi_account_v1: auto-labeled ${count} existing connections as Work`)
-
-    settings.migrationsApplied = { ...migrationsApplied, multi_account_v1: true }
-    const dir = dirname(settingsPath)
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-    writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8')
-
-    try {
-      getTelemetryCollector().emit('migration.multi_account_v1', { autoLabeled: count })
-    } catch {
-      /* telemetry is best-effort */
-    }
-  } catch (err) {
-    console.error('[migration] multi_account_v1 failed:', err)
-  }
 }
 
 let isQuitting = false

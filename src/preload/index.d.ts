@@ -65,66 +65,14 @@ export interface AttaccaAPI {
     disconnect: () => Promise<{ success: boolean; error?: string }>
   }
 
-  composio: {
-    setApiKey: (apiKey: string) => Promise<{ success: boolean; error?: string }>
-    getApiKey: () => Promise<{ hint: string | null }>
-    initiateOAuth: (appName: string) => Promise<{
-      success: boolean
-      connectionId?: string
-      redirectUrl?: string
-      error?: string
-    }>
-    getStatus: (connectionId: string) => Promise<{
-      id: string
-      status: 'initiated' | 'active' | 'failed' | 'expired'
-      appName: string
-      error?: string
-    }>
-    getConnected: () => Promise<string[]>
-    listApps: () => Promise<
-      Array<{ slug: string; name: string; categories: string[]; description: string }>
-    >
-    listActions: (appSlug: string) => Promise<
-      Array<{ name: string; description: string }>
-    >
-    callTool: (
-      actionName: string,
-      params: Record<string, unknown>
-    ) => Promise<{ success: boolean; result?: unknown; error?: string }>
-    disconnect: (
-      toolkitSlug: string
-    ) => Promise<{ success: boolean; deleted: number; error?: string }>
-    getAccounts: () => Promise<{
-      success: boolean
-      accounts: Array<{
-        connectionId: string
-        toolkit: string
-        status: string
-        label: 'Work' | 'Personal' | 'Shared'
-        customName: string | null
-      }>
-      error?: string
-    }>
-    setLabel: (
-      connectionId: string,
-      label: string,
-      customName?: string | null
-    ) => Promise<{ success: boolean; error?: string }>
-    setDefault: (
-      toolkit: string,
-      connectionId: string | null
-    ) => Promise<{ success: boolean; error?: string }>
-    getDefaults: () => Promise<{
-      success: boolean
-      defaults: Record<string, string>
-      error?: string
-    }>
-  }
-
   clickup: {
     connect: (token: string) => Promise<{ success: boolean; workspaceName?: string; error?: string }>
     disconnect: () => Promise<{ success: boolean; error?: string }>
     status: () => Promise<{ connected: boolean; workspaceName: string | null }>
+    callAction: (
+      actionName: string,
+      params: Record<string, unknown>
+    ) => Promise<{ success: boolean; result?: unknown; error?: string | null }>
   }
 
   relay: {
@@ -234,32 +182,6 @@ export interface AttaccaAPI {
     >
     setEnabled: (taskId: string, enabled: boolean) => Promise<{ success: boolean }>
     runNow: (taskId: string) => Promise<{ success: boolean; error?: string }>
-  }
-
-  permission: {
-    onRequest: (
-      callback: (request: {
-        requestId: string
-        actionName: string
-        toolkit: string
-        tier: 'low' | 'medium' | 'high'
-        description: string
-        params: Record<string, unknown>
-      }) => void
-    ) => () => void
-    resolve: (
-      requestId: string,
-      approved: boolean,
-      standing: boolean
-    ) => Promise<{ success: boolean }>
-    listStanding: () => Promise<{
-      success: boolean
-      approvals: Array<{ actionName: string; expiresAt: number; grantedAt: number }>
-      error?: string
-    }>
-    revokeStanding: (
-      actionName: string
-    ) => Promise<{ success: boolean; revoked?: boolean; error?: string }>
   }
 
   telemetry: {

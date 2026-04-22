@@ -14,12 +14,6 @@ export interface Session {
   createdAt: number
   /** Feature-specific instructions appended to slim system prompt */
   featureInstructions?: string
-  /**
-   * Toolkits the agent has explicitly loaded via the `load_toolkit` meta-tool.
-   * Only used for `main`-type sessions. Persists for the lifetime of the session;
-   * cleared on session reset or app restart.
-   */
-  loadedToolkits: Set<string>
 }
 
 export interface SessionInfo {
@@ -41,28 +35,10 @@ export function createSession(
     type,
     messages: [],
     createdAt: Date.now(),
-    featureInstructions,
-    loadedToolkits: new Set<string>()
+    featureInstructions
   }
   sessions.set(key, session)
   return session
-}
-
-/**
- * Mark a toolkit as loaded for the session. Used by the `load_toolkit` meta-tool.
- * Returns `true` if newly loaded, `false` if it was already loaded.
- */
-export function markToolkitLoaded(sessionKey: string, toolkitSlug: string): boolean {
-  const session = sessions.get(sessionKey)
-  if (!session) return false
-  if (session.loadedToolkits.has(toolkitSlug)) return false
-  session.loadedToolkits.add(toolkitSlug)
-  return true
-}
-
-export function getLoadedToolkits(sessionKey: string): string[] {
-  const session = sessions.get(sessionKey)
-  return session ? Array.from(session.loadedToolkits) : []
 }
 
 export function getSession(key: string): Session | undefined {
@@ -92,10 +68,7 @@ export function listSessions(): SessionInfo[] {
   }))
 }
 
-export function addMessageToSession(
-  key: string,
-  message: Anthropic.MessageParam
-): void {
+export function addMessageToSession(key: string, message: Anthropic.MessageParam): void {
   const session = sessions.get(key)
   if (!session) return
   session.messages.push(message)
