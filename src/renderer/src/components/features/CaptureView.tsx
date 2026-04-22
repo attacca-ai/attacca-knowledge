@@ -1,14 +1,13 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useAgentStore } from '@/stores/agent-store'
-import { Upload, Link, FileText, MessageSquare, Check, Clock, X, Send, ListTodo } from 'lucide-react'
+import { Upload, Link, MessageSquare, Check, Clock, X, Send, ListTodo, FileText } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useTranslation } from '@/i18n'
-import { TranscriptUpload } from './TranscriptUpload'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type CaptureState = 'idle' | 'processing' | 'review'
-type SourceType = 'text' | 'url' | 'file' | 'transcript'
+type SourceType = 'text' | 'url' | 'file'
 
 interface ActionItem {
   text: string
@@ -103,8 +102,7 @@ function SourcePill({
   const icon = {
     text: <MessageSquare className="h-3 w-3" />,
     url: <Link className="h-3 w-3" />,
-    file: <Upload className="h-3 w-3" />,
-    transcript: <FileText className="h-3 w-3" />
+    file: <Upload className="h-3 w-3" />
   }[type]
 
   return (
@@ -432,14 +430,14 @@ ${question}`
       // Also track in agent-store KB entries for the KB Manager view
       addKBEntry({
         title: titleRaw.slice(0, 80),
-        sourceType: sourceType === 'text' || sourceType === 'url' ? 'capture' : 'transcript',
+        sourceType: 'capture',
         sourceId: id,
         summary: result.summary,
         tags: [
           ...(result.entities?.projects ?? []).slice(0, 3),
           ...(result.entities?.people ?? []).slice(0, 3)
         ],
-        folder: sourceType === 'transcript' ? 'Transcripts' : 'Captures'
+        folder: 'Captures'
       })
     } catch {
       // KB write failure is non-fatal — local recents already saved
@@ -1056,7 +1054,7 @@ ${question}`
                   onClick={() => {
                     setResult(entry.result)
                     setActionItems(entry.result.actionItems.map((a) => ({ ...a, checked: false })))
-                    setSourceType(entry.sourceType === 'transcript' ? 'file' : entry.sourceType)
+                    setSourceType(entry.sourceType)
                     // Restore captured content so the chat Q&A works
                     setCapturedContent(entry.result.summary || entry.title)
                     setCaptureState('review')
@@ -1116,7 +1114,7 @@ ${question}`
 
         {/* Source type pills — always visible, reset to idle on click */}
         <div className="mb-4 flex flex-wrap gap-2">
-          {(['text', 'url', 'file', 'transcript'] as SourceType[]).map((type) => (
+          {(['text', 'url', 'file'] as SourceType[]).map((type) => (
             <SourcePill
               key={type}
               type={type}
@@ -1132,7 +1130,7 @@ ${question}`
 
       {/* Content area */}
       <div className="flex-1 overflow-hidden">
-        {sourceType === 'transcript' ? <TranscriptUpload embedded /> : renderContent()}
+        {renderContent()}
       </div>
     </div>
   )

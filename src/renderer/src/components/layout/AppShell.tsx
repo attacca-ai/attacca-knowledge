@@ -1,16 +1,10 @@
-import { useState, useRef, useEffect, useMemo } from 'react'
+import { useRef, useEffect, useMemo, useState } from 'react'
 import { TitleBar } from './TitleBar'
 import { Sidebar, type SidebarView } from './Sidebar'
 import { OfflineBanner } from '@/components/shared/OfflineBanner'
 import { ErrorBoundary } from '@/components/shared/ErrorBoundary'
 import { Dashboard } from '@/components/dashboard/Dashboard'
-import { ScheduleView } from '@/components/features/ScheduleView'
-import { WorkflowAdder } from '@/components/features/WorkflowAdder'
-import { TakeOverMode } from '@/components/features/TakeOverMode'
-import { MetaAgent } from '@/components/features/MetaAgent'
 import { SettingsPage } from '@/components/settings/SettingsPage'
-import { ConnectionsPage } from '@/components/settings/ConnectionsPage'
-import { CustomToolsPage } from '@/components/custom-tools/CustomToolsPage'
 import { CaptureView } from '@/components/features/CaptureView'
 import { TasksView } from '@/components/features/TasksView'
 import { KnowledgeBasePage } from '@/components/features/KnowledgeBasePage'
@@ -23,7 +17,6 @@ import type { RiskTier } from '@/lib/permission-engine'
 
 export function AppShell(): React.JSX.Element {
   const [activeView, setActiveView] = useState<SidebarView>('dashboard')
-  const [customToolName, setCustomToolName] = useState<string>('')
   const prevViewRef = useRef<SidebarView>('dashboard')
   const lastMessageRef = useRef<string | null>(null)
   const pendingApprovals = usePermissionStore((s) => s.pendingApprovals)
@@ -130,11 +123,6 @@ export function AppShell(): React.JSX.Element {
     return unsub
   }, [])
 
-  const handleNavigateToCustomTools = (toolName: string): void => {
-    setCustomToolName(toolName)
-    setActiveView('custom-tools')
-  }
-
   return (
     <div className="flex h-screen flex-col bg-background">
       <TitleBar />
@@ -146,21 +134,8 @@ export function AppShell(): React.JSX.Element {
             {activeView === 'dashboard' && <Dashboard />}
             {activeView === 'capture' && <CaptureView />}
             {activeView === 'tasks' && <TasksView />}
-            {activeView === 'schedule' && <ScheduleView />}
             {activeView === 'knowledge-base' && <KnowledgeBasePage />}
-            {activeView === 'workflows' && <WorkflowAdder />}
-            {activeView === 'takeover' && <TakeOverMode />}
-            {activeView === 'meta-agent' && <MetaAgent />}
             {activeView === 'settings' && <SettingsPage />}
-            {activeView === 'connections' && (
-              <ConnectionsPage onNavigateToCustomTools={handleNavigateToCustomTools} />
-            )}
-            {activeView === 'custom-tools' && (
-              <CustomToolsPage
-                initialToolName={customToolName}
-                onBack={() => setActiveView('connections')}
-              />
-            )}
           </ErrorBoundary>
         </main>
       </div>

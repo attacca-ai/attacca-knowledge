@@ -8,13 +8,7 @@ export type SidebarView =
   | 'dashboard'
   | 'capture'
   | 'tasks'
-  | 'schedule'
   | 'knowledge-base'
-  | 'workflows'
-  | 'takeover'
-  | 'meta-agent'
-  | 'connections'
-  | 'custom-tools'
   | 'settings'
 
 interface SidebarProps {
@@ -63,44 +57,6 @@ const IconCapture = (): React.JSX.Element => (
   </svg>
 )
 
-const IconSchedule = (): React.JSX.Element => (
-  <svg
-    className="h-[14px] w-[14px] shrink-0"
-    viewBox="0 0 16 16"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="1.5"
-  >
-    <circle cx="8" cy="8" r="6" />
-    <path d="M8 4v4l3 2" />
-  </svg>
-)
-
-const IconWorkflows = (): React.JSX.Element => (
-  <svg
-    className="h-[14px] w-[14px] shrink-0"
-    viewBox="0 0 16 16"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="1.5"
-  >
-    <path d="M2 8c0-3.3 2.7-6 6-6s6 2.7 6 6-2.7 6-6 6" />
-    <path d="M8 10a2 2 0 100-4 2 2 0 000 4" />
-  </svg>
-)
-
-const IconTakeOver = (): React.JSX.Element => (
-  <svg
-    className="h-[14px] w-[14px] shrink-0"
-    viewBox="0 0 16 16"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="1.5"
-  >
-    <path d="M2 2l12 6-12 6V2z" />
-  </svg>
-)
-
 const IconTasks = (): React.JSX.Element => (
   <svg
     className="h-[14px] w-[14px] shrink-0"
@@ -124,19 +80,6 @@ const IconKnowledgeBase = (): React.JSX.Element => (
   >
     <path d="M3 2h10a1 1 0 011 1v10a1 1 0 01-1 1H3a1 1 0 01-1-1V3a1 1 0 011-1z" />
     <path d="M5 5h6M5 8h4M5 11h5" />
-  </svg>
-)
-
-const IconConnections = (): React.JSX.Element => (
-  <svg
-    className="h-[14px] w-[14px] shrink-0"
-    viewBox="0 0 16 16"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="1.5"
-  >
-    <path d="M3 8h10M8 3v10" />
-    <circle cx="8" cy="8" r="2" />
   </svg>
 )
 
@@ -263,41 +206,10 @@ export function Sidebar({ activeView, onViewChange }: SidebarProps): React.JSX.E
           onViewChange={onViewChange}
         />
         <IconBtn
-          view="schedule"
-          icon={<IconSchedule />}
-          title={t('sidebar.schedule')}
-          isActive={activeView === 'schedule'}
-          onViewChange={onViewChange}
-        />
-        <IconBtn
           view="knowledge-base"
           icon={<IconKnowledgeBase />}
           title={t('sidebar.knowledgeBase')}
           isActive={activeView === 'knowledge-base'}
-          onViewChange={onViewChange}
-        />
-        <div className="mx-auto my-2 h-px w-6 bg-att-divider" />
-
-        {/* Agent icons */}
-        <IconBtn
-          view="workflows"
-          icon={<IconWorkflows />}
-          title={t('sidebar.workflows')}
-          isActive={activeView === 'workflows'}
-          onViewChange={onViewChange}
-        />
-        <IconBtn
-          view="takeover"
-          icon={<IconTakeOver />}
-          title={t('sidebar.takeover')}
-          isActive={activeView === 'takeover'}
-          onViewChange={onViewChange}
-        />
-        <IconBtn
-          view="connections"
-          icon={<IconConnections />}
-          title={t('sidebar.connections')}
-          isActive={activeView === 'connections' || activeView === 'custom-tools'}
           onViewChange={onViewChange}
         />
 
@@ -373,49 +285,10 @@ export function Sidebar({ activeView, onViewChange }: SidebarProps): React.JSX.E
             onViewChange={onViewChange}
           />
           <NavItem
-            view="schedule"
-            label={t('sidebar.schedule')}
-            icon={<IconSchedule />}
-            isActive={activeView === 'schedule'}
-            onViewChange={onViewChange}
-          />
-          <NavItem
             view="knowledge-base"
             label={t('sidebar.knowledgeBase')}
             icon={<IconKnowledgeBase />}
             isActive={activeView === 'knowledge-base'}
-            onViewChange={onViewChange}
-          />
-        </nav>
-      </div>
-
-      <div className="mx-3 my-[10px] h-px bg-att-divider" />
-
-      {/* ── AGENT ── */}
-      <div className="px-3">
-        <p className="mb-1 px-2 font-mono text-[9px] uppercase tracking-[.12em] text-muted-foreground/50">
-          {t('sidebar.agent')}
-        </p>
-        <nav className="flex flex-col gap-0.5">
-          <NavItem
-            view="workflows"
-            label={t('sidebar.workflows')}
-            icon={<IconWorkflows />}
-            isActive={activeView === 'workflows'}
-            onViewChange={onViewChange}
-          />
-          <NavItem
-            view="takeover"
-            label={t('sidebar.takeover')}
-            icon={<IconTakeOver />}
-            isActive={activeView === 'takeover'}
-            onViewChange={onViewChange}
-          />
-          <NavItem
-            view="connections"
-            label={t('sidebar.connections')}
-            icon={<IconConnections />}
-            isActive={activeView === 'connections' || activeView === 'custom-tools'}
             onViewChange={onViewChange}
           />
         </nav>
