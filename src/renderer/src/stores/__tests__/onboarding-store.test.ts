@@ -7,8 +7,7 @@ describe('onboarding-store', () => {
     installMockApi()
     useOnboardingStore.setState({
       currentStep: 0,
-      connectedTools: [],
-      selectedUseCases: [],
+      vaultMode: null,
       telemetryOptIn: false,
       completed: false
     })
@@ -21,8 +20,7 @@ describe('onboarding-store', () => {
   it('has correct initial state', () => {
     const state = useOnboardingStore.getState()
     expect(state.currentStep).toBe(0)
-    expect(state.connectedTools).toEqual([])
-    expect(state.selectedUseCases).toEqual([])
+    expect(state.vaultMode).toBeNull()
     expect(state.telemetryOptIn).toBe(false)
     expect(state.completed).toBe(false)
   })
@@ -82,28 +80,30 @@ describe('onboarding-store', () => {
     })
   })
 
-  describe('connectedTools', () => {
-    it('addConnectedTool adds a new tool', () => {
-      useOnboardingStore.getState().addConnectedTool('google-calendar')
-      expect(useOnboardingStore.getState().connectedTools).toContain('google-calendar')
+  describe('setVaultMode', () => {
+    it('sets managed vault mode', () => {
+      useOnboardingStore
+        .getState()
+        .setVaultMode({ kind: 'managed', path: '/userData/attacca-vault' })
+      expect(useOnboardingStore.getState().vaultMode).toEqual({
+        kind: 'managed',
+        path: '/userData/attacca-vault'
+      })
     })
 
-    it('addConnectedTool prevents duplicates', () => {
-      useOnboardingStore.getState().addConnectedTool('gmail')
-      useOnboardingStore.getState().addConnectedTool('gmail')
-      expect(useOnboardingStore.getState().connectedTools).toEqual(['gmail'])
+    it('sets external vault mode', () => {
+      useOnboardingStore
+        .getState()
+        .setVaultMode({ kind: 'external', path: '/home/user/obsidian' })
+      expect(useOnboardingStore.getState().vaultMode).toEqual({
+        kind: 'external',
+        path: '/home/user/obsidian'
+      })
     })
 
-    it('removeConnectedTool removes tool', () => {
-      useOnboardingStore.getState().addConnectedTool('slack')
-      useOnboardingStore.getState().removeConnectedTool('slack')
-      expect(useOnboardingStore.getState().connectedTools).toEqual([])
-    })
-
-    it('removeConnectedTool does nothing for missing tool', () => {
-      useOnboardingStore.getState().addConnectedTool('slack')
-      useOnboardingStore.getState().removeConnectedTool('teams')
-      expect(useOnboardingStore.getState().connectedTools).toEqual(['slack'])
+    it('persists state', () => {
+      useOnboardingStore.getState().setVaultMode({ kind: 'managed', path: '/p' })
+      expect(window.api.onboarding.saveState).toHaveBeenCalled()
     })
   })
 
@@ -125,19 +125,6 @@ describe('onboarding-store', () => {
     })
   })
 
-  describe('setSelectedUseCases', () => {
-    it('sets use cases array', () => {
-      useOnboardingStore.getState().setSelectedUseCases(['email', 'calendar'])
-      expect(useOnboardingStore.getState().selectedUseCases).toEqual(['email', 'calendar'])
-    })
-
-    it('replaces previous use cases', () => {
-      useOnboardingStore.getState().setSelectedUseCases(['email'])
-      useOnboardingStore.getState().setSelectedUseCases(['calendar'])
-      expect(useOnboardingStore.getState().selectedUseCases).toEqual(['calendar'])
-    })
-  })
-
   describe('complete', () => {
     it('sets completed to true and calls IPC', async () => {
       await useOnboardingStore.getState().complete()
@@ -151,14 +138,32 @@ describe('onboarding-store', () => {
       await useOnboardingStore.getState().complete()
       expect(window.api.telemetry.setOptIn).toHaveBeenCalledWith(true)
     })
+
+    it('persists vaultMode via settings.set when present', async () => {
+      useOnboardingStore
+        .getState()
+        .setVaultMode({ kind: 'external', path: '/home/user/obsidian' })
+      await useOnboardingStore.getState().complete()
+      expect(window.api.settings.set).toHaveBeenCalledWith('vaultMode', {
+        kind: 'external',
+        path: '/home/user/obsidian'
+      })
+    })
+
+    it('skips settings.set when vaultMode is null', async () => {
+      await useOnboardingStore.getState().complete()
+      expect(window.api.settings.set).not.toHaveBeenCalledWith(
+        'vaultMode',
+        expect.anything()
+      )
+    })
   })
 
   describe('loadState', () => {
     it('loads state from IPC', async () => {
       window.api.onboarding.getState = vi.fn().mockResolvedValue({
         currentStep: 3,
-        connectedTools: ['gmail'],
-        selectedUseCases: ['email'],
+        vaultMode: { kind: 'managed', path: '/p' },
         telemetryOptIn: true,
         completed: false
       })
@@ -167,8 +172,7 @@ describe('onboarding-store', () => {
       const state = useOnboardingStore.getState()
 
       expect(state.currentStep).toBe(3)
-      expect(state.connectedTools).toEqual(['gmail'])
-      expect(state.selectedUseCases).toEqual(['email'])
+      expect(state.vaultMode).toEqual({ kind: 'managed', path: '/p' })
       expect(state.telemetryOptIn).toBe(true)
     })
 
@@ -185,7 +189,7 @@ describe('onboarding-store', () => {
       const state = useOnboardingStore.getState()
       expect(state.currentStep).toBe(0)
       expect(state.telemetryOptIn).toBe(false)
-      expect(state.connectedTools).toEqual([])
+      expect(state.vaultMode).toBeNull()
     })
   })
 
@@ -193,8 +197,7 @@ describe('onboarding-store', () => {
     it('saves current state via IPC', async () => {
       useOnboardingStore.setState({
         currentStep: 2,
-        connectedTools: ['slack'],
-        selectedUseCases: ['messaging'],
+        vaultMode: { kind: 'managed', path: '/p' },
         telemetryOptIn: true,
         completed: false
       })
@@ -202,8 +205,7 @@ describe('onboarding-store', () => {
       await useOnboardingStore.getState().persist()
       expect(window.api.onboarding.saveState).toHaveBeenCalledWith({
         currentStep: 2,
-        connectedTools: ['slack'],
-        selectedUseCases: ['messaging'],
+        vaultMode: { kind: 'managed', path: '/p' },
         telemetryOptIn: true,
         completed: false
       })
@@ -216,11 +218,10 @@ describe('onboarding-store', () => {
       expect(store.currentStep).toBe(0)
 
       useOnboardingStore.getState().nextStep() // 1
-      useOnboardingStore.getState().addConnectedTool('gmail')
       useOnboardingStore.getState().nextStep() // 2
-      useOnboardingStore.getState().setTelemetryOptIn(true)
+      useOnboardingStore.getState().setVaultMode({ kind: 'managed', path: '/p' })
       useOnboardingStore.getState().nextStep() // 3
-      useOnboardingStore.getState().setSelectedUseCases(['email'])
+      useOnboardingStore.getState().setTelemetryOptIn(true)
       useOnboardingStore.getState().nextStep() // 4
 
       expect(useOnboardingStore.getState().currentStep).toBe(4)

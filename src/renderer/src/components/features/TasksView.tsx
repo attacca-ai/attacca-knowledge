@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { useOnboardingStore } from '@/stores/onboarding-store'
 import { useAgentStore, type AgentTask, type Project } from '@/stores/agent-store'
 import { useTranslation } from '@/i18n'
 import { cn } from '@/lib/utils'
@@ -88,14 +87,27 @@ function formatDate(dateStr: string | null): string {
 
 export function TasksView(): React.JSX.Element {
   const { t } = useTranslation()
-  const connectedTools = useOnboardingStore((s) => s.connectedTools)
+  const [isClickUpConnectedState, setIsClickUpConnectedState] = useState(false)
   const localTasks = useAgentStore((s) => s.localTasks)
   const addLocalTask = useAgentStore((s) => s.addLocalTask)
   const updateLocalTask = useAgentStore((s) => s.updateLocalTask)
   const projects = useAgentStore((s) => s.projects)
   const addProject = useAgentStore((s) => s.addProject)
   const addTaskToProject = useAgentStore((s) => s.addTaskToProject)
-  const isClickUpConnected = connectedTools.includes('clickup')
+  const isClickUpConnected = isClickUpConnectedState
+
+  useEffect(() => {
+    let cancelled = false
+    window.api.clickup
+      .status()
+      .then((s) => {
+        if (!cancelled) setIsClickUpConnectedState(Boolean(s?.connected))
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const [tab, setTab] = useState<TaskTab>('local')
   const [clickUpTasks, setClickUpTasks] = useState<ClickUpTask[]>([])

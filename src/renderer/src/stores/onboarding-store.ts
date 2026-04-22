@@ -1,9 +1,12 @@
 import { create } from 'zustand'
 
+export type VaultMode =
+  | { kind: 'managed'; path: string }
+  | { kind: 'external'; path: string }
+
 export interface OnboardingState {
   currentStep: number
-  connectedTools: string[]
-  selectedUseCases: string[]
+  vaultMode: VaultMode | null
   telemetryOptIn: boolean
   completed: boolean
 }
@@ -12,9 +15,7 @@ interface OnboardingStore extends OnboardingState {
   setStep: (step: number) => void
   nextStep: () => void
   prevStep: () => void
-  addConnectedTool: (tool: string) => void
-  removeConnectedTool: (tool: string) => void
-  setSelectedUseCases: (useCases: string[]) => void
+  setVaultMode: (mode: VaultMode) => void
   setTelemetryOptIn: (optIn: boolean) => void
   complete: () => void
   loadState: () => Promise<void>
@@ -25,8 +26,7 @@ const TOTAL_STEPS = 5
 
 export const useOnboardingStore = create<OnboardingStore>((set, get) => ({
   currentStep: 0,
-  connectedTools: [],
-  selectedUseCases: [],
+  vaultMode: null,
   telemetryOptIn: false,
   completed: false,
 
@@ -51,21 +51,8 @@ export const useOnboardingStore = create<OnboardingStore>((set, get) => ({
     }
   },
 
-  addConnectedTool: (tool) => {
-    const { connectedTools } = get()
-    if (!connectedTools.includes(tool)) {
-      set({ connectedTools: [...connectedTools, tool] })
-      get().persist()
-    }
-  },
-
-  removeConnectedTool: (tool) => {
-    set({ connectedTools: get().connectedTools.filter((t) => t !== tool) })
-    get().persist()
-  },
-
-  setSelectedUseCases: (useCases) => {
-    set({ selectedUseCases: useCases })
+  setVaultMode: (mode) => {
+    set({ vaultMode: mode })
     get().persist()
   },
 
@@ -76,19 +63,20 @@ export const useOnboardingStore = create<OnboardingStore>((set, get) => ({
 
   complete: async () => {
     set({ completed: true })
-    // Persist telemetry consent to the main process
-    const { telemetryOptIn } = get()
+    const { telemetryOptIn, vaultMode } = get()
     await window.api.telemetry.setOptIn(telemetryOptIn)
+    if (vaultMode) {
+      await window.api.settings.set('vaultMode', vaultMode)
+    }
     await window.api.onboarding.complete()
   },
 
   loadState: async () => {
-    const state = await window.api.onboarding.getState()
+    const state = (await window.api.onboarding.getState()) as Partial<OnboardingState> | null
     if (state) {
       set({
         currentStep: state.currentStep ?? 0,
-        connectedTools: state.connectedTools ?? [],
-        selectedUseCases: state.selectedUseCases ?? [],
+        vaultMode: state.vaultMode ?? null,
         telemetryOptIn: state.telemetryOptIn ?? false,
         completed: state.completed ?? false
       })
@@ -96,12 +84,10 @@ export const useOnboardingStore = create<OnboardingStore>((set, get) => ({
   },
 
   persist: async () => {
-    const { currentStep, connectedTools, selectedUseCases, telemetryOptIn, completed } = get()
-
+    const { currentStep, vaultMode, telemetryOptIn, completed } = get()
     await window.api.onboarding.saveState({
       currentStep,
-      connectedTools,
-      selectedUseCases,
+      vaultMode,
       telemetryOptIn,
       completed
     })

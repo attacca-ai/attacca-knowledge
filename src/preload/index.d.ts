@@ -383,10 +383,13 @@ interface PersistedAgentState {
   }>
 }
 
+type VaultMode =
+  | { kind: 'managed'; path: string }
+  | { kind: 'external'; path: string }
+
 interface OnboardingState {
   currentStep: number
-  connectedTools: string[]
-  selectedUseCases: string[]
+  vaultMode: VaultMode | null
   telemetryOptIn: boolean
   completed: boolean
 }

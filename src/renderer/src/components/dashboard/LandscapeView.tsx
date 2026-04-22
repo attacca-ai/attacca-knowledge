@@ -5,7 +5,6 @@ import {
   type LandscapeTheme,
   type MorningLandscape
 } from '@/stores/agent-store'
-import { useOnboardingStore } from '@/stores/onboarding-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { ArrowLeft, ArrowUp, Loader2, RefreshCw, X, ListTodo, ArchiveX } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -329,7 +328,11 @@ export function LandscapeView(): React.JSX.Element {
     addLocalTask,
     archiveTheme
   } = useAgentStore()
-  const connectedTools = useOnboardingStore((s) => s.connectedTools)
+  // External integrations removed in Phase 0 Life OS pivot — no connected
+  // tools anywhere. Keep the local variable name so downstream code using
+  // `liveTools`/`connectedTools` as an input to the landscape prompt still
+  // compiles without further changes.
+  const connectedTools: string[] = []
   const userTimezone = useSettingsStore((s) => s.userTimezone)
   const [loading, setLoading] = useState(false)
   const [timestamp, setTimestamp] = useState(() => formatTimestamp(userTimezone))

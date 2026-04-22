@@ -4,26 +4,6 @@ import { vi } from 'vitest'
 
 export function installMockApi(): void {
   const api = {
-    gateway: {
-      start: vi.fn().mockResolvedValue({ success: true }),
-      stop: vi.fn().mockResolvedValue({ success: true }),
-      restart: vi.fn().mockResolvedValue({ success: true }),
-      status: vi.fn().mockResolvedValue({
-        state: 'stopped',
-        pid: null,
-        restartCount: 0,
-        lastError: null,
-        startedAt: null
-      }),
-      health: vi.fn().mockResolvedValue({
-        ok: true,
-        latency: 10,
-        error: null,
-        checkedAt: Date.now()
-      }),
-      getToken: vi.fn().mockResolvedValue({ token: null }),
-      onStateChanged: vi.fn().mockReturnValue(vi.fn())
-    },
     onboarding: {
       getState: vi.fn().mockResolvedValue(null),
       saveState: vi.fn().mockResolvedValue(undefined),
@@ -53,25 +33,11 @@ export function installMockApi(): void {
       status: vi.fn().mockResolvedValue({ connected: false, config: null }),
       disconnect: vi.fn().mockResolvedValue({ success: true })
     },
-    composio: {
-      setApiKey: vi.fn().mockResolvedValue({ success: true }),
-      getApiKey: vi.fn().mockResolvedValue({ hint: null }),
-      initiateOAuth: vi.fn().mockResolvedValue({
-        success: true,
-        connectionId: 'conn_1',
-        redirectUrl: 'https://example.com'
-      }),
-      getStatus: vi
-        .fn()
-        .mockResolvedValue({ connectionId: 'conn_1', status: 'active', appName: 'test' }),
-      getConnected: vi.fn().mockResolvedValue([]),
-      listApps: vi.fn().mockResolvedValue([]),
-      callTool: vi.fn().mockResolvedValue({ success: true, result: { data: { items: [] } } }),
-      disconnect: vi.fn().mockResolvedValue({ success: true, deleted: 1 }),
-      getAccounts: vi.fn().mockResolvedValue({ success: true, accounts: [] }),
-      setLabel: vi.fn().mockResolvedValue({ success: true }),
-      setDefault: vi.fn().mockResolvedValue({ success: true }),
-      getDefaults: vi.fn().mockResolvedValue({ success: true, defaults: {} })
+    clickup: {
+      connect: vi.fn().mockResolvedValue({ success: true }),
+      disconnect: vi.fn().mockResolvedValue({ success: true }),
+      status: vi.fn().mockResolvedValue({ connected: false, workspaceName: null }),
+      callAction: vi.fn().mockResolvedValue({ success: true, result: null, error: null })
     },
     scheduler: {
       getTasks: vi.fn().mockResolvedValue([]),
@@ -105,12 +71,6 @@ export function installMockApi(): void {
       onToolResult: vi.fn().mockReturnValue(vi.fn()),
       onFinal: vi.fn().mockReturnValue(vi.fn()),
       onError: vi.fn().mockReturnValue(vi.fn())
-    },
-    permission: {
-      onRequest: vi.fn().mockReturnValue(vi.fn()),
-      resolve: vi.fn().mockResolvedValue({ success: true }),
-      listStanding: vi.fn().mockResolvedValue({ success: true, approvals: [] }),
-      revokeStanding: vi.fn().mockResolvedValue({ success: true, revoked: true })
     },
     telemetry: {
       setOptIn: vi.fn().mockResolvedValue({ success: true }),

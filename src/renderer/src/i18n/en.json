@@ -33,6 +33,16 @@
   "wizard.tools.activecollab_error": "ActiveCollab requires email and password. Connect it in Settings after setup.",
   "wizard.tools.telegram_error": "Telegram requires a bot token. Connect it in Settings after setup.",
 
+  "wizard.vault.title": "Vault",
+  "wizard.vault.description": "The vault is where Attacca stores your notes, captures, decisions and reviews. Pick where it lives.",
+  "wizard.vault.managed_title": "Managed",
+  "wizard.vault.managed_desc": "Attacca creates and owns a folder in this app's data directory. Simplest option — no setup needed.",
+  "wizard.vault.external_title": "External (Obsidian)",
+  "wizard.vault.external_desc": "Point at an existing Obsidian vault folder. Attacca reads your PARA structure and adds Life OS folders with your consent.",
+  "wizard.vault.browse": "Browse",
+  "wizard.vault.path_placeholder": "No folder selected",
+  "wizard.vault.path_required": "Pick a folder to continue.",
+
   "wizard.telemetry.title": "Research Telemetry (Optional)",
   "wizard.telemetry.description": "Help improve Attacca Claw by sharing anonymous usage data. This is completely optional and off by default.",
   "wizard.telemetry.what_collected": "What is collected",
@@ -44,6 +54,8 @@
 
   "wizard.ready.title": "You're all set!",
   "wizard.ready.llm_configured": "LLM provider configured",
+  "wizard.ready.vault_managed": "Vault: managed (app data folder)",
+  "wizard.ready.vault_external": "Vault: external (Obsidian folder)",
   "wizard.ready.composio_configured": "Tool integrations ready",
   "wizard.ready.composio_skipped": "Tool integrations skipped (add later in Settings)",
   "wizard.ready.tools_connected": "{count} tools connected",

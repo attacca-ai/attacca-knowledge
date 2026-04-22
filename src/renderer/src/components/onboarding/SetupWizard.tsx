@@ -1,10 +1,11 @@
 import { useState } from 'react'
-import { Loader2, Check, ChevronLeft, ChevronRight, Globe } from 'lucide-react'
+import { Loader2, Check, ChevronLeft, ChevronRight, Globe, FolderOpen } from 'lucide-react'
 import { useTranslation } from '@/i18n'
 import { LLM_PROVIDERS, type LLMProviderKey } from '@/lib/constants'
+import type { VaultMode } from '@/stores/onboarding-store'
 
 const MONO = "'IBM Plex Mono', monospace"
-const TOTAL_STEPS = 4
+const TOTAL_STEPS = 5
 
 interface SetupWizardProps {
   onComplete: () => void
@@ -21,6 +22,11 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
   const [llmSaving, setLlmSaving] = useState(false)
   const [llmSaved, setLlmSaved] = useState(false)
   const [llmError, setLlmError] = useState<string | null>(null)
+
+  // Vault state
+  const [vaultKind, setVaultKind] = useState<VaultMode['kind']>('managed')
+  const [externalVaultPath, setExternalVaultPath] = useState<string>('')
+  const [vaultError, setVaultError] = useState<string | null>(null)
 
   // Telemetry state
   const [telemetryOptIn, setTelemetryOptIn] = useState(false)
@@ -50,10 +56,26 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
     }
   }
 
+  async function handlePickExternalVault(): Promise<void> {
+    setVaultError(null)
+    const picked = await window.api.fs.selectFolder()
+    if (picked) setExternalVaultPath(picked)
+  }
+
   async function handleFinish(): Promise<void> {
+    // Persist vault mode. Managed mode uses a path the main process will
+    // resolve against userData; the renderer stores the canonical sentinel
+    // `managed` so main can expand it lazily.
+    const vaultMode: VaultMode =
+      vaultKind === 'external'
+        ? { kind: 'external', path: externalVaultPath }
+        : { kind: 'managed', path: 'managed' }
+    await window.api.settings.set('vaultMode', vaultMode)
+
     await window.api.telemetry.setOptIn(telemetryOptIn)
     window.api.telemetry.emit('onboarding.completed', {
       llmProvider: llmProvider,
+      vaultKind,
       telemetryOptIn
     })
     await window.api.onboarding.complete()
@@ -62,10 +84,11 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
 
   function canProceed(): boolean {
     if (step === 1) return llmSaved
+    if (step === 2) return vaultKind === 'managed' || externalVaultPath.trim().length > 0
     return true
   }
 
-  const STEP_LABELS = ['welcome', 'llm_provider', 'telemetry', 'ready']
+  const STEP_LABELS = ['welcome', 'llm_provider', 'vault', 'telemetry', 'ready']
 
   function goNext(): void {
     if (step < TOTAL_STEPS - 1 && canProceed()) {
@@ -238,8 +261,134 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
             </div>
           )}
 
-          {/* Step 2: Telemetry */}
+          {/* Step 2: Vault mode */}
           {step === 2 && (
+            <div className="flex-1 flex flex-col">
+              <div className="text-[17px] font-light mb-1">{t('wizard.vault.title')}</div>
+              <div className="text-[12.5px] text-muted-foreground leading-[1.5] mb-5">
+                {t('wizard.vault.description')}
+              </div>
+
+              <div className="flex flex-col gap-2 mb-4">
+                <button
+                  onClick={() => {
+                    setVaultKind('managed')
+                    setVaultError(null)
+                  }}
+                  className="text-left rounded-[8px] p-3.5 border cursor-pointer transition-colors"
+                  style={{
+                    background:
+                      vaultKind === 'managed'
+                        ? 'color-mix(in srgb, var(--att-blue) 10%, transparent)'
+                        : 'var(--att-surface-hover)',
+                    borderColor: vaultKind === 'managed' ? 'var(--att-blue)' : '#2a2b2f',
+                    fontFamily: 'inherit'
+                  }}
+                >
+                  <div className="flex items-center gap-2 mb-1">
+                    <div
+                      className="w-3 h-3 rounded-full border-2 flex-shrink-0"
+                      style={{
+                        borderColor:
+                          vaultKind === 'managed' ? 'var(--att-blue)' : '#4a4d55',
+                        background: vaultKind === 'managed' ? 'var(--att-blue)' : 'transparent'
+                      }}
+                    />
+                    <span
+                      className="text-[13px]"
+                      style={{
+                        color: vaultKind === 'managed' ? 'var(--att-blue)' : '#e8e9eb'
+                      }}
+                    >
+                      {t('wizard.vault.managed_title')}
+                    </span>
+                  </div>
+                  <div className="text-[11.5px] text-muted-foreground leading-[1.5] pl-5">
+                    {t('wizard.vault.managed_desc')}
+                  </div>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setVaultKind('external')
+                    setVaultError(null)
+                  }}
+                  className="text-left rounded-[8px] p-3.5 border cursor-pointer transition-colors"
+                  style={{
+                    background:
+                      vaultKind === 'external'
+                        ? 'color-mix(in srgb, var(--att-blue) 10%, transparent)'
+                        : 'var(--att-surface-hover)',
+                    borderColor: vaultKind === 'external' ? 'var(--att-blue)' : '#2a2b2f',
+                    fontFamily: 'inherit'
+                  }}
+                >
+                  <div className="flex items-center gap-2 mb-1">
+                    <div
+                      className="w-3 h-3 rounded-full border-2 flex-shrink-0"
+                      style={{
+                        borderColor:
+                          vaultKind === 'external' ? 'var(--att-blue)' : '#4a4d55',
+                        background:
+                          vaultKind === 'external' ? 'var(--att-blue)' : 'transparent'
+                      }}
+                    />
+                    <span
+                      className="text-[13px]"
+                      style={{
+                        color: vaultKind === 'external' ? 'var(--att-blue)' : '#e8e9eb'
+                      }}
+                    >
+                      {t('wizard.vault.external_title')}
+                    </span>
+                  </div>
+                  <div className="text-[11.5px] text-muted-foreground leading-[1.5] pl-5">
+                    {t('wizard.vault.external_desc')}
+                  </div>
+                </button>
+              </div>
+
+              {vaultKind === 'external' && (
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    readOnly
+                    placeholder={t('wizard.vault.path_placeholder')}
+                    value={externalVaultPath}
+                    className="flex-1 rounded-[6px] px-3 py-2 text-[11px] text-[#e8e9eb] outline-none"
+                    style={{
+                      background: 'var(--att-surface-hover)',
+                      border: '1px solid #2a2b2f',
+                      fontFamily: MONO
+                    }}
+                  />
+                  <button
+                    onClick={handlePickExternalVault}
+                    className="px-3.5 py-2 rounded-[6px] text-[12px] border cursor-pointer whitespace-nowrap flex items-center gap-1.5"
+                    style={{
+                      background: 'transparent',
+                      border: '1px solid #2a2b2f',
+                      color: '#7a7d85',
+                      fontFamily: 'inherit'
+                    }}
+                  >
+                    <FolderOpen className="w-3 h-3" />
+                    {t('wizard.vault.browse')}
+                  </button>
+                </div>
+              )}
+
+              {vaultError && <p className="mt-2 text-[11px] text-att-red">{vaultError}</p>}
+              {vaultKind === 'external' && !externalVaultPath && !vaultError && (
+                <p className="mt-3 text-[10px] text-muted-foreground/60">
+                  {t('wizard.vault.path_required')}
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Step 3: Telemetry */}
+          {step === 3 && (
             <div className="flex-1 flex flex-col">
               <div className="text-[17px] font-light mb-1">{t('wizard.telemetry.title')}</div>
               <div className="text-[12.5px] text-muted-foreground leading-[1.5] mb-5">
@@ -305,8 +454,8 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
             </div>
           )}
 
-          {/* Step 3: Ready */}
-          {step === 3 && (
+          {/* Step 4: Ready */}
+          {step === 4 && (
             <div className="flex-1 flex flex-col items-center justify-center text-center">
               <div className="text-[24px] font-light mb-5">{t('wizard.ready.title')}</div>
 
@@ -315,6 +464,14 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
                   <Check className="w-3.5 h-3.5 text-att-green" />
                   <span className="text-[12px] text-muted-foreground">
                     {t('wizard.ready.llm_configured')}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Check className="w-3.5 h-3.5 text-att-green" />
+                  <span className="text-[12px] text-muted-foreground">
+                    {vaultKind === 'external'
+                      ? t('wizard.ready.vault_external')
+                      : t('wizard.ready.vault_managed')}
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
@@ -362,7 +519,7 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
             {t('wizard.nav.step', { current: step + 1, total: TOTAL_STEPS })}
           </span>
 
-          {step < TOTAL_STEPS - 1 && step !== 2 && (
+          {step < TOTAL_STEPS - 1 && step !== 3 && (
             <button
               onClick={goNext}
               disabled={!canProceed()}
@@ -379,7 +536,7 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
             </button>
           )}
 
-          {step === 2 && <div />}
+          {step === 3 && <div />}
         </div>
       </div>
     </div>

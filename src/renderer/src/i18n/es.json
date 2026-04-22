@@ -33,6 +33,16 @@
   "wizard.tools.activecollab_error": "ActiveCollab requiere email y contrasena. Conectalo en Ajustes despues.",
   "wizard.tools.telegram_error": "Telegram requiere un token de bot. Conectalo en Ajustes despues.",
 
+  "wizard.vault.title": "Vault",
+  "wizard.vault.description": "El vault es donde Attacca guarda tus notas, capturas, decisiones y revisiones. Elige donde vive.",
+  "wizard.vault.managed_title": "Administrado",
+  "wizard.vault.managed_desc": "Attacca crea y administra una carpeta dentro de los datos de la app. Lo mas simple — sin configuracion.",
+  "wizard.vault.external_title": "Externo (Obsidian)",
+  "wizard.vault.external_desc": "Apunta a una carpeta de Obsidian existente. Attacca lee tu estructura PARA y agrega carpetas Life OS con tu permiso.",
+  "wizard.vault.browse": "Buscar",
+  "wizard.vault.path_placeholder": "Sin carpeta seleccionada",
+  "wizard.vault.path_required": "Selecciona una carpeta para continuar.",
+
   "wizard.telemetry.title": "Telemetria de investigacion (Opcional)",
   "wizard.telemetry.description": "Ayuda a mejorar Attacca Claw compartiendo datos anonimos de uso. Es completamente opcional y esta desactivado por defecto.",
   "wizard.telemetry.what_collected": "Que se recopila",
@@ -44,6 +54,8 @@
 
   "wizard.ready.title": "Todo listo!",
   "wizard.ready.llm_configured": "Proveedor de LLM configurado",
+  "wizard.ready.vault_managed": "Vault: administrado (carpeta de la app)",
+  "wizard.ready.vault_external": "Vault: externo (carpeta de Obsidian)",
   "wizard.ready.composio_configured": "Integraciones de herramientas listas",
   "wizard.ready.composio_skipped": "Integraciones omitidas (agrega en Ajustes)",
   "wizard.ready.tools_connected": "{count} herramientas conectadas",
