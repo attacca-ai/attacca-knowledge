@@ -7,7 +7,7 @@ import { Dashboard } from '@/components/dashboard/Dashboard'
 import { SettingsPage } from '@/components/settings/SettingsPage'
 import { CaptureView } from '@/components/features/CaptureView'
 import { TasksView } from '@/components/features/TasksView'
-import { KnowledgeBasePage } from '@/components/features/KnowledgeBasePage'
+import { VaultView } from '@/components/features/VaultView'
 import { AreasView } from '@/components/features/AreasView'
 import { DecisionsView } from '@/components/features/DecisionsView'
 import { ReviewsView } from '@/components/features/ReviewsView'
@@ -126,7 +126,7 @@ export function AppShell(): React.JSX.Element {
             {activeView === 'areas' && <AreasView />}
             {activeView === 'decisions' && <DecisionsView />}
             {activeView === 'reviews' && <ReviewsView />}
-            {activeView === 'vault' && <KnowledgeBasePage />}
+            {activeView === 'vault' && <VaultView />}
             {activeView === 'settings' && <SettingsPage />}
           </ErrorBoundary>
         </main>
