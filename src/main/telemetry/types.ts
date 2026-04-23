@@ -1,4 +1,7 @@
-// Telemetry event type definitions
+// Telemetry event type definitions.
+// Only events actually emitted by the app are listed here. Permission/Composio/
+// workflow/parity events from the v0.2 productivity-OS era were stripped in
+// the Phase 0 Life OS pivot.
 
 export interface TelemetryEvent {
   eventType: string
@@ -7,95 +10,18 @@ export interface TelemetryEvent {
   anonymousId: string
 }
 
-// ── Phase 1: Base events ──
-
 export interface BaseEvent {
   eventType: string
   payload: Record<string, unknown>
 }
 
-// ── Phase 2: Permission events ──
-
-export interface PermissionHighRiskPresented extends BaseEvent {
-  eventType: 'permission.high_risk.presented'
-  payload: {
-    actionType: string
-    toolId: string
-    trustProfile: string
-  }
-}
-
-export interface PermissionHighRiskResolved extends BaseEvent {
-  eventType: 'permission.high_risk.resolved'
-  payload: {
-    actionType: string
-    toolId: string
-    resolution: 'approved' | 'denied'
-    standingApproval: boolean
-    durationMs: number
-    trustProfile: string
-  }
-}
-
-export interface PermissionMidRiskPresented extends BaseEvent {
-  eventType: 'permission.mid_risk.presented'
-  payload: {
-    actionType: string
-    toolId: string
-    trustProfile: string
-  }
-}
-
-export interface PermissionMidRiskViewed extends BaseEvent {
-  eventType: 'permission.mid_risk.viewed'
-  payload: {
-    actionType: string
-    toolId: string
-    trustProfile: string
-  }
-}
-
-export interface PermissionMidRiskUndoUsed extends BaseEvent {
-  eventType: 'permission.mid_risk.undo_used'
-  payload: {
-    actionType: string
-    toolId: string
-    timeSinceActionMs: number
-  }
-}
-
-export interface PermissionStandingApprovalGranted extends BaseEvent {
-  eventType: 'permission.standing_approval.granted'
-  payload: {
-    actionType: string
-    toolId: string
-    trustProfile: string
-  }
-}
-
-export interface PermissionStandingApprovalExpired extends BaseEvent {
-  eventType: 'permission.standing_approval.expired'
-  payload: {
-    actionType: string
-    toolId: string
-    durationDays: number
-  }
-}
-
-// ── Phase 2: Trust events ──
+// ── Trust events ──
 
 export interface TrustProfileChanged extends BaseEvent {
   eventType: 'trust.profile_changed'
   payload: {
     from: string
     to: string
-  }
-}
-
-export interface TrustActivityFeedToggled extends BaseEvent {
-  eventType: 'trust.activity_feed.toggled'
-  payload: {
-    expanded: boolean
   }
 }
 
@@ -111,28 +37,7 @@ export interface TrustKillSwitchResumed extends BaseEvent {
   }
 }
 
-export interface TrustTakeoverActivated extends BaseEvent {
-  eventType: 'trust.takeover.activated'
-  payload: Record<string, never>
-}
-
-export interface TrustTakeoverDeactivated extends BaseEvent {
-  eventType: 'trust.takeover.deactivated'
-  payload: {
-    durationMs: number
-    trigger: 'manual' | 'timeout'
-  }
-}
-
-export interface TrustFirstStandingApproval extends BaseEvent {
-  eventType: 'trust.first_standing_approval'
-  payload: {
-    actionType: string
-    trustProfile: string
-  }
-}
-
-// ── Phase 2: Agent events ──
+// ── Agent events ──
 
 export interface AgentTaskCompleted extends BaseEvent {
   eventType: 'agent.task.completed'
@@ -157,35 +62,10 @@ export interface AgentTaskFallbackCreated extends BaseEvent {
   }
 }
 
-export interface AgentWorkflowAdded extends BaseEvent {
-  eventType: 'agent.workflow.added'
+export interface AgentChatSent extends BaseEvent {
+  eventType: 'agent.chat.sent'
   payload: {
-    workflowType: string
-  }
-}
-
-export interface AgentWorkflowRemoved extends BaseEvent {
-  eventType: 'agent.workflow.removed'
-  payload: {
-    workflowType: string
-  }
-}
-
-export interface AgentToolCallSucceeded extends BaseEvent {
-  eventType: 'agent.tool_call.succeeded'
-  payload: {
-    actionName: string
-    toolkit: string
-    method: 'sdk' | 'rest'
-  }
-}
-
-export interface AgentToolCallFailed extends BaseEvent {
-  eventType: 'agent.tool_call.failed'
-  payload: {
-    actionName: string
-    toolkit: string
-    errorCategory: string
+    source: string
   }
 }
 
@@ -254,76 +134,6 @@ export interface CaptureDiscarded extends BaseEvent {
   }
 }
 
-// ── Workflow events ──
-
-export interface WorkflowCreated extends BaseEvent {
-  eventType: 'workflow.created'
-  payload: {
-    workflowName: string
-  }
-}
-
-export interface WorkflowRun extends BaseEvent {
-  eventType: 'workflow.run'
-  payload: {
-    workflowName: string
-  }
-}
-
-// ── Tool connection events ──
-
-export interface ToolConnected extends BaseEvent {
-  eventType: 'tool.connected'
-  payload: {
-    toolId: string
-  }
-}
-
-export interface ToolDisconnected extends BaseEvent {
-  eventType: 'tool.disconnected'
-  payload: {
-    toolId: string
-  }
-}
-
-// ── Agent chat events ──
-
-export interface AgentChatSent extends BaseEvent {
-  eventType: 'agent.chat.sent'
-  payload: {
-    source: string
-  }
-}
-
-// ── Phase 3: Parity events ──
-
-export interface ParityDraftApproved extends BaseEvent {
-  eventType: 'parity.draft.approved'
-  payload: {
-    category: string // 'email' | 'document' | 'task'
-    modified: boolean
-    modificationMagnitude: number // 0-1 scale
-  }
-}
-
-export interface ParityTaskReopened extends BaseEvent {
-  eventType: 'parity.task.reopened'
-  payload: {
-    category: string
-    timeSinceCompletionMs: number
-  }
-}
-
-export interface ParityFallbackRate extends BaseEvent {
-  eventType: 'parity.fallback_rate'
-  payload: {
-    date: string
-    totalTasks: number
-    fallbackCount: number
-    rate: number
-  }
-}
-
 // Union of all telemetry event types
 export type TelemetryEventType =
   | AppSessionStarted
@@ -333,32 +143,10 @@ export type TelemetryEventType =
   | CaptureStarted
   | CaptureSaved
   | CaptureDiscarded
-  | WorkflowCreated
-  | WorkflowRun
-  | ToolConnected
-  | ToolDisconnected
   | AgentChatSent
-  | PermissionHighRiskPresented
-  | PermissionHighRiskResolved
-  | PermissionMidRiskPresented
-  | PermissionMidRiskViewed
-  | PermissionMidRiskUndoUsed
-  | PermissionStandingApprovalGranted
-  | PermissionStandingApprovalExpired
   | TrustProfileChanged
-  | TrustActivityFeedToggled
   | TrustKillSwitchActivated
   | TrustKillSwitchResumed
-  | TrustTakeoverActivated
-  | TrustTakeoverDeactivated
-  | TrustFirstStandingApproval
   | AgentTaskCompleted
   | AgentTaskFailed
   | AgentTaskFallbackCreated
-  | AgentWorkflowAdded
-  | AgentWorkflowRemoved
-  | AgentToolCallSucceeded
-  | AgentToolCallFailed
-  | ParityDraftApproved
-  | ParityTaskReopened
-  | ParityFallbackRate

@@ -1,7 +1,8 @@
 /**
  * Core agent runtime for Attacca.
- * Replaces the OpenClaw gateway with direct Anthropic Messages API calls.
- * Implements the tool_use → permission gate → Composio → tool_result loop.
+ * Direct Anthropic Messages API calls. Local-only tools (memory_search,
+ * memory_save, vault read/write). No external integrations, no permission
+ * gate — all tools operate on local user data.
  */
 
 import Anthropic from '@anthropic-ai/sdk'
@@ -227,9 +228,9 @@ async function executeRequest(sessionKey: string, message: string): Promise<void
           continue
         }
 
-        // Execute via permission gate + Composio. Pass sessionKey so internal
-        // router tools (list_available_toolkits / load_toolkit) can mutate
-        // session.loadedToolkits.
+        // Execute local tool (memory / vault). All tools are local — no
+        // permission gate, no external API. sessionKey is passed for future
+        // session-scoped tool state.
         const execResult = await executeTool(tool.name, tool.input, sessionKey)
 
         const resultContent = execResult.success

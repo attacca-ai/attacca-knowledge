@@ -11,23 +11,19 @@ import { BarChart3 } from 'lucide-react'
 
 const DATA_CATEGORIES = [
   {
-    title: 'Permission Events',
+    title: 'App Lifecycle',
     items: [
-      'When a high-risk approval is shown to you',
-      'Whether you approved or denied it',
-      'Whether you granted a 30-day standing approval',
-      'How long it took you to decide',
-      'When medium-risk notifications are shown',
-      'When you use the Undo button on a notification'
+      'When the app starts (platform, version, packaged flag)',
+      'When you complete onboarding (LLM provider, tools connected count)',
+      'When you complete an onboarding step (step number and name)'
     ]
   },
   {
     title: 'Trust & Autonomy Events',
     items: [
       'When you change your trust profile (Cautious/Balanced/Autonomous)',
-      'When you expand or collapse the Activity Feed',
       'When you use the Emergency Stop button',
-      'When you activate or deactivate Take Over mode'
+      'When you resume after Emergency Stop (pause duration)'
     ]
   },
   {
@@ -36,15 +32,15 @@ const DATA_CATEGORIES = [
       'When a task is completed (duration only, no content)',
       'When a task fails (error category only, no details)',
       'When a fallback task is created',
-      'When workflows are added or removed'
+      'When you send a message from the dashboard or capture panel (source only)'
     ]
   },
   {
-    title: 'Parity Indicators',
+    title: 'Capture & Navigation',
     items: [
-      'When you approve or modify a draft (modification level, not content)',
-      'When a completed task is reopened',
-      'Daily task fallback rates'
+      'When you start a capture (source type only — text/url/file/transcript)',
+      'When you save or discard a capture (counts only, no content)',
+      'When you switch between feature views (view name only)'
     ]
   }
 ]
