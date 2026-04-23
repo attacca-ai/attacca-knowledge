@@ -8,17 +8,21 @@ import { SettingsPage } from '@/components/settings/SettingsPage'
 import { CaptureView } from '@/components/features/CaptureView'
 import { TasksView } from '@/components/features/TasksView'
 import { KnowledgeBasePage } from '@/components/features/KnowledgeBasePage'
+import { AreasView } from '@/components/features/AreasView'
+import { DecisionsView } from '@/components/features/DecisionsView'
+import { ReviewsView } from '@/components/features/ReviewsView'
 import { useActivityStore } from '@/stores/activity-store'
 import { useCaptureStore } from '@/stores/capture-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useTaskStore } from '@/stores/task-store'
 import { useTodayStore } from '@/stores/today-store'
 import { useVaultStore } from '@/stores/vault-store'
+import { useAreaStore } from '@/stores/area-store'
 import { useAgent } from '@/hooks/useAgent'
 
 export function AppShell(): React.JSX.Element {
-  const [activeView, setActiveView] = useState<SidebarView>('dashboard')
-  const prevViewRef = useRef<SidebarView>('dashboard')
+  const [activeView, setActiveView] = useState<SidebarView>('today')
+  const prevViewRef = useRef<SidebarView>('today')
   const lastMessageRef = useRef<string | null>(null)
   const addActivity = useActivityStore((s) => s.addActivity)
   const completeTask = useTaskStore((s) => s.completeTask)
@@ -32,7 +36,8 @@ export function AppShell(): React.JSX.Element {
       useProjectStore.getState().hydrate(),
       useTaskStore.getState().hydrate(),
       useTodayStore.getState().hydrate(),
-      useVaultStore.getState().hydrate()
+      useVaultStore.getState().hydrate(),
+      useAreaStore.getState().hydrate()
     ])
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -111,10 +116,13 @@ export function AppShell(): React.JSX.Element {
         <Sidebar activeView={activeView} onViewChange={setActiveView} />
         <main className="flex flex-1 flex-col overflow-hidden">
           <ErrorBoundary>
-            {activeView === 'dashboard' && <Dashboard />}
-            {activeView === 'capture' && <CaptureView />}
+            {activeView === 'today' && <Dashboard />}
+            {activeView === 'inbox' && <CaptureView />}
             {activeView === 'tasks' && <TasksView />}
-            {activeView === 'knowledge-base' && <KnowledgeBasePage />}
+            {activeView === 'areas' && <AreasView />}
+            {activeView === 'decisions' && <DecisionsView />}
+            {activeView === 'reviews' && <ReviewsView />}
+            {activeView === 'vault' && <KnowledgeBasePage />}
             {activeView === 'settings' && <SettingsPage />}
           </ErrorBoundary>
         </main>

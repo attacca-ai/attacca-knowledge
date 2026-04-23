@@ -48,13 +48,31 @@ export const IPC = {
   TELEMETRY_GET_QUEUE: 'telemetry:get-queue',
   TELEMETRY_GET_STATUS: 'telemetry:get-status',
 
-  // Knowledge Base
+  // Knowledge Base (legacy alias — routes through vault manager)
   KB_SAVE_CAPTURE: 'kb:save-capture',
   KB_READ_CONTEXT: 'kb:read-context',
   KB_APPEND_DAILY_LOG: 'kb:append-daily-log',
   KB_GET_PATH: 'kb:get-path',
   KB_OPEN_FOLDER: 'kb:open-folder',
   KB_IMPORT_FILES: 'kb:import-files',
+
+  // Vault (Life OS v0.3)
+  VAULT_GET_MODE: 'vault:get-mode',
+  VAULT_SET_MODE: 'vault:set-mode',
+  VAULT_SCAN_FOLDERS: 'vault:scan-folders',
+  VAULT_LIST_TREE: 'vault:list-tree',
+  VAULT_READ_NOTE: 'vault:read-note',
+  VAULT_WRITE_NOTE: 'vault:write-note',
+  VAULT_DELETE_NOTE: 'vault:delete-note',
+  VAULT_GET_PATH: 'vault:get-path',
+  VAULT_OPEN_FOLDER: 'vault:open-folder',
+
+  // Areas (Life OS v0.3 Phase 1)
+  AREA_LIST: 'area:list',
+  AREA_CREATE: 'area:create',
+  AREA_UPDATE: 'area:update',
+  AREA_ARCHIVE: 'area:archive',
+  AREA_GET_HEALTH: 'area:get-health',
 
   // Memory
   MEMORY_SEARCH: 'memory:search',
@@ -78,7 +96,8 @@ export const IPC = {
   EVENT_AGENT_TOOL_CALL: 'event:agent:tool-call',
   EVENT_AGENT_TOOL_RESULT: 'event:agent:tool-result',
   EVENT_AGENT_FINAL: 'event:agent:final',
-  EVENT_AGENT_ERROR: 'event:agent:error'
+  EVENT_AGENT_ERROR: 'event:agent:error',
+  EVENT_VAULT_CHANGED: 'event:vault:changed'
 } as const
 
 export type IPCChannel = (typeof IPC)[keyof typeof IPC]

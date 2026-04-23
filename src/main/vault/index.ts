@@ -1,0 +1,5 @@
+export * from './paths'
+export * from './manager'
+export * from './frontmatter'
+export * from './watcher'
+export { migrateLegacyKbIfNeeded } from './migrator'

@@ -133,6 +133,80 @@ export interface AttaccaAPI {
     }>
   }
 
+  vault: {
+    getMode: () => Promise<{ mode: VaultMode | null; path: string }>
+    setMode: (
+      mode: VaultMode,
+      opts?: { createMissing?: boolean }
+    ) => Promise<{
+      success: boolean
+      error?: string
+      report?: VaultScanReport
+    }>
+    scanFolders: (root: string) => Promise<{
+      success: boolean
+      error?: string
+      report?: VaultScanReport
+    }>
+    listTree: (opts?: { maxDepth?: number }) => Promise<{
+      success: boolean
+      error?: string
+      tree: VaultTreeNode[]
+    }>
+    readNote: (relPath: string) => Promise<{
+      success: boolean
+      error?: string
+      frontmatter?: Record<string, unknown>
+      rawFrontmatter?: string
+      body?: string
+      path?: string
+      absPath?: string
+    }>
+    writeNote: (
+      relPath: string,
+      body: string,
+      frontmatter: Record<string, unknown>,
+      opts?: { preserveRaw?: string }
+    ) => Promise<{ success: boolean; error?: string; absPath?: string }>
+    deleteNote: (relPath: string) => Promise<{
+      success: boolean
+      error?: string
+      archivedTo?: string
+    }>
+    getPath: () => Promise<string>
+    openFolder: () => Promise<{ success: boolean }>
+    onChanged: (
+      callback: (data: {
+        kind: 'add' | 'change' | 'unlink' | 'addDir' | 'unlinkDir'
+        path: string
+        absPath: string
+      }) => void
+    ) => () => void
+  }
+
+  area: {
+    list: () => Promise<{ success: boolean; error?: string; areas: Area[] }>
+    create: (input: {
+      name: string
+      description?: string
+      emoji?: string
+      reviewCadence?: 'weekly' | 'monthly'
+    }) => Promise<{ success: boolean; error?: string; area?: Area }>
+    update: (
+      id: string,
+      patch: Partial<{
+        name: string
+        description: string
+        emoji: string
+        reviewCadence: 'weekly' | 'monthly'
+      }>
+    ) => Promise<{ success: boolean; error?: string; area?: Area }>
+    archive: (id: string, note?: string) => Promise<{ success: boolean; error?: string }>
+    getHealth: (
+      id: string
+    ) => Promise<{ success: boolean; error?: string; health?: number }>
+  }
+
   memory: {
     search: (query: string) => Promise<{
       success: boolean
@@ -383,15 +457,50 @@ interface PersistedAgentState {
   }>
 }
 
-type VaultMode =
+export type VaultMode =
   | { kind: 'managed'; path: string }
   | { kind: 'external'; path: string }
+
+export interface VaultScanReport {
+  root: string
+  mode: 'managed' | 'external'
+  present: string[]
+  missing: string[]
+  hasClaudeMd: boolean
+}
+
+export interface VaultTreeNode {
+  name: string
+  path: string
+  absPath: string
+  kind: 'folder' | 'file'
+  size?: number
+  mtime?: number
+  children?: VaultTreeNode[]
+}
+
+export interface Area {
+  id: string
+  name: string
+  description: string
+  emoji?: string
+  healthScore?: number
+  projectIds: string[]
+  taskIds: string[]
+  reviewCadence: 'weekly' | 'monthly'
+  createdAt: number
+  archived: boolean
+  archivedAt?: number
+  archiveNote?: string
+  vaultPath: string
+}
 
 interface OnboardingState {
   currentStep: number
   vaultMode: VaultMode | null
   telemetryOptIn: boolean
   completed: boolean
+  selectedAreas?: Array<{ name: string; emoji?: string }>
 }
 
 declare global {

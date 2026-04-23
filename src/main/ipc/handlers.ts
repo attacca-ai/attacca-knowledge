@@ -276,13 +276,14 @@ export function registerIpcHandlers(): void {
       console.log(
         `[kb] Saving capture: id=${data.id} type=${data.sourceType} title="${data.title}"`
       )
-      const kbDir = join(app.getPath('userData'), 'attacca-kb')
+      const { resolveVaultRoot } = require('../vault') as typeof import('../vault')
+      const kbDir = resolveVaultRoot()
       const date = new Date(data.timestamp)
       const dateStr = date.toISOString().slice(0, 10)
       const timeStr = date.toTimeString().slice(0, 5)
 
-      // Write inbox capture file
-      const inboxDir = join(kbDir, 'inbox', dateStr)
+      // Write inbox capture file (Life OS layout: 00-Inbox/YYYY-MM-DD/)
+      const inboxDir = join(kbDir, '00-Inbox', dateStr)
       mkdirSync(inboxDir, { recursive: true })
 
       const actionItemsMd = data.result.actionItems.length
@@ -341,9 +342,9 @@ ${entitiesMd}
 `
       writeFileSync(join(inboxDir, `${data.id}-${data.sourceType}.md`), captureContent, 'utf-8')
 
-      // Route decisions to dedicated decisions/ directory
+      // Route decisions to 05-Decisions/ (Life OS §2.4)
       if (data.result?.decisions?.length > 0) {
-        const decisionsDir = join(app.getPath('userData'), 'attacca-kb', 'decisions')
+        const decisionsDir = join(kbDir, '05-Decisions')
         if (!existsSync(decisionsDir)) mkdirSync(decisionsDir, { recursive: true })
 
         for (const decision of data.result.decisions) {
@@ -546,8 +547,9 @@ Date: ${dateStr}
     }
   )
 
-  ipcMain.handle(IPC.KB_READ_CONTEXT, () => {
-    const ctxPath = join(app.getPath('userData'), 'attacca-kb', 'memory', 'CONTEXT.md')
+  ipcMain.handle(IPC.KB_READ_CONTEXT, async () => {
+    const { resolveVaultRoot } = await import('../vault')
+    const ctxPath = join(resolveVaultRoot(), 'memory', 'CONTEXT.md')
     if (!existsSync(ctxPath)) return ''
     try {
       return readFileSync(ctxPath, 'utf-8')
@@ -556,8 +558,9 @@ Date: ${dateStr}
     }
   })
 
-  ipcMain.handle(IPC.KB_APPEND_DAILY_LOG, (_event, entry: string) => {
-    const kbDir = join(app.getPath('userData'), 'attacca-kb')
+  ipcMain.handle(IPC.KB_APPEND_DAILY_LOG, async (_event, entry: string) => {
+    const { resolveVaultRoot } = await import('../vault')
+    const kbDir = resolveVaultRoot()
     const dailyDir = join(kbDir, 'daily')
     mkdirSync(dailyDir, { recursive: true })
     const dateStr = new Date().toISOString().slice(0, 10)
@@ -571,15 +574,17 @@ Date: ${dateStr}
     return { success: true }
   })
 
-  ipcMain.handle(IPC.KB_GET_PATH, () => {
-    return join(app.getPath('userData'), 'attacca-kb')
+  ipcMain.handle(IPC.KB_GET_PATH, async () => {
+    const { resolveVaultRoot } = await import('../vault')
+    return resolveVaultRoot()
   })
 
   ipcMain.handle(IPC.KB_OPEN_FOLDER, async () => {
-    const kbPath = join(app.getPath('userData'), 'attacca-kb')
-    mkdirSync(kbPath, { recursive: true })
+    const { resolveVaultRoot } = await import('../vault')
+    const root = resolveVaultRoot()
+    mkdirSync(root, { recursive: true })
     const { shell } = await import('electron')
-    shell.openPath(kbPath)
+    shell.openPath(root)
     return { success: true }
   })
 
@@ -587,7 +592,8 @@ Date: ${dateStr}
     IPC.KB_IMPORT_FILES,
     async (_event, paths: string[]) => {
       const { readdirSync, statSync } = await import('fs')
-      const kbDir = join(app.getPath('userData'), 'attacca-kb', 'inbox', 'imported')
+      const { resolveVaultRoot } = await import('../vault')
+      const kbDir = join(resolveVaultRoot(), '00-Inbox', 'imported')
       mkdirSync(kbDir, { recursive: true })
       const imported: Array<{ fileName: string; title: string }> = []
 
@@ -804,6 +810,169 @@ Date: ${dateStr}
       const { clearSession } = require('../runtime/agent') as typeof import('../runtime/agent')
       clearSession(sessionKey)
       return { success: true }
+    } catch (err) {
+      return { success: false, error: (err as Error).message }
+    }
+  })
+
+  // ── Vault (Life OS v0.3) ──
+  ipcMain.handle(IPC.VAULT_GET_MODE, async () => {
+    const { readVaultMode, resolveVaultRoot } = await import('../vault')
+    return { mode: readVaultMode(), path: resolveVaultRoot() }
+  })
+
+  ipcMain.handle(
+    IPC.VAULT_SET_MODE,
+    async (
+      _event,
+      mode: { kind: 'managed' | 'external'; path: string },
+      opts?: { createMissing?: boolean }
+    ) => {
+      try {
+        const { applyVaultMode, startWatcher, stopWatcher } = await import('../vault')
+        const report = applyVaultMode(mode, opts)
+        await stopWatcher()
+        await startWatcher()
+        return { success: true, report }
+      } catch (err) {
+        return { success: false, error: (err as Error).message }
+      }
+    }
+  )
+
+  ipcMain.handle(IPC.VAULT_SCAN_FOLDERS, async (_event, root: string) => {
+    try {
+      const { scanFolders } = await import('../vault')
+      return { success: true, report: scanFolders(root) }
+    } catch (err) {
+      return { success: false, error: (err as Error).message }
+    }
+  })
+
+  ipcMain.handle(IPC.VAULT_LIST_TREE, async (_event, opts?: { maxDepth?: number }) => {
+    try {
+      const { listTree } = await import('../vault')
+      return { success: true, tree: listTree(undefined, opts?.maxDepth) }
+    } catch (err) {
+      return { success: false, error: (err as Error).message, tree: [] }
+    }
+  })
+
+  ipcMain.handle(IPC.VAULT_READ_NOTE, async (_event, relPath: string) => {
+    try {
+      const { readNote } = await import('../vault')
+      return { success: true, ...readNote(relPath) }
+    } catch (err) {
+      return { success: false, error: (err as Error).message }
+    }
+  })
+
+  ipcMain.handle(
+    IPC.VAULT_WRITE_NOTE,
+    async (
+      _event,
+      relPath: string,
+      body: string,
+      frontmatter: Record<string, unknown>,
+      opts?: { preserveRaw?: string }
+    ) => {
+      try {
+        const { writeNote } = await import('../vault')
+        const result = writeNote(
+          relPath,
+          body,
+          frontmatter as Parameters<typeof writeNote>[2],
+          opts
+        )
+        return { success: true, ...result }
+      } catch (err) {
+        return { success: false, error: (err as Error).message }
+      }
+    }
+  )
+
+  ipcMain.handle(IPC.VAULT_DELETE_NOTE, async (_event, relPath: string) => {
+    try {
+      const { archiveNote } = await import('../vault')
+      return { success: true, ...archiveNote(relPath) }
+    } catch (err) {
+      return { success: false, error: (err as Error).message }
+    }
+  })
+
+  ipcMain.handle(IPC.VAULT_GET_PATH, async () => {
+    const { resolveVaultRoot } = await import('../vault')
+    return resolveVaultRoot()
+  })
+
+  ipcMain.handle(IPC.VAULT_OPEN_FOLDER, async () => {
+    const { resolveVaultRoot } = await import('../vault')
+    const root = resolveVaultRoot()
+    mkdirSync(root, { recursive: true })
+    shell.openPath(root)
+    return { success: true }
+  })
+
+  // ── Areas ──
+  ipcMain.handle(IPC.AREA_LIST, async () => {
+    try {
+      const { listAreas } = await import('../areas/manager')
+      return { success: true, areas: listAreas() }
+    } catch (err) {
+      return { success: false, error: (err as Error).message, areas: [] }
+    }
+  })
+
+  ipcMain.handle(
+    IPC.AREA_CREATE,
+    async (
+      _event,
+      input: { name: string; description?: string; emoji?: string; reviewCadence?: 'weekly' | 'monthly' }
+    ) => {
+      try {
+        const { createArea } = await import('../areas/manager')
+        return { success: true, area: createArea(input) }
+      } catch (err) {
+        return { success: false, error: (err as Error).message }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    IPC.AREA_UPDATE,
+    async (
+      _event,
+      id: string,
+      patch: Partial<{
+        name: string
+        description: string
+        emoji: string
+        reviewCadence: 'weekly' | 'monthly'
+      }>
+    ) => {
+      try {
+        const { updateArea } = await import('../areas/manager')
+        return { success: true, area: updateArea(id, patch) }
+      } catch (err) {
+        return { success: false, error: (err as Error).message }
+      }
+    }
+  )
+
+  ipcMain.handle(IPC.AREA_ARCHIVE, async (_event, id: string, note?: string) => {
+    try {
+      const { archiveArea } = await import('../areas/manager')
+      archiveArea(id, note)
+      return { success: true }
+    } catch (err) {
+      return { success: false, error: (err as Error).message }
+    }
+  })
+
+  ipcMain.handle(IPC.AREA_GET_HEALTH, async (_event, id: string) => {
+    try {
+      const { computeHealth } = await import('../areas/manager')
+      return { success: true, health: computeHealth(id) }
     } catch (err) {
       return { success: false, error: (err as Error).message }
     }

@@ -246,7 +246,7 @@ export function KnowledgeBasePage(): React.JSX.Element {
               {importing ? 'Importing...' : 'Import files'}
             </button>
             <button
-              onClick={() => window.dispatchEvent(new CustomEvent('attacca:navigate', { detail: { view: 'capture' } }))}
+              onClick={() => window.dispatchEvent(new CustomEvent('attacca:navigate', { detail: { view: 'inbox' } }))}
               className="flex items-center gap-1.5 rounded-md bg-att-blue/12 px-3 py-1.5 text-[12px] text-att-blue transition-colors hover:bg-att-blue/20"
             >
               <Plus className="h-3.5 w-3.5" />

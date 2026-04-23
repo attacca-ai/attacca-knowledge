@@ -1,11 +1,29 @@
 import { useState } from 'react'
-import { Loader2, Check, ChevronLeft, ChevronRight, Globe, FolderOpen } from 'lucide-react'
+import { Loader2, Check, ChevronLeft, ChevronRight, Globe, FolderOpen, Plus } from 'lucide-react'
 import { useTranslation } from '@/i18n'
 import { LLM_PROVIDERS, type LLMProviderKey } from '@/lib/constants'
 import type { VaultMode } from '@/stores/onboarding-store'
 
 const MONO = "'IBM Plex Mono', monospace"
-const TOTAL_STEPS = 5
+const TOTAL_STEPS = 6
+
+/**
+ * Default areas offered during onboarding (spec §6.2 + resolved Q3).
+ * Pre-checked. User must keep ≥1 to advance; custom adds allowed.
+ */
+interface DefaultArea {
+  name: string
+  emoji: string
+  description: string
+}
+const DEFAULT_AREAS: DefaultArea[] = [
+  { name: 'Health', emoji: '🏃', description: 'Physical activity, sleep, nutrition, medical' },
+  { name: 'Career', emoji: '💼', description: 'Work, side projects, professional growth' },
+  { name: 'Family & Relationships', emoji: '❤️', description: 'Partner, family, close friends' },
+  { name: 'Finance', emoji: '💰', description: 'Income, spending, saving, investments' },
+  { name: 'Learning', emoji: '📚', description: 'Books, courses, research, skill building' },
+  { name: 'Personal Projects', emoji: '🛠️', description: 'Hobbies, side interests, crafts' }
+]
 
 interface SetupWizardProps {
   onComplete: () => void
@@ -30,6 +48,36 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
 
   // Telemetry state
   const [telemetryOptIn, setTelemetryOptIn] = useState(false)
+
+  // Areas state — all 6 defaults pre-checked (resolved Q3).
+  const [areaSelections, setAreaSelections] = useState<DefaultArea[]>(() => [...DEFAULT_AREAS])
+  const [customAreaName, setCustomAreaName] = useState('')
+  const [customAreaEmoji, setCustomAreaEmoji] = useState('')
+
+  function toggleDefaultArea(name: string): void {
+    setAreaSelections((prev) => {
+      const has = prev.some((a) => a.name === name)
+      if (has) return prev.filter((a) => a.name !== name)
+      const def = DEFAULT_AREAS.find((a) => a.name === name)
+      return def ? [...prev, def] : prev
+    })
+  }
+
+  function addCustomArea(): void {
+    const name = customAreaName.trim()
+    if (!name) return
+    if (areaSelections.some((a) => a.name.toLowerCase() === name.toLowerCase())) {
+      setCustomAreaName('')
+      setCustomAreaEmoji('')
+      return
+    }
+    setAreaSelections((prev) => [
+      ...prev,
+      { name, emoji: customAreaEmoji.trim() || '📌', description: '' }
+    ])
+    setCustomAreaName('')
+    setCustomAreaEmoji('')
+  }
 
   async function handleTestLLM(): Promise<void> {
     if (!llmKey.trim()) return
@@ -63,20 +111,39 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
   }
 
   async function handleFinish(): Promise<void> {
-    // Persist vault mode. Managed mode uses a path the main process will
-    // resolve against userData; the renderer stores the canonical sentinel
-    // `managed` so main can expand it lazily.
+    // Persist vault mode via the new vault manager — creates missing
+    // managed folders and starts the chokidar watcher server-side.
     const vaultMode: VaultMode =
       vaultKind === 'external'
         ? { kind: 'external', path: externalVaultPath }
         : { kind: 'managed', path: 'managed' }
-    await window.api.settings.set('vaultMode', vaultMode)
+    try {
+      await window.api.vault.setMode(vaultMode, { createMissing: true })
+    } catch {
+      // Fall back to plain setting write so old builds still boot.
+      await window.api.settings.set('vaultMode', vaultMode)
+    }
+
+    // Seed selected areas (spec §6.2). Errors non-fatal; user can retry
+    // in AreasView.
+    for (const sel of areaSelections) {
+      try {
+        await window.api.area.create({
+          name: sel.name,
+          emoji: sel.emoji,
+          description: sel.description
+        })
+      } catch {
+        /* continue seeding others */
+      }
+    }
 
     await window.api.telemetry.setOptIn(telemetryOptIn)
     window.api.telemetry.emit('onboarding.completed', {
       llmProvider: llmProvider,
       vaultKind,
-      telemetryOptIn
+      telemetryOptIn,
+      areaCount: areaSelections.length
     })
     await window.api.onboarding.complete()
     onComplete()
@@ -85,10 +152,11 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
   function canProceed(): boolean {
     if (step === 1) return llmSaved
     if (step === 2) return vaultKind === 'managed' || externalVaultPath.trim().length > 0
+    if (step === 3) return areaSelections.length > 0
     return true
   }
 
-  const STEP_LABELS = ['welcome', 'llm_provider', 'vault', 'telemetry', 'ready']
+  const STEP_LABELS = ['welcome', 'llm_provider', 'vault', 'areas', 'telemetry', 'ready']
 
   function goNext(): void {
     if (step < TOTAL_STEPS - 1 && canProceed()) {
@@ -387,8 +455,129 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
             </div>
           )}
 
-          {/* Step 3: Telemetry */}
+          {/* Step 3: Areas (Life OS §6.2, resolved Q3) */}
           {step === 3 && (
+            <div className="flex-1 flex flex-col">
+              <div className="text-[17px] font-light mb-1">{t('wizard.areas.title')}</div>
+              <div className="text-[12.5px] text-muted-foreground leading-[1.5] mb-4">
+                {t('wizard.areas.description')}
+              </div>
+
+              <div className="flex flex-col gap-1.5 mb-3 max-h-[240px] overflow-auto pr-1">
+                {DEFAULT_AREAS.map((def) => {
+                  const checked = areaSelections.some((a) => a.name === def.name)
+                  return (
+                    <button
+                      key={def.name}
+                      onClick={() => toggleDefaultArea(def.name)}
+                      className="flex items-center gap-2 rounded-[6px] border px-2.5 py-2 text-left cursor-pointer transition-colors"
+                      style={{
+                        background: checked
+                          ? 'color-mix(in srgb, var(--att-blue) 10%, transparent)'
+                          : 'var(--att-surface-hover)',
+                        borderColor: checked ? 'var(--att-blue)' : '#2a2b2f',
+                        fontFamily: 'inherit'
+                      }}
+                    >
+                      <span
+                        className="w-3.5 h-3.5 rounded-sm border flex-shrink-0 flex items-center justify-center"
+                        style={{
+                          borderColor: checked ? 'var(--att-blue)' : '#4a4d55',
+                          background: checked ? 'var(--att-blue)' : 'transparent'
+                        }}
+                      >
+                        {checked && <Check className="w-2.5 h-2.5 text-white" />}
+                      </span>
+                      <span className="text-[14px]">{def.emoji}</span>
+                      <div className="flex-1">
+                        <div className="text-[12.5px]" style={{ color: checked ? 'var(--att-blue)' : '#e8e9eb' }}>
+                          {def.name}
+                        </div>
+                        <div className="text-[10.5px] text-muted-foreground/70">{def.description}</div>
+                      </div>
+                    </button>
+                  )
+                })}
+
+                {areaSelections
+                  .filter((a) => !DEFAULT_AREAS.some((d) => d.name === a.name))
+                  .map((custom) => (
+                    <div
+                      key={custom.name}
+                      className="flex items-center gap-2 rounded-[6px] border px-2.5 py-2"
+                      style={{
+                        background: 'color-mix(in srgb, var(--att-blue) 10%, transparent)',
+                        borderColor: 'var(--att-blue)'
+                      }}
+                    >
+                      <span className="text-[14px]">{custom.emoji}</span>
+                      <div className="flex-1 text-[12.5px]" style={{ color: 'var(--att-blue)' }}>
+                        {custom.name}
+                      </div>
+                      <button
+                        onClick={() =>
+                          setAreaSelections((prev) => prev.filter((a) => a.name !== custom.name))
+                        }
+                        className="text-[10px] text-muted-foreground hover:text-att-red cursor-pointer"
+                        style={{ background: 'none', border: 'none' }}
+                      >
+                        remove
+                      </button>
+                    </div>
+                  ))}
+              </div>
+
+              <div className="flex gap-2 mt-1">
+                <input
+                  type="text"
+                  value={customAreaEmoji}
+                  onChange={(e) => setCustomAreaEmoji(e.target.value.slice(0, 4))}
+                  placeholder="🔖"
+                  className="w-12 rounded-[6px] px-2 py-1.5 text-[12px] text-center outline-none"
+                  style={{
+                    background: 'var(--att-surface-hover)',
+                    border: '1px solid #2a2b2f'
+                  }}
+                />
+                <input
+                  type="text"
+                  value={customAreaName}
+                  onChange={(e) => setCustomAreaName(e.target.value)}
+                  placeholder={t('wizard.areas.add_placeholder')}
+                  className="flex-1 rounded-[6px] px-2.5 py-1.5 text-[11px] outline-none"
+                  style={{
+                    background: 'var(--att-surface-hover)',
+                    border: '1px solid #2a2b2f',
+                    color: '#e8e9eb'
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') addCustomArea()
+                  }}
+                />
+                <button
+                  onClick={addCustomArea}
+                  disabled={!customAreaName.trim()}
+                  className="rounded-[6px] px-3 py-1.5 text-[11px] border cursor-pointer whitespace-nowrap flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"
+                  style={{
+                    background: 'transparent',
+                    border: '1px solid #2a2b2f',
+                    color: '#7a7d85',
+                    fontFamily: 'inherit'
+                  }}
+                >
+                  <Plus className="w-3 h-3" />
+                  {t('wizard.areas.add_button')}
+                </button>
+              </div>
+
+              {areaSelections.length === 0 && (
+                <p className="mt-3 text-[10px] text-att-red">{t('wizard.areas.required')}</p>
+              )}
+            </div>
+          )}
+
+          {/* Step 4: Telemetry */}
+          {step === 4 && (
             <div className="flex-1 flex flex-col">
               <div className="text-[17px] font-light mb-1">{t('wizard.telemetry.title')}</div>
               <div className="text-[12.5px] text-muted-foreground leading-[1.5] mb-5">
@@ -454,8 +643,8 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
             </div>
           )}
 
-          {/* Step 4: Ready */}
-          {step === 4 && (
+          {/* Step 5: Ready */}
+          {step === 5 && (
             <div className="flex-1 flex flex-col items-center justify-center text-center">
               <div className="text-[24px] font-light mb-5">{t('wizard.ready.title')}</div>
 
@@ -519,7 +708,7 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
             {t('wizard.nav.step', { current: step + 1, total: TOTAL_STEPS })}
           </span>
 
-          {step < TOTAL_STEPS - 1 && step !== 3 && (
+          {step < TOTAL_STEPS - 1 && step !== 4 && (
             <button
               onClick={goNext}
               disabled={!canProceed()}
@@ -536,7 +725,7 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
             </button>
           )}
 
-          {step === 3 && <div />}
+          {step === 4 && <div />}
         </div>
       </div>
     </div>

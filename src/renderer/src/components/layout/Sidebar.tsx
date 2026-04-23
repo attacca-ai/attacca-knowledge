@@ -6,10 +6,13 @@ import { cn } from '@/lib/utils'
 import { useTranslation } from '@/i18n'
 
 export type SidebarView =
-  | 'dashboard'
-  | 'capture'
+  | 'today'
+  | 'inbox'
   | 'tasks'
-  | 'knowledge-base'
+  | 'areas'
+  | 'decisions'
+  | 'reviews'
+  | 'vault'
   | 'settings'
 
 interface SidebarProps {
@@ -30,7 +33,7 @@ const IconCollapse = ({ flipped }: { flipped?: boolean }): React.JSX.Element => 
   </svg>
 )
 
-const IconLandscape = (): React.JSX.Element => (
+const IconToday = (): React.JSX.Element => (
   <svg
     className="h-[14px] w-[14px] shrink-0"
     viewBox="0 0 16 16"
@@ -45,7 +48,7 @@ const IconLandscape = (): React.JSX.Element => (
   </svg>
 )
 
-const IconCapture = (): React.JSX.Element => (
+const IconInbox = (): React.JSX.Element => (
   <svg
     className="h-[14px] w-[14px] shrink-0"
     viewBox="0 0 16 16"
@@ -53,8 +56,8 @@ const IconCapture = (): React.JSX.Element => (
     stroke="currentColor"
     strokeWidth="1.5"
   >
-    <rect x="2" y="2" width="12" height="12" rx="2" />
-    <path d="M5 8h6M8 5v6" />
+    <path d="M2 9l2-5h8l2 5v4a1 1 0 01-1 1H3a1 1 0 01-1-1V9z" />
+    <path d="M2 9h4l1 2h2l1-2h4" />
   </svg>
 )
 
@@ -71,7 +74,48 @@ const IconTasks = (): React.JSX.Element => (
   </svg>
 )
 
-const IconKnowledgeBase = (): React.JSX.Element => (
+const IconAreas = (): React.JSX.Element => (
+  <svg
+    className="h-[14px] w-[14px] shrink-0"
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+  >
+    <circle cx="5" cy="5" r="3" />
+    <circle cx="11" cy="11" r="3" />
+    <path d="M8 8l0 0" />
+  </svg>
+)
+
+const IconDecisions = (): React.JSX.Element => (
+  <svg
+    className="h-[14px] w-[14px] shrink-0"
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+  >
+    <path d="M8 2v5M8 7l-4 3M8 7l4 3" />
+    <circle cx="4" cy="12" r="1.5" />
+    <circle cx="12" cy="12" r="1.5" />
+  </svg>
+)
+
+const IconReviews = (): React.JSX.Element => (
+  <svg
+    className="h-[14px] w-[14px] shrink-0"
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+  >
+    <path d="M3 3h8l2 2v8H3z" />
+    <path d="M5 7h6M5 10h4" />
+  </svg>
+)
+
+const IconVault = (): React.JSX.Element => (
   <svg
     className="h-[14px] w-[14px] shrink-0"
     viewBox="0 0 16 16"
@@ -185,17 +229,17 @@ export function Sidebar({ activeView, onViewChange }: SidebarProps): React.JSX.E
 
         {/* Workspace icons */}
         <IconBtn
-          view="dashboard"
-          icon={<IconLandscape />}
-          title={t('sidebar.landscape')}
-          isActive={activeView === 'dashboard'}
+          view="today"
+          icon={<IconToday />}
+          title={t('sidebar.today')}
+          isActive={activeView === 'today'}
           onViewChange={onViewChange}
         />
         <IconBtn
-          view="capture"
-          icon={<IconCapture />}
-          title={t('sidebar.capture')}
-          isActive={activeView === 'capture'}
+          view="inbox"
+          icon={<IconInbox />}
+          title={t('sidebar.inbox')}
+          isActive={activeView === 'inbox'}
           badge={rawCapturesCount > 0 ? rawCapturesCount : undefined}
           onViewChange={onViewChange}
         />
@@ -207,10 +251,31 @@ export function Sidebar({ activeView, onViewChange }: SidebarProps): React.JSX.E
           onViewChange={onViewChange}
         />
         <IconBtn
-          view="knowledge-base"
-          icon={<IconKnowledgeBase />}
-          title={t('sidebar.knowledgeBase')}
-          isActive={activeView === 'knowledge-base'}
+          view="areas"
+          icon={<IconAreas />}
+          title={t('sidebar.areas')}
+          isActive={activeView === 'areas'}
+          onViewChange={onViewChange}
+        />
+        <IconBtn
+          view="decisions"
+          icon={<IconDecisions />}
+          title={t('sidebar.decisions')}
+          isActive={activeView === 'decisions'}
+          onViewChange={onViewChange}
+        />
+        <IconBtn
+          view="reviews"
+          icon={<IconReviews />}
+          title={t('sidebar.reviews')}
+          isActive={activeView === 'reviews'}
+          onViewChange={onViewChange}
+        />
+        <IconBtn
+          view="vault"
+          icon={<IconVault />}
+          title={t('sidebar.vault')}
+          isActive={activeView === 'vault'}
           onViewChange={onViewChange}
         />
 
@@ -264,17 +329,17 @@ export function Sidebar({ activeView, onViewChange }: SidebarProps): React.JSX.E
       <div className="mb-2 px-3">
         <nav className="flex flex-col gap-0.5">
           <NavItem
-            view="dashboard"
-            label={t('sidebar.landscape')}
-            icon={<IconLandscape />}
-            isActive={activeView === 'dashboard'}
+            view="today"
+            label={t('sidebar.today')}
+            icon={<IconToday />}
+            isActive={activeView === 'today'}
             onViewChange={onViewChange}
           />
           <NavItem
-            view="capture"
-            label={t('sidebar.capture')}
-            icon={<IconCapture />}
-            isActive={activeView === 'capture'}
+            view="inbox"
+            label={t('sidebar.inbox')}
+            icon={<IconInbox />}
+            isActive={activeView === 'inbox'}
             badge={rawCapturesCount > 0 ? rawCapturesCount : undefined}
             onViewChange={onViewChange}
           />
@@ -286,10 +351,31 @@ export function Sidebar({ activeView, onViewChange }: SidebarProps): React.JSX.E
             onViewChange={onViewChange}
           />
           <NavItem
-            view="knowledge-base"
-            label={t('sidebar.knowledgeBase')}
-            icon={<IconKnowledgeBase />}
-            isActive={activeView === 'knowledge-base'}
+            view="areas"
+            label={t('sidebar.areas')}
+            icon={<IconAreas />}
+            isActive={activeView === 'areas'}
+            onViewChange={onViewChange}
+          />
+          <NavItem
+            view="decisions"
+            label={t('sidebar.decisions')}
+            icon={<IconDecisions />}
+            isActive={activeView === 'decisions'}
+            onViewChange={onViewChange}
+          />
+          <NavItem
+            view="reviews"
+            label={t('sidebar.reviews')}
+            icon={<IconReviews />}
+            isActive={activeView === 'reviews'}
+            onViewChange={onViewChange}
+          />
+          <NavItem
+            view="vault"
+            label={t('sidebar.vault')}
+            icon={<IconVault />}
+            isActive={activeView === 'vault'}
             onViewChange={onViewChange}
           />
         </nav>

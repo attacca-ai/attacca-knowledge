@@ -10,6 +10,8 @@ import { initTelemetryCollector, getTelemetryCollector } from './telemetry/colle
 import { getMemoryDb, closeMemoryDb } from './memory/db'
 import { registerProvider } from './integrations/registry'
 import { clickupProvider } from './integrations/clickup/provider'
+import { migrateLegacyKbIfNeeded, startWatcher, onVaultChange } from './vault'
+import { IPC } from './ipc/channels'
 
 // Single instance lock
 const gotTheLock = app.requestSingleInstanceLock()
@@ -47,6 +49,20 @@ if (!gotTheLock) {
 
     // Register IPC handlers
     registerIpcHandlers()
+
+    // Vault migration + watcher (Life OS v0.3 Phase 1)
+    try {
+      migrateLegacyKbIfNeeded()
+      await startWatcher()
+      onVaultChange((event) => {
+        const win = getMainWindow()
+        if (win && !win.isDestroyed()) {
+          win.webContents.send(IPC.EVENT_VAULT_CHANGED, event)
+        }
+      })
+    } catch (err) {
+      console.warn('[vault] Init failed:', err)
+    }
 
     // Create main window
     createMainWindow()

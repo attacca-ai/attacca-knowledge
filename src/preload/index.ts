@@ -72,7 +72,7 @@ const api = {
     extractUrl: (url: string) => ipcRenderer.invoke('relay:extract-url', url)
   },
 
-  // Knowledge Base
+  // Knowledge Base (legacy alias — routes through vault manager)
   kb: {
     saveCapture: (data: unknown) => ipcRenderer.invoke('kb:save-capture', data),
     readContext: () => ipcRenderer.invoke('kb:read-context'),
@@ -80,6 +80,61 @@ const api = {
     getPath: () => ipcRenderer.invoke('kb:get-path'),
     openFolder: () => ipcRenderer.invoke('kb:open-folder'),
     importFiles: (filePaths: string[]) => ipcRenderer.invoke('kb:import-files', filePaths)
+  },
+
+  // Vault (Life OS v0.3)
+  vault: {
+    getMode: () => ipcRenderer.invoke('vault:get-mode'),
+    setMode: (
+      mode: { kind: 'managed' | 'external'; path: string },
+      opts?: { createMissing?: boolean }
+    ) => ipcRenderer.invoke('vault:set-mode', mode, opts),
+    scanFolders: (root: string) => ipcRenderer.invoke('vault:scan-folders', root),
+    listTree: (opts?: { maxDepth?: number }) => ipcRenderer.invoke('vault:list-tree', opts),
+    readNote: (relPath: string) => ipcRenderer.invoke('vault:read-note', relPath),
+    writeNote: (
+      relPath: string,
+      body: string,
+      frontmatter: Record<string, unknown>,
+      opts?: { preserveRaw?: string }
+    ) => ipcRenderer.invoke('vault:write-note', relPath, body, frontmatter, opts),
+    deleteNote: (relPath: string) => ipcRenderer.invoke('vault:delete-note', relPath),
+    getPath: () => ipcRenderer.invoke('vault:get-path'),
+    openFolder: () => ipcRenderer.invoke('vault:open-folder'),
+    onChanged: (
+      callback: (data: {
+        kind: 'add' | 'change' | 'unlink' | 'addDir' | 'unlinkDir'
+        path: string
+        absPath: string
+      }) => void
+    ) => {
+      const handler = (_event: unknown, data: Parameters<typeof callback>[0]): void =>
+        callback(data)
+      ipcRenderer.on('event:vault:changed', handler)
+      return () => ipcRenderer.removeListener('event:vault:changed', handler)
+    }
+  },
+
+  // Areas (Life OS v0.3 Phase 1)
+  area: {
+    list: () => ipcRenderer.invoke('area:list'),
+    create: (input: {
+      name: string
+      description?: string
+      emoji?: string
+      reviewCadence?: 'weekly' | 'monthly'
+    }) => ipcRenderer.invoke('area:create', input),
+    update: (
+      id: string,
+      patch: Partial<{
+        name: string
+        description: string
+        emoji: string
+        reviewCadence: 'weekly' | 'monthly'
+      }>
+    ) => ipcRenderer.invoke('area:update', id, patch),
+    archive: (id: string, note?: string) => ipcRenderer.invoke('area:archive', id, note),
+    getHealth: (id: string) => ipcRenderer.invoke('area:get-health', id)
   },
 
   // Memory
