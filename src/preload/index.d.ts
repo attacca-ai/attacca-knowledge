@@ -207,6 +207,47 @@ export interface AttaccaAPI {
     ) => Promise<{ success: boolean; error?: string; health?: number }>
   }
 
+  decision: {
+    list: () => Promise<{ success: boolean; error?: string; decisions: Decision[] }>
+    create: (input: {
+      title: string
+      context: string
+      options?: string[]
+      chosen: string
+      reasoning: string
+      expectedOutcome: string
+      revisitInDays: number
+      areaId?: string
+      projectId?: string
+      tags?: string[]
+    }) => Promise<{ success: boolean; error?: string; decision?: Decision }>
+    update: (
+      id: string,
+      patch: Partial<{
+        title: string
+        context: string
+        options: string[]
+        chosen: string
+        reasoning: string
+        expectedOutcome: string
+        revisitAt: number
+        areaId: string
+        projectId: string
+        tags: string[]
+      }>
+    ) => Promise<{ success: boolean; error?: string; decision?: Decision }>
+    revisit: (id: string) => Promise<{ success: boolean; error?: string; decision?: Decision }>
+    complete: (
+      id: string,
+      retro: { actualOutcome: string; didMatch: boolean | 'partly'; lessons: string }
+    ) => Promise<{ success: boolean; error?: string; decision?: Decision }>
+    supersede: (
+      oldId: string,
+      newId: string
+    ) => Promise<{ success: boolean; error?: string; decision?: Decision }>
+    scanDue: () => Promise<{ success: boolean; error?: string; decisions: Decision[] }>
+  }
+
   memory: {
     search: (query: string) => Promise<{
       success: boolean
@@ -477,6 +518,33 @@ export interface VaultTreeNode {
   size?: number
   mtime?: number
   children?: VaultTreeNode[]
+}
+
+export interface DecisionRetrospective {
+  actualOutcome: string
+  didMatch: boolean | 'partly'
+  lessons: string
+  createdLessonId?: string
+  revisitedAt: number
+}
+
+export interface Decision {
+  id: string
+  title: string
+  context: string
+  options: string[]
+  chosen: string
+  reasoning: string
+  expectedOutcome: string
+  revisitAt: number
+  retrospective?: DecisionRetrospective
+  areaId?: string
+  projectId?: string
+  tags: string[]
+  createdAt: number
+  status: 'active' | 'revisited' | 'reversed' | 'superseded'
+  supersededBy?: string
+  vaultPath: string
 }
 
 export interface Area {

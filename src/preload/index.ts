@@ -137,6 +137,46 @@ const api = {
     getHealth: (id: string) => ipcRenderer.invoke('area:get-health', id)
   },
 
+  // Decisions (Life OS v0.3 Phase 1)
+  decision: {
+    list: () => ipcRenderer.invoke('decision:list'),
+    create: (input: {
+      title: string
+      context: string
+      options?: string[]
+      chosen: string
+      reasoning: string
+      expectedOutcome: string
+      revisitInDays: number
+      areaId?: string
+      projectId?: string
+      tags?: string[]
+    }) => ipcRenderer.invoke('decision:create', input),
+    update: (
+      id: string,
+      patch: Partial<{
+        title: string
+        context: string
+        options: string[]
+        chosen: string
+        reasoning: string
+        expectedOutcome: string
+        revisitAt: number
+        areaId: string
+        projectId: string
+        tags: string[]
+      }>
+    ) => ipcRenderer.invoke('decision:update', id, patch),
+    revisit: (id: string) => ipcRenderer.invoke('decision:revisit', id),
+    complete: (
+      id: string,
+      retro: { actualOutcome: string; didMatch: boolean | 'partly'; lessons: string }
+    ) => ipcRenderer.invoke('decision:complete', id, retro),
+    supersede: (oldId: string, newId: string) =>
+      ipcRenderer.invoke('decision:supersede', oldId, newId),
+    scanDue: () => ipcRenderer.invoke('decision:scan-due')
+  },
+
   // Memory
   memory: {
     search: (query: string) => ipcRenderer.invoke('memory:search', query),

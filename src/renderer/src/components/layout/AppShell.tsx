@@ -18,6 +18,7 @@ import { useTaskStore } from '@/stores/task-store'
 import { useTodayStore } from '@/stores/today-store'
 import { useVaultStore } from '@/stores/vault-store'
 import { useAreaStore } from '@/stores/area-store'
+import { useDecisionStore } from '@/stores/decision-store'
 import { useAgent } from '@/hooks/useAgent'
 
 export function AppShell(): React.JSX.Element {
@@ -37,7 +38,8 @@ export function AppShell(): React.JSX.Element {
       useTaskStore.getState().hydrate(),
       useTodayStore.getState().hydrate(),
       useVaultStore.getState().hydrate(),
-      useAreaStore.getState().hydrate()
+      useAreaStore.getState().hydrate(),
+      useDecisionStore.getState().hydrate()
     ])
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 

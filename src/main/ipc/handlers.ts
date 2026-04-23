@@ -977,4 +977,110 @@ Date: ${dateStr}
       return { success: false, error: (err as Error).message }
     }
   })
+
+  // ── Decisions (Life OS v0.3 Phase 1) ──
+  ipcMain.handle(IPC.DECISION_LIST, async () => {
+    try {
+      const { listDecisions } = await import('../decisions/manager')
+      return { success: true, decisions: listDecisions() }
+    } catch (err) {
+      return { success: false, error: (err as Error).message, decisions: [] }
+    }
+  })
+
+  ipcMain.handle(
+    IPC.DECISION_CREATE,
+    async (
+      _event,
+      input: {
+        title: string
+        context: string
+        options?: string[]
+        chosen: string
+        reasoning: string
+        expectedOutcome: string
+        revisitInDays: number
+        areaId?: string
+        projectId?: string
+        tags?: string[]
+      }
+    ) => {
+      try {
+        const { createDecision } = await import('../decisions/manager')
+        return { success: true, decision: createDecision(input) }
+      } catch (err) {
+        return { success: false, error: (err as Error).message }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    IPC.DECISION_UPDATE,
+    async (
+      _event,
+      id: string,
+      patch: Partial<{
+        title: string
+        context: string
+        options: string[]
+        chosen: string
+        reasoning: string
+        expectedOutcome: string
+        revisitAt: number
+        areaId: string
+        projectId: string
+        tags: string[]
+      }>
+    ) => {
+      try {
+        const { updateDecision } = await import('../decisions/manager')
+        return { success: true, decision: updateDecision(id, patch) }
+      } catch (err) {
+        return { success: false, error: (err as Error).message }
+      }
+    }
+  )
+
+  ipcMain.handle(IPC.DECISION_REVISIT, async (_event, id: string) => {
+    try {
+      const { revisitDecisionNow } = await import('../decisions/manager')
+      return { success: true, decision: revisitDecisionNow(id) }
+    } catch (err) {
+      return { success: false, error: (err as Error).message }
+    }
+  })
+
+  ipcMain.handle(
+    IPC.DECISION_COMPLETE,
+    async (
+      _event,
+      id: string,
+      retro: { actualOutcome: string; didMatch: boolean | 'partly'; lessons: string }
+    ) => {
+      try {
+        const { completeDecision } = await import('../decisions/manager')
+        return { success: true, decision: completeDecision(id, retro) }
+      } catch (err) {
+        return { success: false, error: (err as Error).message }
+      }
+    }
+  )
+
+  ipcMain.handle(IPC.DECISION_SUPERSEDE, async (_event, oldId: string, newId: string) => {
+    try {
+      const { supersedeDecision } = await import('../decisions/manager')
+      return { success: true, decision: supersedeDecision(oldId, newId) }
+    } catch (err) {
+      return { success: false, error: (err as Error).message }
+    }
+  })
+
+  ipcMain.handle(IPC.DECISION_SCAN_DUE, async () => {
+    try {
+      const { scanDueDecisions } = await import('../decisions/manager')
+      return { success: true, decisions: scanDueDecisions() }
+    } catch (err) {
+      return { success: false, error: (err as Error).message, decisions: [] }
+    }
+  })
 }

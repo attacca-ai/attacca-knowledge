@@ -57,5 +57,25 @@ export function registerAllTasks(): void {
     }
   })
 
-  console.log('[scheduler] Registered 4 tasks')
+  // Life OS Phase 1 — decision revisit scan.
+  // Runs daily at 8am local. Output is consumed by DecisionsView /
+  // Today view via `decision:scan-due`; this task exists so the queue
+  // is warm when the user opens the app and so we can emit telemetry.
+  registerTask({
+    id: 'decision-revisit-scan',
+    name: 'Decision Revisit Scan',
+    description: 'Surfaces decisions whose revisit date has arrived',
+    cronExpression: '0 8 * * *', // 8:00 AM daily
+    enabled: true,
+    requiresIdle: false,
+    handler: async () => {
+      const { scanDueDecisions } = await import('../decisions/manager')
+      const due = scanDueDecisions()
+      if (due.length > 0) {
+        console.log(`[scheduler] ${due.length} decision(s) due for revisit`)
+      }
+    }
+  })
+
+  console.log('[scheduler] Registered 5 tasks')
 }

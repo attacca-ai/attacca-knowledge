@@ -74,6 +74,15 @@ export const IPC = {
   AREA_ARCHIVE: 'area:archive',
   AREA_GET_HEALTH: 'area:get-health',
 
+  // Decisions (Life OS v0.3 Phase 1)
+  DECISION_LIST: 'decision:list',
+  DECISION_CREATE: 'decision:create',
+  DECISION_UPDATE: 'decision:update',
+  DECISION_REVISIT: 'decision:revisit',
+  DECISION_COMPLETE: 'decision:complete',
+  DECISION_SUPERSEDE: 'decision:supersede',
+  DECISION_SCAN_DUE: 'decision:scan-due',
+
   // Memory
   MEMORY_SEARCH: 'memory:search',
   MEMORY_SAVE: 'memory:save',
