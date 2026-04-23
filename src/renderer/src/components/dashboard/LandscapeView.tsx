@@ -11,6 +11,7 @@ import { useSettingsStore } from '@/stores/settings-store'
 import { ArrowLeft, ArrowUp, Loader2, RefreshCw, X, ListTodo, ArchiveX } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { LifeOsCards } from './LifeOsCards'
 
 const LANDSCAPE_TIMEOUT_MS = 120_000
 const LANDSCAPE_REFRESH_MS = 6 * 60 * 60 * 1000 // 6 hours
@@ -591,6 +592,8 @@ export function LandscapeView(): React.JSX.Element {
         <ThreadChatPanel thread={activeThread} onBack={() => setActiveThreadId(null)} />
       ) : null}
       <div className={cn('flex-1 overflow-y-auto px-6 py-5', activeThread ? 'hidden' : '')}>
+        {/* Life OS summary cards (spec §6.7) */}
+        <LifeOsCards />
         {/* Themes */}
         <div className="mb-6">
           <p className="mb-3 font-mono text-[9px] uppercase tracking-widest text-muted-foreground/60">
