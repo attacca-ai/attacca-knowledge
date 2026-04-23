@@ -175,6 +175,22 @@ export interface AttaccaAPI {
     }>
     getPath: () => Promise<string>
     openFolder: () => Promise<{ success: boolean }>
+    getExternalWrites: () => Promise<{
+      success: boolean
+      error?: string
+      isExternal: boolean
+      writes: Record<string, boolean>
+      folders: string[]
+    }>
+    setExternalWrite: (
+      folder: string,
+      writable: boolean
+    ) => Promise<{ success: boolean; error?: string }>
+    listExternalTopFolders: () => Promise<{
+      success: boolean
+      error?: string
+      folders: string[]
+    }>
     onChanged: (
       callback: (data: {
         kind: 'add' | 'change' | 'unlink' | 'addDir' | 'unlinkDir'

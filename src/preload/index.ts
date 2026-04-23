@@ -101,6 +101,10 @@ const api = {
     deleteNote: (relPath: string) => ipcRenderer.invoke('vault:delete-note', relPath),
     getPath: () => ipcRenderer.invoke('vault:get-path'),
     openFolder: () => ipcRenderer.invoke('vault:open-folder'),
+    getExternalWrites: () => ipcRenderer.invoke('vault:get-external-writes'),
+    setExternalWrite: (folder: string, writable: boolean) =>
+      ipcRenderer.invoke('vault:set-external-write', folder, writable),
+    listExternalTopFolders: () => ipcRenderer.invoke('vault:list-external-top-folders'),
     onChanged: (
       callback: (data: {
         kind: 'add' | 'change' | 'unlink' | 'addDir' | 'unlinkDir'

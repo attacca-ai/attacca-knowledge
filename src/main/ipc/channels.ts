@@ -66,6 +66,9 @@ export const IPC = {
   VAULT_DELETE_NOTE: 'vault:delete-note',
   VAULT_GET_PATH: 'vault:get-path',
   VAULT_OPEN_FOLDER: 'vault:open-folder',
+  VAULT_GET_EXTERNAL_WRITES: 'vault:get-external-writes',
+  VAULT_SET_EXTERNAL_WRITE: 'vault:set-external-write',
+  VAULT_LIST_EXTERNAL_TOP_FOLDERS: 'vault:list-external-top-folders',
 
   // Areas (Life OS v0.3 Phase 1)
   AREA_LIST: 'area:list',

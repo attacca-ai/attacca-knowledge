@@ -230,18 +230,82 @@ function resolveInsideVault(relPath: string): string {
 
 /**
  * Reads CLAUDE.md from the vault root if present. Capped at 4KB per
- * spec §6.6. Returns empty string if absent. Used by the runtime
- * system-prompt assembler.
+ * spec §6.6, plus a 150-line ceiling to mirror CONTEXT.md hygiene so a
+ * verbose vault doc doesn't crowd the system prompt. Returns empty
+ * string if absent. Used by the runtime system-prompt assembler.
  */
 export function readVaultClaudeMd(): string {
   const p = join(resolveVaultRoot(), 'CLAUDE.md')
   if (!existsSync(p)) return ''
   try {
     const content = readFileSync(p, 'utf-8')
-    return content.length > 4096 ? content.slice(0, 4096) : content
+    const byLine = content.split('\n').slice(0, 150).join('\n')
+    return byLine.length > 4096 ? byLine.slice(0, 4096) : byLine
   } catch {
     return ''
   }
+}
+
+/**
+ * Reads the `vault.externalFolderWrites` settings map (spec §6.5
+ * resolved Q4). Used by the settings UI and the permission gate.
+ */
+export function readExternalFolderWrites(): Record<string, boolean> {
+  const settingsPath = join(app.getPath('userData'), 'settings.json')
+  if (!existsSync(settingsPath)) return {}
+  try {
+    const settings = JSON.parse(readFileSync(settingsPath, 'utf-8')) as Record<string, unknown>
+    const writes = settings['vault.externalFolderWrites'] as Record<string, boolean> | undefined
+    return writes ?? {}
+  } catch {
+    return {}
+  }
+}
+
+/** Toggles write access for a single top-level external folder. */
+export function setExternalFolderWrite(folder: string, writable: boolean): void {
+  const settingsPath = join(app.getPath('userData'), 'settings.json')
+  let settings: Record<string, unknown> = {}
+  if (existsSync(settingsPath)) {
+    try {
+      settings = JSON.parse(readFileSync(settingsPath, 'utf-8'))
+    } catch {
+      settings = {}
+    }
+  }
+  const current =
+    (settings['vault.externalFolderWrites'] as Record<string, boolean> | undefined) ?? {}
+  current[folder] = writable
+  settings['vault.externalFolderWrites'] = current
+  writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8')
+}
+
+/**
+ * Lists top-level folders inside the current vault root that are NOT
+ * in MANAGED_FOLDERS. Used in Settings to present a toggle list so the
+ * user can grant Attacca write access to existing Obsidian folders
+ * (e.g. `05-Prompts/`, `_templates/`).
+ */
+export function listExternalTopFolders(): string[] {
+  const root = resolveVaultRoot()
+  if (!existsSync(root)) return []
+  const out: string[] = []
+  try {
+    for (const entry of readdirSync(root)) {
+      if (entry.startsWith('.')) continue
+      try {
+        if (!statSync(join(root, entry)).isDirectory()) continue
+      } catch {
+        continue
+      }
+      if ((MANAGED_FOLDERS as readonly string[]).includes(entry)) continue
+      out.push(entry)
+    }
+  } catch {
+    /* skip */
+  }
+  out.sort()
+  return out
 }
 
 export { resolveVaultRoot, isExternalVault, MANAGED_FOLDERS }

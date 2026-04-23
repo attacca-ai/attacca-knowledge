@@ -913,6 +913,49 @@ Date: ${dateStr}
     return { success: true }
   })
 
+  ipcMain.handle(IPC.VAULT_GET_EXTERNAL_WRITES, async () => {
+    try {
+      const { readExternalFolderWrites, listExternalTopFolders, isExternalVault } =
+        await import('../vault')
+      return {
+        success: true,
+        isExternal: isExternalVault(),
+        writes: readExternalFolderWrites(),
+        folders: listExternalTopFolders()
+      }
+    } catch (err) {
+      return {
+        success: false,
+        error: (err as Error).message,
+        isExternal: false,
+        writes: {},
+        folders: []
+      }
+    }
+  })
+
+  ipcMain.handle(
+    IPC.VAULT_SET_EXTERNAL_WRITE,
+    async (_event, folder: string, writable: boolean) => {
+      try {
+        const { setExternalFolderWrite } = await import('../vault')
+        setExternalFolderWrite(folder, writable)
+        return { success: true }
+      } catch (err) {
+        return { success: false, error: (err as Error).message }
+      }
+    }
+  )
+
+  ipcMain.handle(IPC.VAULT_LIST_EXTERNAL_TOP_FOLDERS, async () => {
+    try {
+      const { listExternalTopFolders } = await import('../vault')
+      return { success: true, folders: listExternalTopFolders() }
+    } catch (err) {
+      return { success: false, error: (err as Error).message, folders: [] }
+    }
+  })
+
   // ── Areas ──
   ipcMain.handle(IPC.AREA_LIST, async () => {
     try {

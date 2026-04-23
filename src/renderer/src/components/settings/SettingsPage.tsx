@@ -11,6 +11,7 @@ import { BYOKGuide } from './BYOKGuide'
 import { TelemetryDataCategories } from './TelemetryDataCategories'
 import { TelemetryViewer } from './TelemetryViewer'
 import { SystemHealth } from './SystemHealth'
+import { VaultSettings } from './VaultSettings'
 
 // ── Mono font shorthand ──────────────────────────────────────
 const MONO = "'IBM Plex Mono', monospace"
@@ -22,6 +23,7 @@ function getSections(t: (key: string) => string) {
     { id: 'rhythm', label: t('settings.section.rhythm'), group: t('settings.group.behavior') },
     { id: 'usage', label: t('settings.section.usage'), group: t('settings.group.advanced') },
     { id: 'byok', label: t('settings.section.byok'), group: t('settings.group.advanced') },
+    { id: 'vault', label: 'Vault', group: t('settings.group.advanced') },
     {
       id: 'telemetry',
       label: t('settings.section.telemetry'),
@@ -852,6 +854,16 @@ export function SettingsPage(): React.JSX.Element {
               </div>
             )}
           </div>
+        </section>
+
+        {/* ══ §5b Vault ══ */}
+        <section id="s-vault" className="max-w-[620px] mb-12" style={{ scrollMarginTop: 32 }}>
+          <SectionHeader
+            eyebrow="Storage"
+            title="Vault"
+            desc="Where Attacca reads and writes notes on disk. In external mode you can grant write access to folders outside the Attacca-managed set."
+          />
+          <VaultSettings />
         </section>
 
         {/* ══ §6 Telemetry ══ */}

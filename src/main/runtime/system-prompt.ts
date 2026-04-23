@@ -4,9 +4,9 @@
  * Target: ~800-1,000 tokens base.
  */
 
-import { app } from 'electron'
 import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
+import { resolveVaultRoot, readVaultClaudeMd } from '../vault'
 
 interface IdentityTrait {
   key: string
@@ -47,9 +47,14 @@ export function buildFullSystemPrompt(): string {
     `## Context\nToday: ${new Date().toISOString().slice(0, 10)}. Timezone: ${tzName} (UTC${tzOffset}). When the user says a time, it is local time — never convert to UTC.`
   )
 
-  // 4. CONTEXT.md (user context from KB)
+  // 4. CONTEXT.md (user context from vault)
   const ctx = loadContextMd()
   if (ctx) sections.push(`## User Context\n${ctx}`)
+
+  // 5. Vault CLAUDE.md (spec §6.6). Respected verbatim so founder's
+  //    existing vault conventions apply to Attacca's agent automatically.
+  const vaultClaude = readVaultClaudeMd()
+  if (vaultClaude.trim()) sections.push(`## Vault Conventions (CLAUDE.md)\n${vaultClaude.trim()}`)
 
   return `You are a productivity assistant for a knowledge worker. Respond in the user's language.
 
@@ -94,7 +99,7 @@ function loadIdentityTraits(): IdentityTrait[] {
 
 function loadContextMd(): string | null {
   try {
-    const ctxPath = join(app.getPath('userData'), 'attacca-kb', 'memory', 'CONTEXT.md')
+    const ctxPath = join(resolveVaultRoot(), 'memory', 'CONTEXT.md')
     if (!existsSync(ctxPath)) return null
     const content = readFileSync(ctxPath, 'utf-8').trim()
     if (!content) return null
