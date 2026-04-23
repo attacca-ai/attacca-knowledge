@@ -77,5 +77,53 @@ export function registerAllTasks(): void {
     }
   })
 
-  console.log('[scheduler] Registered 5 tasks')
+  // Life OS Phase 1 — weekly review (Friday 4pm local).
+  registerTask({
+    id: 'review-weekly',
+    name: 'Weekly Review',
+    description: 'Auto-generates a weekly review of the past 7 days',
+    cronExpression: '0 16 * * 5', // 4:00 PM Friday
+    enabled: true,
+    requiresIdle: false,
+    handler: async () => {
+      const { generateAndSaveReview } = await import('../reviews/manager')
+      try {
+        const r = await generateAndSaveReview('week')
+        console.log(`[scheduler] Weekly review generated: ${r.id}`)
+      } catch (err) {
+        console.warn('[scheduler] Weekly review failed:', err)
+      }
+    }
+  })
+
+  // Life OS Phase 1 — monthly review (last day of month 5pm local).
+  // node-cron doesn't support "last day"; approximate with 28-31 guard
+  // that skips non-terminal days. We register every day at 5pm and
+  // early-return from the handler.
+  registerTask({
+    id: 'review-monthly',
+    name: 'Monthly Review',
+    description: 'Auto-generates a monthly review on the last day of the month',
+    cronExpression: '0 17 28-31 * *', // 5:00 PM on days 28-31
+    enabled: true,
+    requiresIdle: false,
+    handler: async () => {
+      const today = new Date()
+      const tomorrow = new Date(today)
+      tomorrow.setDate(today.getDate() + 1)
+      if (tomorrow.getMonth() === today.getMonth()) {
+        // Not the last day of the month.
+        return
+      }
+      const { generateAndSaveReview } = await import('../reviews/manager')
+      try {
+        const r = await generateAndSaveReview('month')
+        console.log(`[scheduler] Monthly review generated: ${r.id}`)
+      } catch (err) {
+        console.warn('[scheduler] Monthly review failed:', err)
+      }
+    }
+  })
+
+  console.log('[scheduler] Registered 7 tasks')
 }

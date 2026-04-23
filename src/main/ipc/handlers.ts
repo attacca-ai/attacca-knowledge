@@ -1083,4 +1083,51 @@ Date: ${dateStr}
       return { success: false, error: (err as Error).message, decisions: [] }
     }
   })
+
+  // ── Reviews (Life OS v0.3 Phase 1) ──
+  ipcMain.handle(IPC.REVIEW_LIST, async (_event, period?: 'week' | 'month') => {
+    try {
+      const { listReviews } = await import('../reviews/manager')
+      return { success: true, reviews: listReviews(period) }
+    } catch (err) {
+      return { success: false, error: (err as Error).message, reviews: [] }
+    }
+  })
+
+  ipcMain.handle(IPC.REVIEW_GET, async (_event, id: string) => {
+    try {
+      const { getReview } = await import('../reviews/manager')
+      return { success: true, review: getReview(id) }
+    } catch (err) {
+      return { success: false, error: (err as Error).message }
+    }
+  })
+
+  ipcMain.handle(IPC.REVIEW_GENERATE, async (_event, period: 'week' | 'month') => {
+    try {
+      const { generateAndSaveReview } = await import('../reviews/manager')
+      const review = await generateAndSaveReview(period)
+      return { success: true, review }
+    } catch (err) {
+      return { success: false, error: (err as Error).message }
+    }
+  })
+
+  ipcMain.handle(IPC.REVIEW_ACKNOWLEDGE, async (_event, id: string) => {
+    try {
+      const { acknowledgeReview } = await import('../reviews/manager')
+      return { success: true, review: acknowledgeReview(id) }
+    } catch (err) {
+      return { success: false, error: (err as Error).message }
+    }
+  })
+
+  ipcMain.handle(IPC.REVIEW_ADD_NOTES, async (_event, id: string, notes: string) => {
+    try {
+      const { addReviewNotes } = await import('../reviews/manager')
+      return { success: true, review: addReviewNotes(id, notes) }
+    } catch (err) {
+      return { success: false, error: (err as Error).message }
+    }
+  })
 }

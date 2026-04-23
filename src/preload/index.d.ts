@@ -207,6 +207,23 @@ export interface AttaccaAPI {
     ) => Promise<{ success: boolean; error?: string; health?: number }>
   }
 
+  review: {
+    list: (
+      period?: 'week' | 'month'
+    ) => Promise<{ success: boolean; error?: string; reviews: Review[] }>
+    get: (id: string) => Promise<{ success: boolean; error?: string; review?: Review | null }>
+    generate: (
+      period: 'week' | 'month'
+    ) => Promise<{ success: boolean; error?: string; review?: Review }>
+    acknowledge: (
+      id: string
+    ) => Promise<{ success: boolean; error?: string; review?: Review }>
+    addNotes: (
+      id: string,
+      notes: string
+    ) => Promise<{ success: boolean; error?: string; review?: Review }>
+  }
+
   decision: {
     list: () => Promise<{ success: boolean; error?: string; decisions: Decision[] }>
     create: (input: {
@@ -518,6 +535,34 @@ export interface VaultTreeNode {
   size?: number
   mtime?: number
   children?: VaultTreeNode[]
+}
+
+export interface ReviewActivity {
+  rangeStart: number
+  rangeEnd: number
+  capturesProcessed: number
+  decisionsMade: string[]
+  decisionsRevisited: string[]
+  areasActive: string[]
+  areasNeglected: string[]
+  tasksCompleted: number
+  tasksMoved: number
+  projectsArchived: string[]
+  lessonsExtracted: string[]
+  patternsDetected: string[]
+}
+
+export interface Review {
+  id: string
+  period: 'week' | 'month'
+  generatedAt: number
+  rangeStart: number
+  rangeEnd: number
+  content: string
+  highlights: ReviewActivity
+  userNotes?: string
+  acknowledged: boolean
+  vaultPath: string
 }
 
 export interface DecisionRetrospective {

@@ -137,6 +137,15 @@ const api = {
     getHealth: (id: string) => ipcRenderer.invoke('area:get-health', id)
   },
 
+  // Reviews (Life OS v0.3 Phase 1)
+  review: {
+    list: (period?: 'week' | 'month') => ipcRenderer.invoke('review:list', period),
+    get: (id: string) => ipcRenderer.invoke('review:get', id),
+    generate: (period: 'week' | 'month') => ipcRenderer.invoke('review:generate', period),
+    acknowledge: (id: string) => ipcRenderer.invoke('review:acknowledge', id),
+    addNotes: (id: string, notes: string) => ipcRenderer.invoke('review:add-notes', id, notes)
+  },
+
   // Decisions (Life OS v0.3 Phase 1)
   decision: {
     list: () => ipcRenderer.invoke('decision:list'),

@@ -74,6 +74,13 @@ export const IPC = {
   AREA_ARCHIVE: 'area:archive',
   AREA_GET_HEALTH: 'area:get-health',
 
+  // Reviews (Life OS v0.3 Phase 1)
+  REVIEW_LIST: 'review:list',
+  REVIEW_GET: 'review:get',
+  REVIEW_GENERATE: 'review:generate',
+  REVIEW_ACKNOWLEDGE: 'review:acknowledge',
+  REVIEW_ADD_NOTES: 'review:add-notes',
+
   // Decisions (Life OS v0.3 Phase 1)
   DECISION_LIST: 'decision:list',
   DECISION_CREATE: 'decision:create',
