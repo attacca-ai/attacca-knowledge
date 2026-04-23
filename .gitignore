@@ -22,6 +22,11 @@ telemetry-queue.json
 attacca-kb/
 attacca-memory/
 
+# Local ONNX embedding model — bundled into installer via electron-builder
+# extraResources, downloaded by `node scripts/download-model.js` (postinstall).
+# The .onnx weights are ~90MB and don't belong in git.
+models/**/*.onnx
+
 # Design explorations & internal docs
 redesign/
 documentos guia/
