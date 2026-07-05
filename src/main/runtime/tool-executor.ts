@@ -6,7 +6,13 @@
  * no longer has a Composio path to fall back to.
  */
 
+// Static imports — runtime require('../memory/...') breaks after electron-vite
+// bundling (the relative path doesn't exist inside out/main chunks), which
+// made memory_search/memory_save fail on every call in a real build.
 import { isInternalTool } from './tools'
+import { generateEmbedding, float32ToBuffer } from '../memory/embeddings'
+import { searchMemories, searchMemoriesByKeyword } from '../memory/search'
+import { insertMemory, updateEmbedding } from '../memory/db'
 
 export interface ToolExecutionResult {
   success: boolean
@@ -37,11 +43,6 @@ async function executeInternalTool(
       const query = String(toolInput.query || '')
       if (!query) return { success: false, error: 'Search query is required.' }
 
-      const { generateEmbedding } =
-        require('../memory/embeddings') as typeof import('../memory/embeddings')
-      const { searchMemories, searchMemoriesByKeyword } =
-        require('../memory/search') as typeof import('../memory/search')
-
       const queryEmb = await generateEmbedding(query)
       const results = queryEmb ? searchMemories(queryEmb) : searchMemoriesByKeyword(query)
 
@@ -64,11 +65,6 @@ async function executeInternalTool(
 
       if (!content) return { success: false, error: 'Content is required.' }
       if (!summary) return { success: false, error: 'Summary is required.' }
-
-      const { insertMemory, updateEmbedding } =
-        require('../memory/db') as typeof import('../memory/db')
-      const { generateEmbedding, float32ToBuffer } =
-        require('../memory/embeddings') as typeof import('../memory/embeddings')
 
       const id = `mem_agent_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
       insertMemory({

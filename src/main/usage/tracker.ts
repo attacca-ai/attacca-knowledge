@@ -31,6 +31,20 @@ export function ensureUsageTables(): void {
       threshold_usd REAL
     );
   `)
+
+  // Migration: DBs created before the `type` column existed — CREATE TABLE
+  // IF NOT EXISTS never adds columns to an existing table.
+  const cols = db.prepare(`PRAGMA table_info(request_logs)`).all() as Array<{ name: string }>
+  const colNames = new Set(cols.map((c) => c.name))
+  if (!colNames.has('type')) {
+    db.exec(`ALTER TABLE request_logs ADD COLUMN type TEXT DEFAULT 'chat'`)
+  }
+  if (!colNames.has('cache_write_tokens')) {
+    db.exec(`ALTER TABLE request_logs ADD COLUMN cache_write_tokens INTEGER DEFAULT 0`)
+  }
+  if (!colNames.has('cache_read_tokens')) {
+    db.exec(`ALTER TABLE request_logs ADD COLUMN cache_read_tokens INTEGER DEFAULT 0`)
+  }
 }
 
 function getMonthYear(): string {
