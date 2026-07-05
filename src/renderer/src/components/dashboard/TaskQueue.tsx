@@ -17,7 +17,7 @@ export function TaskQueue(): React.JSX.Element {
 
     const prompt = newTaskInput.trim()
     setAdding(true)
-    addTask(prompt)
+    addTask(prompt, 'main')
 
     // Send to agent
     try {

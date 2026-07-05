@@ -1,6 +1,6 @@
 import { app } from 'electron'
 import { existsSync, readFileSync } from 'fs'
-import { join } from 'path'
+import { join, relative, isAbsolute, sep } from 'path'
 
 /**
  * VaultMode — mirrors the renderer type (see src/preload/index.d.ts).
@@ -107,9 +107,13 @@ export function vaultPath(...segments: string[]): string {
  */
 export function isWritableVaultPath(absPath: string): boolean {
   const root = resolveVaultRoot()
-  if (!absPath.startsWith(root)) return false
-  const rel = absPath.slice(root.length).replace(/^[\\/]+/, '')
-  if (!rel) return false
+  // path.relative handles Windows case-insensitivity and drive-letter casing;
+  // a raw startsWith prefix check rejects `c:\vault` vs `C:\Vault` and wrongly
+  // accepts sibling folders like `C:\vault-backup`.
+  const rel = relative(root, absPath)
+  if (!rel || rel === '.' || rel.startsWith('..' + sep) || rel === '..' || isAbsolute(rel)) {
+    return false
+  }
   const topSegment = rel.split(/[\\/]/)[0]
   if ((MANAGED_FOLDERS as readonly string[]).includes(topSegment)) return true
 

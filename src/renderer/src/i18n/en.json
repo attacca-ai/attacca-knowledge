@@ -166,6 +166,8 @@
   "capture.time.yesterday": "yesterday",
   "capture.time.days": "{n}d ago",
   "capture.chat_error": "Error processing the question.",
+  "capture.analysis_parse_error": "The analysis could not be completed. Please try again.",
+  "capture.file_binary_error": "PDF and Word files are not supported yet — please paste the text or use .txt/.md files.",
 
   "capturePanel.placeholder": "What's on your mind right now...",
   "capturePanel.type.thought": "thought",

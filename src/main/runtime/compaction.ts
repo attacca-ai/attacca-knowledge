@@ -33,17 +33,23 @@ export async function compactIfNeeded(
     return { messages, compacted: false }
   }
 
-  // Snap split to a user-message boundary so `recentMessages` starts with a user turn.
-  // After compaction we prepend [user summary, assistant ack]; if `recentMessages[0]`
-  // were assistant we'd have two assistants in a row and break alternating roles.
+  // Snap split to a *plain* user-message boundary so `recentMessages` starts with a
+  // real user turn. After compaction we prepend [user summary, assistant ack]; if
+  // `recentMessages[0]` were assistant we'd break alternating roles. Tool results are
+  // also sent as role:'user' — splitting on one would orphan tool_result blocks from
+  // their tool_use and the API rejects the whole history with a 400.
+  const isPlainUserMessage = (msg: MessageParam): boolean =>
+    msg.role === 'user' &&
+    (typeof msg.content === 'string' ||
+      (Array.isArray(msg.content) && !msg.content.some((b) => b.type === 'tool_result')))
   let splitIdx = Math.ceil(messages.length * COMPACT_RATIO)
-  while (splitIdx < messages.length && messages[splitIdx].role !== 'user') {
+  while (splitIdx < messages.length && !isPlainUserMessage(messages[splitIdx])) {
     splitIdx++
   }
   // If no user boundary found forward, fall back to scanning backward.
   if (splitIdx >= messages.length) {
     splitIdx = Math.ceil(messages.length * COMPACT_RATIO)
-    while (splitIdx > 0 && messages[splitIdx].role !== 'user') {
+    while (splitIdx > 0 && !isPlainUserMessage(messages[splitIdx])) {
       splitIdx--
     }
   }

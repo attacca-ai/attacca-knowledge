@@ -84,8 +84,13 @@ export function AppShell(): React.JSX.Element {
         lastMessageRef.current = text
         addActivity({ type: 'message', description: text })
       }
+      // Only complete the current task when the event comes from the session
+      // that runs it — otherwise any unrelated agent turn (landscape refresh,
+      // capture chat) would mark the task done with the wrong result.
       const task = useTaskStore.getState().currentTask
-      if (task) completeTask(task.id, lastMessageRef.current ?? undefined)
+      if (task && task.sessionKey && task.sessionKey === data.sessionKey) {
+        completeTask(task.id, lastMessageRef.current ?? undefined)
+      }
       lastMessageRef.current = null
     })
 
@@ -93,7 +98,9 @@ export function AppShell(): React.JSX.Element {
       const errorMsg = data.error || 'An error occurred'
       addActivity({ type: 'error', description: errorMsg })
       const task = useTaskStore.getState().currentTask
-      if (task) failTask(task.id, errorMsg)
+      if (task && task.sessionKey && task.sessionKey === data.sessionKey) {
+        failTask(task.id, errorMsg)
+      }
     })
 
     return () => {

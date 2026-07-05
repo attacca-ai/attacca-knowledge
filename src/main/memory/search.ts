@@ -17,6 +17,9 @@ export interface SearchResult {
 
 /** Cosine similarity between two Float32Array vectors */
 function cosineSimilarity(a: Float32Array, b: Float32Array): number {
+  // Dimension mismatch (stale embedding from an older model) would read
+  // undefined past the shorter vector and poison every score with NaN.
+  if (a.length !== b.length) return 0
   let dot = 0
   let normA = 0
   let normB = 0

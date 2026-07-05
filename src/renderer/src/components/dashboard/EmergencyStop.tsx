@@ -25,9 +25,10 @@ export function EmergencyStop(): React.JSX.Element {
 
     window.api.telemetry.emit('trust.kill_switch.activated', {})
 
-    // Send stop to agent
+    // Send stop to agent — '*' aborts every in-flight and queued session
+    // (capture/task sessions use unique keys, so 'main' alone misses them)
     try {
-      await window.api.agent.stop('main')
+      await window.api.agent.stop('*')
     } catch {
       // Best effort
     }

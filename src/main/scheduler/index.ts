@@ -18,6 +18,10 @@ export interface ScheduledTask {
 const tasks: Map<string, ScheduledTask> = new Map()
 const cronJobs: Map<string, cron.ScheduledTask> = new Map()
 const retryTimers: Map<string, ReturnType<typeof setTimeout>> = new Map()
+/** Overlap prevention: task ids currently executing. A slow run (e.g. a large
+ * embedding backfill outlasting its 30-min cadence) must not overlap its own
+ * next tick, the idle-retry timer, or a manual runTaskNow. */
+const runningTasks: Set<string> = new Set()
 
 const IDLE_THRESHOLD_SECONDS = 300 // 5 minutes
 
@@ -91,6 +95,11 @@ function scheduleTask(task: ScheduledTask): void {
 }
 
 async function executeTask(task: ScheduledTask): Promise<void> {
+  if (runningTasks.has(task.id)) {
+    console.log(`[scheduler] ${task.id} skipped — previous run still in progress`)
+    return
+  }
+  runningTasks.add(task.id)
   try {
     console.log(`[scheduler] Running: ${task.id}`)
     await task.handler()
@@ -102,6 +111,8 @@ async function executeTask(task: ScheduledTask): Promise<void> {
     task.lastResult = 'failed'
     task.lastError = (err as Error).message
     console.error(`[scheduler] ${task.id} failed:`, err)
+  } finally {
+    runningTasks.delete(task.id)
   }
 
   saveTaskState(task)

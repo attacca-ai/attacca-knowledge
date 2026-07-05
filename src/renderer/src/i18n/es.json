@@ -166,6 +166,8 @@
   "capture.time.yesterday": "ayer",
   "capture.time.days": "hace {n}d",
   "capture.chat_error": "Error al procesar la pregunta.",
+  "capture.analysis_parse_error": "El análisis no se pudo completar. Intenta de nuevo.",
+  "capture.file_binary_error": "Los archivos PDF y Word aún no son compatibles — pega el texto o usa archivos .txt/.md.",
 
   "capturePanel.placeholder": "¿Que tienes en mente ahora mismo?...",
   "capturePanel.type.thought": "pensamiento",

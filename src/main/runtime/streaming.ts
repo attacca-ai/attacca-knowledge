@@ -20,6 +20,8 @@ export interface StreamResult {
   usage: { input_tokens: number; output_tokens: number }
   /** Whether the stream was aborted */
   aborted: boolean
+  /** Stop reason reported by the API (e.g. 'end_turn', 'tool_use', 'max_tokens') */
+  stopReason: string | null
 }
 
 /**
@@ -35,6 +37,7 @@ export async function processStream(
   let text = ''
   const toolUseBlocks: StreamResult['toolUseBlocks'] = []
   let usage: StreamResult['usage'] = { input_tokens: 0, output_tokens: 0 }
+  let stopReason: string | null = null
   let currentToolUse: { id: string; name: string; inputJson: string } | null = null
 
   const emit = (channel: string, payload: Record<string, unknown>): void => {
@@ -47,7 +50,7 @@ export async function processStream(
     for await (const event of stream) {
       if (abortSignal?.aborted) {
         stream.controller.abort()
-        return { text, toolUseBlocks, usage, aborted: true }
+        return { text, toolUseBlocks, usage, aborted: true, stopReason }
       }
 
       switch (event.type) {
@@ -106,6 +109,9 @@ export async function processStream(
           if (event.usage) {
             usage.output_tokens = event.usage.output_tokens
           }
+          if (event.delta?.stop_reason) {
+            stopReason = event.delta.stop_reason
+          }
           break
 
         case 'message_stop':
@@ -124,10 +130,10 @@ export async function processStream(
     }
   } catch (err) {
     if (abortSignal?.aborted) {
-      return { text, toolUseBlocks, usage, aborted: true }
+      return { text, toolUseBlocks, usage, aborted: true, stopReason }
     }
     throw err
   }
 
-  return { text, toolUseBlocks, usage, aborted: false }
+  return { text, toolUseBlocks, usage, aborted: false, stopReason }
 }

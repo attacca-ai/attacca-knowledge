@@ -21,8 +21,6 @@ export const IPC = {
   SETTINGS_SET: 'settings:set',
 
   // File system
-  FS_READ_FILE: 'fs:read-file',
-  FS_WRITE_FILE: 'fs:write-file',
   FS_SELECT_FOLDER: 'fs:select-folder',
 
   // Direct integrations

@@ -173,8 +173,26 @@ export function CapturePanel({
       pendingSessionKeyRef.current = null
     })
 
-    return unsub
-  }, [updateCaptureNote, updateThreadNote, addThread, closeThread, setCaptureConfirmation])
+    // Agent errors are emitted as events, not thrown from agent.send — without
+    // this, an API failure leaves the capture spinner running forever.
+    const unsubError = window.api.agent.onError((data) => {
+      if (!pendingCaptureIdRef.current) return
+      if (pendingSessionKeyRef.current && data.sessionKey !== pendingSessionKeyRef.current) return
+
+      updateCaptureNote(pendingCaptureIdRef.current, data.error || t('capturePanel.error_reach'))
+      if (questionThreadIdRef.current) {
+        updateThreadNote(questionThreadIdRef.current, data.error || t('capturePanel.error_reach'))
+        questionThreadIdRef.current = null
+      }
+      pendingCaptureIdRef.current = null
+      pendingSessionKeyRef.current = null
+    })
+
+    return () => {
+      unsub()
+      unsubError()
+    }
+  }, [updateCaptureNote, updateThreadNote, addThread, closeThread, setCaptureConfirmation, t])
 
   const handleSend = useCallback(async (): Promise<void> => {
     const trimmed = text.trim()
@@ -192,9 +210,10 @@ export function CapturePanel({
     const captureId = currentCaptures[0]?.id ?? null
     pendingCaptureIdRef.current = captureId
 
-    // Action type also queues a local task
+    // Action type also queues a local task, bound to this capture's session so
+    // only THIS agent turn's final/error event completes it
     if (type === 'action') {
-      addTask(trimmed)
+      addTask(trimmed, sessionKey)
     }
 
     // Question type: auto-create a thread immediately (the question IS the thread)
@@ -232,10 +251,10 @@ export function CapturePanel({
         structuredMessage =
           `El usuario tiene una pregunta o solicitud: "${trimmed}"\n` +
           `Zona horaria del usuario: ${userTimezone}${threadContext}\n\n` +
-          `Antes de responder, usa las herramientas necesarias siguiendo los principios del skill:\n` +
-          `- Si la pregunta es sobre email: usa la herramienta que corresponde al contexto (Outlook si mencionó Outlook, Gmail si mencionó Gmail). Si no está claro, pregunta antes de actuar.\n` +
-          `- Si la pregunta requiere crear o enviar algo externo (email, evento, mensaje): muestra exactamente qué vas a hacer y espera confirmación del usuario ANTES de ejecutar.\n` +
-          `- Solo usa herramientas de gestión de proyectos (Trello, ClickUp, Asana) si la pregunta es explícitamente sobre tareas o proyectos.\n\n` +
+          `Antes de responder, usa tus herramientas locales si ayudan:\n` +
+          `- memory_search: recupera contexto, preferencias o decisiones previas del usuario relevantes a la pregunta.\n` +
+          `- memory_save: guarda información nueva importante que el usuario haya revelado.\n` +
+          `- NO tienes herramientas externas (email, calendario, Trello, etc.). Si la pregunta requiere una acción externa, dilo claramente y sugiere el siguiente paso manual.\n\n` +
           `Responde SOLO con JSON válido (sin markdown):\n` +
           `{"note":"Qué hiciste o encontraste — resultados, no intenciones.","holdingNote":"Qué sigues esperando del usuario (null si resuelto).","resolvedThreadIds":[]}\n` +
           `Reglas:\n` +
@@ -248,9 +267,9 @@ export function CapturePanel({
           `Contenido: "${trimmed}"\n` +
           `Zona horaria del usuario: ${userTimezone}${threadContext}\n\n` +
           `REGLAS DE EJECUCIÓN:\n` +
-          `1. CONFIRMACIÓN OBLIGATORIA — Antes de enviar cualquier email, crear un evento de calendario, publicar en Slack, o cualquier comunicación externa: muestra EXACTAMENTE qué vas a hacer (destinatario, asunto, hora, etc.) y espera que el usuario confirme. Nunca ejecutes acciones externas sin aprobación explícita.\n` +
-          `2. CONTEXTO DE HERRAMIENTA — Si la acción involucra email o calendario: usa la herramienta que corresponde al contexto (Outlook si mencionó Outlook, Gmail si mencionó Gmail). Si ambos están conectados y no está claro, pregunta.\n` +
-          `3. ALCANCE MÍNIMO — Solo llama herramientas directamente relevantes a la acción solicitada. No consultes Trello, ClickUp ni Asana a menos que la acción sea explícitamente sobre tareas o proyectos.\n\n` +
+          `1. HERRAMIENTAS LOCALES — Solo tienes memory_search y memory_save (memoria local del usuario). NO tienes acceso a email, calendario, Slack, Trello ni otros servicios externos.\n` +
+          `2. ACCIONES EXTERNAS — Si la acción requiere un servicio externo, NO simules ejecutarla: describe qué haría falta y usa "pendingConfirmation" solo para acciones que tú sí puedas realizar.\n` +
+          `3. ALCANCE MÍNIMO — Llama solo las herramientas directamente relevantes; guarda en memoria compromisos o preferencias nuevas del usuario.\n\n` +
           `Responde SOLO con JSON válido (sin markdown):\n` +
           `{"note":"Resumen breve de lo propuesto o ejecutado.","pendingConfirmation":"Descripción exacta de la acción que vas a tomar — solo incluye este campo si estás esperando confirmación antes de ejecutar, de lo contrario omítelo o pon null.","thread":null,"resolvedThreadIds":[]}\n` +
           `Reglas:\n` +
@@ -259,7 +278,13 @@ export function CapturePanel({
           `- "resolvedThreadIds": incluye IDs solo si el contenido resuelve explícitamente un thread abierto.`
       }
       try {
-        await window.api.agent.send(sessionKey, structuredMessage, crypto.randomUUID())
+        // agent:chat:send never rejects — failures come back as {success:false}
+        const res = (await window.api.agent.send(
+          sessionKey,
+          structuredMessage,
+          crypto.randomUUID()
+        )) as { success?: boolean; error?: string } | undefined
+        if (res && res.success === false) throw new Error(res.error || 'Agent send failed')
         window.api.telemetry.emit('agent.chat.sent', { source: 'capture_panel' })
       } catch {
         if (captureId) {

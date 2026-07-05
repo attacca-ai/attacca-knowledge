@@ -131,9 +131,16 @@ function triggerEmbeddingMigration(database: Database.Database): void {
       console.log(
         `[memory] Embedding migration: ${result.migrated} migrated, ${result.failed} failed`
       )
-      database
-        .prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)')
-        .run('embedding_dims', String(DIMS))
+      // Only mark migration complete when every row succeeded — otherwise the
+      // flag short-circuits future startups and wrong-dimension embeddings
+      // (e.g. model not downloaded yet on first boot) stay frozen forever.
+      if (result.failed === 0) {
+        database
+          .prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)')
+          .run('embedding_dims', String(DIMS))
+      } else {
+        console.warn('[memory] Embedding migration incomplete — will retry on next startup')
+      }
     })
     .catch((err) => {
       console.warn('[memory] Embedding migration failed:', err)

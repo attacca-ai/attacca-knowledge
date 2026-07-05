@@ -222,7 +222,21 @@ function ThreadChatPanel({
         onBack()
       }
     })
-    return unsub
+    // Agent errors arrive as events — without this "pensando…" is stuck forever
+    const unsubError = window.api.agent.onError((data) => {
+      if (!pendingSessionKeyRef.current || data.sessionKey !== pendingSessionKeyRef.current) return
+      pendingSessionKeyRef.current = null
+      setSending(false)
+      addThreadMessage(thread.id, {
+        role: 'agent',
+        text: data.error || 'Algo salió mal. Intenta de nuevo.',
+        ts: Date.now()
+      })
+    })
+    return () => {
+      unsub()
+      unsubError()
+    }
   }, [thread.id, thread.holdingNote, updateThreadNote, closeThread, onBack, addThreadMessage])
 
   const handleSend = async (): Promise<void> => {

@@ -21,11 +21,28 @@ import {
 } from './sessions'
 import { processStream, type StreamResult } from './streaming'
 import { compactIfNeeded } from './compaction'
+import { trackRequest } from '../usage/tracker'
 
 const MAX_TOOL_CALLS_PER_TURN = 10
+/** Hard backstop on API round-trips per turn, independent of tool-call counting */
+const MAX_LOOP_ITERATIONS = 15
 
 /** In-flight request tracking for abort support */
 const inflightAbortControllers = new Map<string, AbortController>()
+
+/** Recently-seen idempotency keys per session (dedup for renderer retries/replays) */
+const recentIdempotencyKeys = new Map<string, string[]>()
+const MAX_IDEMPOTENCY_KEYS = 50
+
+function isDuplicateRequest(sessionKey: string, idempotencyKey: string): boolean {
+  if (!idempotencyKey) return false
+  const keys = recentIdempotencyKeys.get(sessionKey) ?? []
+  if (keys.includes(idempotencyKey)) return true
+  keys.push(idempotencyKey)
+  if (keys.length > MAX_IDEMPOTENCY_KEYS) keys.shift()
+  recentIdempotencyKeys.set(sessionKey, keys)
+  return false
+}
 
 /** Global request queue — serialized, feature sessions prioritized */
 interface QueuedRequest {
@@ -73,6 +90,9 @@ export async function sendMessage(
   idempotencyKey: string
 ): Promise<void> {
   const isFeature = sessionKey !== 'main'
+  if (isDuplicateRequest(sessionKey, idempotencyKey)) {
+    return Promise.resolve()
+  }
   return new Promise<void>((resolve, reject) => {
     requestQueue.push({
       sessionKey,
@@ -96,6 +116,14 @@ async function processQueue(): Promise<void> {
     await executeRequest(req.sessionKey, req.message)
     req.resolve()
   } catch (err) {
+    // Errors thrown before the stream loop (e.g. missing API key) never reach
+    // executeRequest's own error emit — surface them here so the renderer
+    // doesn't spin forever.
+    emit('event:agent:error', {
+      sessionKey: req.sessionKey,
+      error: err instanceof Error ? err.message : 'Something went wrong. Please try again.',
+      partial: null
+    })
     req.reject(err)
   } finally {
     isProcessing = false
@@ -133,6 +161,11 @@ async function executeRequest(sessionKey: string, message: string): Promise<void
     replaceSessionMessages(sessionKey, compactedMessages)
   }
 
+  // Rollback point for failed/aborted turns: everything before the user message
+  // just added (which is the last entry after optional compaction). Prevents a
+  // stranded user message from duplicating on retry.
+  const historyLengthBeforeTurn = session.messages.length - 1
+
   // Create abort controller
   const abortController = new AbortController()
   inflightAbortControllers.set(sessionKey, abortController)
@@ -142,12 +175,25 @@ async function executeRequest(sessionKey: string, message: string): Promise<void
   try {
     const client = new Anthropic({ apiKey })
     let toolCallCount = 0
+    let iterations = 0
+    let forceTextOnlyResponse = false
 
     // Tool loop: keep calling until we get a text-only response or hit the limit
     // eslint-disable-next-line no-constant-condition
     while (true) {
       if (abortController.signal.aborted) {
+        replaceSessionMessages(sessionKey, session.messages.slice(0, historyLengthBeforeTurn))
         emit('event:agent:final', { sessionKey, message: '[Request cancelled]', usage: totalUsage })
+        return
+      }
+
+      iterations++
+      if (iterations > MAX_LOOP_ITERATIONS) {
+        emit('event:agent:final', {
+          sessionKey,
+          message: '[Stopped: the agent reached the maximum number of steps for one turn.]',
+          usage: totalUsage
+        })
         return
       }
 
@@ -160,9 +206,16 @@ async function executeRequest(sessionKey: string, message: string): Promise<void
       }
       if (tools.length > 0) {
         requestParams.tools = tools
+        if (forceTextOnlyResponse) {
+          // Tool budget exhausted — tools stay declared (history references them)
+          // but the model may not call any more this turn.
+          requestParams.tool_choice = { type: 'none' }
+        }
       }
 
-      const stream = client.messages.stream(requestParams)
+      const stream = client.messages.stream(requestParams, {
+        signal: abortController.signal
+      })
       const result: StreamResult = await processStream(
         stream as unknown as Parameters<typeof processStream>[0],
         sessionKey,
@@ -172,13 +225,37 @@ async function executeRequest(sessionKey: string, message: string): Promise<void
 
       totalUsage.input_tokens += result.usage.input_tokens
       totalUsage.output_tokens += result.usage.output_tokens
+      try {
+        trackRequest(model, result.usage.input_tokens, result.usage.output_tokens, 0, 0, 'agent')
+      } catch (usageErr) {
+        console.warn('[agent] Usage tracking failed:', usageErr)
+      }
 
       if (result.aborted) {
+        // Keep the turn coherent: persist partial text as the assistant reply,
+        // or roll the user message back if nothing was produced.
+        if (result.text) {
+          addMessageToSession(sessionKey, { role: 'assistant', content: result.text })
+        } else {
+          replaceSessionMessages(sessionKey, session.messages.slice(0, historyLengthBeforeTurn))
+        }
         emit('event:agent:final', {
           sessionKey,
           message: result.text || '[Request cancelled]',
           usage: totalUsage
         })
+        return
+      }
+
+      // Response truncated by max_tokens mid-tool-call — the tool input JSON is
+      // incomplete, so executing it would run tools with garbage/empty args.
+      // Surface the truncation instead of looping.
+      if (result.stopReason === 'max_tokens' && result.toolUseBlocks.length > 0) {
+        const truncatedText =
+          (result.text ? result.text + '\n\n' : '') +
+          '[Response truncated: output limit reached mid-action. Please try a narrower request.]'
+        addMessageToSession(sessionKey, { role: 'assistant', content: truncatedText })
+        emit('event:agent:final', { sessionKey, message: truncatedText, usage: totalUsage })
         return
       }
 
@@ -256,13 +333,25 @@ async function executeRequest(sessionKey: string, message: string): Promise<void
 
       addMessageToSession(sessionKey, { role: 'user', content: toolResults })
 
-      // If we hit the tool limit, force the model to respond without more tools
+      // If we hit the tool limit, the next API call forbids further tool use
+      // (tool_choice: none) so the model must answer with text.
       if (toolCallCount >= MAX_TOOL_CALLS_PER_TURN) {
-        // Continue the loop — the model will get the error results and should stop calling tools
+        forceTextOnlyResponse = true
       }
-      // Otherwise, loop back to send tool_results to the API
+      // Loop back to send tool_results to the API
     }
   } catch (err) {
+    // Roll the failed turn out of history so a retry doesn't duplicate the
+    // user message or leave dangling tool_use/tool_result pairs.
+    replaceSessionMessages(sessionKey, session.messages.slice(0, historyLengthBeforeTurn))
+
+    if (abortController.signal.aborted) {
+      // Abort surfaced as an SDK error (signal passed to the request) — this is
+      // a user cancel, not a failure.
+      emit('event:agent:final', { sessionKey, message: '[Request cancelled]', usage: totalUsage })
+      return
+    }
+
     const errMsg = err instanceof Error ? err.message : 'Unknown error'
     const isAuthError = errMsg.includes('401') || errMsg.includes('authentication')
     const isRateLimit = errMsg.includes('429') || errMsg.includes('rate')
@@ -285,13 +374,33 @@ async function executeRequest(sessionKey: string, message: string): Promise<void
 }
 
 /**
- * Abort an in-flight request for a session.
+ * Abort an in-flight request for a session. Pass '*' to stop everything
+ * (kill switch): aborts all in-flight requests and drains queued ones.
+ * Queued requests have no AbortController yet, so they must be cancelled here
+ * or they'd silently execute later despite the user pressing Stop.
  */
 export function stopSession(sessionKey: string): void {
-  const controller = inflightAbortControllers.get(sessionKey)
-  if (controller) {
-    controller.abort()
-    inflightAbortControllers.delete(sessionKey)
+  const inflightKeys =
+    sessionKey === '*' ? [...inflightAbortControllers.keys()] : [sessionKey]
+  for (const key of inflightKeys) {
+    const controller = inflightAbortControllers.get(key)
+    if (controller) {
+      controller.abort()
+      inflightAbortControllers.delete(key)
+    }
+  }
+
+  for (let i = requestQueue.length - 1; i >= 0; i--) {
+    const req = requestQueue[i]
+    if (sessionKey === '*' || req.sessionKey === sessionKey) {
+      requestQueue.splice(i, 1)
+      emit('event:agent:final', {
+        sessionKey: req.sessionKey,
+        message: '[Request cancelled]',
+        usage: { input_tokens: 0, output_tokens: 0 }
+      })
+      req.resolve()
+    }
   }
 }
 

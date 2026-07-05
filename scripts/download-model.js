@@ -13,9 +13,10 @@
  * fetched here.
  */
 
-const { existsSync, mkdirSync, createWriteStream, statSync, unlinkSync } = require('fs')
+const { existsSync, mkdirSync, createWriteStream, statSync, unlinkSync, createReadStream } = require('fs')
 const { join } = require('path')
 const https = require('https')
+const { createHash } = require('crypto')
 
 const MODEL_DIR = join(__dirname, '..', 'models', 'all-MiniLM-L6-v2')
 const ONNX_DIR = join(MODEL_DIR, 'onnx')
@@ -23,6 +24,16 @@ const ONNX_FILE = join(ONNX_DIR, 'model.onnx')
 const ONNX_URL =
   'https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main/onnx/model.onnx?download=true'
 const EXPECTED_BYTES = 90387606
+// SHA256 of Xenova/all-MiniLM-L6-v2/onnx/model.onnx
+// Verified against https://huggingface.co/Xenova/all-MiniLM-L6-v2/blob/main/onnx/model.onnx
+const EXPECTED_SHA256 = '759c3cd2b7fe7e93933ad23c4c9181b7396442a2ed746ec7c1d46192c469c46e'
+
+function sha256(file) {
+  return new Promise((resolve, reject) => {
+    const h = createHash('sha256')
+    createReadStream(file).on('data', (c) => h.update(c)).on('end', () => resolve(h.digest('hex'))).on('error', reject)
+  })
+}
 
 function log(msg) {
   process.stdout.write(`[download-model] ${msg}\n`)
@@ -74,11 +85,23 @@ async function main() {
   if (existsSync(ONNX_FILE)) {
     const size = statSync(ONNX_FILE).size
     if (size === EXPECTED_BYTES) {
-      log(`already present (${size} bytes), skipping`)
-      return
+      if (EXPECTED_SHA256) {
+        const hash = await sha256(ONNX_FILE)
+        if (hash !== EXPECTED_SHA256) {
+          log(`HASH MISMATCH: got ${hash}, expected ${EXPECTED_SHA256} — refusing to use, re-downloading`)
+          unlinkSync(ONNX_FILE)
+        } else {
+          log(`already present, hash verified, skipping`)
+          return
+        }
+      } else {
+        log(`already present (${size} bytes), skipping (no hash pin set)`)
+        return
+      }
+    } else {
+      log(`existing file is ${size} bytes (expected ${EXPECTED_BYTES}), re-downloading`)
+      unlinkSync(ONNX_FILE)
     }
-    log(`existing file is ${size} bytes (expected ${EXPECTED_BYTES}), re-downloading`)
-    unlinkSync(ONNX_FILE)
   }
 
   mkdirSync(ONNX_DIR, { recursive: true })
@@ -89,7 +112,20 @@ async function main() {
     const size = statSync(ONNX_FILE).size
     log(`done (${size} bytes)`)
     if (size !== EXPECTED_BYTES) {
-      log(`WARNING: size mismatch (got ${size}, expected ${EXPECTED_BYTES})`)
+      log(`SIZE MISMATCH (got ${size}, expected ${EXPECTED_BYTES}) — deleting`)
+      unlinkSync(ONNX_FILE)
+      process.exit(1)
+    }
+    if (EXPECTED_SHA256) {
+      const hash = await sha256(ONNX_FILE)
+      if (hash !== EXPECTED_SHA256) {
+        log(`HASH MISMATCH (got ${hash}, expected ${EXPECTED_SHA256}) — deleting, refusing to bundle`)
+        unlinkSync(ONNX_FILE)
+        process.exit(1)
+      }
+      log(`hash verified: ${hash}`)
+    } else {
+      log(`WARNING: EXPECTED_SHA256 not set — model integrity NOT verified`)
     }
   } catch (err) {
     log(`FAILED: ${err.message}`)

@@ -78,10 +78,9 @@ export interface AttaccaAPI {
   relay: {
     getUsage: () => Promise<{
       totalCostUsd: number
-      limitUsd: number
       requestCount: number
-      limitReached: boolean
-      resetDate: string
+      models: Record<string, number>
+      budgetAlert: number | null
       error?: string
     }>
     llmCompletion: (

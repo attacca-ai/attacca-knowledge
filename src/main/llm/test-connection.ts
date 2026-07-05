@@ -1,4 +1,5 @@
 import { net } from 'electron'
+import { readLLMConfig } from '../config/llm-config'
 
 interface TestResult {
   success: boolean
@@ -32,7 +33,9 @@ async function testAnthropic(apiKey: string): Promise<TestResult> {
       'anthropic-version': '2023-06-01'
     },
     body: JSON.stringify({
-      model: 'claude-sonnet-4-6',
+      // Test against the configured model — a key can be scoped to specific
+      // models, so testing a hardcoded one can pass yet fail in real chat.
+      model: readLLMConfig()?.model || 'claude-sonnet-4-6',
       max_tokens: 1,
       messages: [{ role: 'user', content: 'Hi' }]
     })

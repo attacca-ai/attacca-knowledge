@@ -1,5 +1,6 @@
 import { net } from 'electron'
 import { readLLMConfig } from '../config/llm-config'
+import { trackRequest } from '../usage/tracker'
 
 interface LLMCompletionRequest {
   messages: Array<{ role: string; content: string }>
@@ -46,6 +47,18 @@ export async function llmCompletion(request: LLMCompletionRequest): Promise<LLMC
   console.log(
     `[llm] Response: model=${result.model} input=${result.usage.input_tokens} output=${result.usage.output_tokens}`
   )
+  try {
+    trackRequest(
+      result.model,
+      result.usage.input_tokens,
+      result.usage.output_tokens,
+      0,
+      0,
+      'completion'
+    )
+  } catch (err) {
+    console.warn('[llm] Usage tracking failed:', err)
+  }
   return result
 }
 
@@ -54,6 +67,14 @@ async function callAnthropic(
   apiKey: string
 ): Promise<LLMCompletionResponse> {
   const model = request.model || 'claude-sonnet-4-6'
+  // The Messages API only accepts user/assistant roles in `messages`; system
+  // prompts go in the top-level `system` param. Callers (e.g. the memory
+  // synthesizer) pass role:'system' messages OpenAI-style — hoist them here.
+  const systemText = request.messages
+    .filter((m) => m.role === 'system')
+    .map((m) => m.content)
+    .join('\n\n')
+  const chatMessages = request.messages.filter((m) => m.role !== 'system')
   const resp = await net.fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -64,7 +85,8 @@ async function callAnthropic(
     body: JSON.stringify({
       model,
       max_tokens: request.max_tokens || 4096,
-      messages: request.messages
+      ...(systemText ? { system: systemText } : {}),
+      messages: chatMessages
     })
   })
 

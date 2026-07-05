@@ -91,9 +91,22 @@ export function estimateTokens(messages: Anthropic.MessageParam[]): number {
       chars += msg.content.length
     } else if (Array.isArray(msg.content)) {
       for (const block of msg.content) {
-        if ('text' in block) chars += block.text.length
-        else if ('content' in block && typeof block.content === 'string')
-          chars += block.content.length
+        if ('text' in block && typeof block.text === 'string') chars += block.text.length
+        if (block.type === 'tool_use') {
+          try {
+            chars += JSON.stringify(block.input ?? {}).length
+          } catch {
+            /* non-serializable input — skip */
+          }
+        }
+        if ('content' in block) {
+          if (typeof block.content === 'string') chars += block.content.length
+          else if (Array.isArray(block.content)) {
+            for (const inner of block.content) {
+              if ('text' in inner && typeof inner.text === 'string') chars += inner.text.length
+            }
+          }
+        }
       }
     }
   }

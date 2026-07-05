@@ -32,6 +32,16 @@ const DEFAULT_PRICING: ModelPricing = {
   cacheReadPer1M: 0.3
 }
 
+/** Exact match first, then prefix match so dated ids
+ * (e.g. claude-haiku-4-5-20251001) don't fall through to Sonnet default rates. */
+function lookupPricing(model: string): ModelPricing {
+  if (PRICING[model]) return PRICING[model]
+  for (const [key, pricing] of Object.entries(PRICING)) {
+    if (model.startsWith(key)) return pricing
+  }
+  return DEFAULT_PRICING
+}
+
 export function calculateCost(
   model: string,
   inputTokens: number,
@@ -39,7 +49,7 @@ export function calculateCost(
   cacheWriteTokens = 0,
   cacheReadTokens = 0
 ): number {
-  const p = PRICING[model] || DEFAULT_PRICING
+  const p = lookupPricing(model)
   return (
     (inputTokens / 1_000_000) * p.inputPer1M +
     (outputTokens / 1_000_000) * p.outputPer1M +
@@ -49,5 +59,5 @@ export function calculateCost(
 }
 
 export function getModelPricing(model: string): ModelPricing {
-  return PRICING[model] || DEFAULT_PRICING
+  return lookupPricing(model)
 }

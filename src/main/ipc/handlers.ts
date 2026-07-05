@@ -1,6 +1,7 @@
-import { ipcMain, app, shell, dialog } from 'electron'
+import { ipcMain, app, shell, dialog, BrowserWindow } from 'electron'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import { join, dirname } from 'path'
+import { localDateStr } from '../lib/dates'
 import { IPC } from './channels'
 import { readLLMConfig, writeLLMConfig } from '../config/llm-config'
 import { registerActiveCollabHandlers } from './activecollab-handlers'
@@ -95,6 +96,20 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC.APP_QUIT, () => {
     app.quit()
+  })
+
+  ipcMain.handle(IPC.APP_MINIMIZE_TO_TRAY, () => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.hide()
+    }
+  })
+
+  ipcMain.handle(IPC.APP_SHOW_WINDOW, () => {
+    const win = BrowserWindow.getAllWindows()[0]
+    if (win) {
+      win.show()
+      win.focus()
+    }
   })
 
   // ── File system ──
@@ -279,7 +294,9 @@ export function registerIpcHandlers(): void {
       const { resolveVaultRoot } = require('../vault') as typeof import('../vault')
       const kbDir = resolveVaultRoot()
       const date = new Date(data.timestamp)
-      const dateStr = date.toISOString().slice(0, 10)
+      // Local date, not toISOString (UTC) — an evening capture west of UTC
+      // would otherwise be filed under tomorrow's folder/daily log.
+      const dateStr = localDateStr(date)
       const timeStr = date.toTimeString().slice(0, 5)
 
       // Write inbox capture file (Life OS layout: 00-Inbox/YYYY-MM-DD/)
@@ -347,7 +364,7 @@ ${entitiesMd}
         const decisionsDir = join(kbDir, '05-Decisions')
         if (!existsSync(decisionsDir)) mkdirSync(decisionsDir, { recursive: true })
 
-        for (const decision of data.result.decisions) {
+        for (const [decisionIdx, decision] of data.result.decisions.entries()) {
           const slug = decision
             .slice(0, 40)
             .normalize('NFD')
@@ -356,7 +373,12 @@ ${entitiesMd}
             .replace(/[^a-z0-9 ]/g, '')
             .trim()
             .replace(/ +/g, '-')
-          const decisionFile = join(decisionsDir, `${dateStr}-${slug}.md`)
+          // Index suffix prevents same-day decisions with matching slug
+          // prefixes from overwriting each other (file and memory row).
+          const decisionFile = join(
+            decisionsDir,
+            `${dateStr}-${slug}${decisionIdx > 0 ? `-${decisionIdx + 1}` : ''}.md`
+          )
           const decisionContent = `---
 date: ${dateStr}
 type: decision
@@ -377,7 +399,7 @@ Date: ${dateStr}
           writeFileSync(decisionFile, decisionContent, 'utf-8')
 
           // Insert each decision as a separate memory with higher importance
-          const decisionMemId = `mem_decision_${data.id}_${slug.slice(0, 20)}`
+          const decisionMemId = `mem_decision_${data.id}_${decisionIdx}_${slug.slice(0, 20)}`
           insertMemory({
             id: decisionMemId,
             type: 'decision',
@@ -563,7 +585,7 @@ Date: ${dateStr}
     const kbDir = resolveVaultRoot()
     const dailyDir = join(kbDir, 'daily')
     mkdirSync(dailyDir, { recursive: true })
-    const dateStr = new Date().toISOString().slice(0, 10)
+    const dateStr = localDateStr()
     const dailyPath = join(dailyDir, `${dateStr}.md`)
     const header = existsSync(dailyPath) ? '' : `# Daily Log — ${dateStr}\n\n`
     writeFileSync(

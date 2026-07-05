@@ -18,6 +18,8 @@ export interface AgentTask {
   projectId?: string
   sourceType?: 'capture' | 'theme' | 'thread' | 'manual' | 'clickup'
   sourceId?: string
+  /** agent session that is executing this task — used to match final/error events */
+  sessionKey?: string
 }
 
 export interface TaskChatMessage {
@@ -35,7 +37,7 @@ interface TaskStore {
   usageLimitReached: boolean
   emergencyStoppedAt: number | null
   hydrate: () => Promise<void>
-  addTask: (description: string) => void
+  addTask: (description: string, sessionKey?: string) => void
   completeTask: (taskId: string, result?: string) => void
   failTask: (taskId: string, error: string) => void
   setUsageLimitReached: (reached: boolean) => void
@@ -79,7 +81,7 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
     }
   },
 
-  addTask: (description) => {
+  addTask: (description, sessionKey) => {
     const { usageLimitReached, emergencyStoppedAt } = get()
     if (usageLimitReached) {
       useActivityStore.getState().addActivity({
@@ -100,7 +102,8 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
       id: `task_${++taskIdCounter}`,
       description,
       status: 'pending',
-      createdAt: Date.now()
+      createdAt: Date.now(),
+      sessionKey
     }
 
     const { currentTask } = get()

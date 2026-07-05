@@ -56,7 +56,9 @@ const STEPS_TEXT_URL = [
 const FILE_TYPES: Record<string, string> = {
   text: '',
   url: '',
-  file: '.pdf,.docx,.txt,.md,.csv'
+  // Text formats only — PDF/DOCX are binary and file.text() would feed
+  // raw bytes to the model
+  file: '.txt,.md,.csv,.json,.log'
 }
 
 const STORAGE_KEY = 'attacca:captures:recent'
@@ -226,16 +228,47 @@ export function CaptureView(): React.JSX.Element {
           const items = (parsed.actionItems ?? []).map((a) => ({ ...a, checked: false }))
           setResult(parsed)
           setActionItems(items)
+          setAnalysisError(null)
           setTimeout(() => setCaptureState('review'), 500)
         } catch {
+          setAnalysisError(t('capture.analysis_parse_error'))
           setCaptureState('idle')
         }
       } else {
+        // Bouncing to idle with zero explanation looks like the button did nothing
+        setAnalysisError(t('capture.analysis_parse_error'))
         setCaptureState('idle')
       }
     })
 
-    return unsub
+    // Agent errors arrive as events, never as send() rejections — without this
+    // the processing screen freezes at ~80% until the user cancels manually.
+    const unsubError = window.api.agent.onError((data) => {
+      if (data.sessionKey && data.sessionKey === pendingChatSessionRef.current) {
+        pendingChatSessionRef.current = null
+        setChatLoading(false)
+        setChatMessages((prev) => [
+          ...prev,
+          { role: 'assistant', text: data.error || t('capture.chat_error') }
+        ])
+        return
+      }
+      if (data.sessionKey && data.sessionKey === pendingSessionRef.current) {
+        pendingSessionRef.current = null
+        if (timerRef.current) {
+          clearInterval(timerRef.current)
+          timerRef.current = null
+        }
+        setAnalysisError(data.error || t('capture.analysis_parse_error'))
+        setCaptureState('idle')
+      }
+    })
+
+    return () => {
+      unsub()
+      unsubError()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const startCapture = useCallback(
@@ -320,6 +353,7 @@ ${content}`
   )
 
   const [urlError, setUrlError] = useState<string | null>(null)
+  const [analysisError, setAnalysisError] = useState<string | null>(null)
 
   const handleCapture = useCallback(async (): Promise<void> => {
     if (sourceType === 'text') {
@@ -374,11 +408,17 @@ ${question}`
 
   const handleFile = useCallback(
     async (file: File): Promise<void> => {
+      // PDFs/DOCX are binary — file.text() would send raw bytes to the model
+      // and produce garbage analysis. Only plain-text formats are supported.
+      if (/\.(pdf|docx?)$/i.test(file.name)) {
+        setAnalysisError(t('capture.file_binary_error'))
+        return
+      }
       setFileName(file.name)
       const text = await file.text()
       await startCapture(text, file.name)
     },
-    [startCapture]
+    [startCapture, t]
   )
 
   const handleDrop = useCallback(
@@ -463,6 +503,11 @@ ${question}`
 
   const handleDiscard = (): void => {
     window.api.telemetry.emit('capture.discarded', { sourceType })
+    // Abort any pending chat question — the global queue is serialized, so an
+    // orphaned request would keep burning tokens and block new sends.
+    if (pendingChatSessionRef.current) {
+      void window.api.agent.stop(pendingChatSessionRef.current).catch(() => {})
+    }
     setCaptureState('idle')
     setResult(null)
     setActionItems([])
@@ -472,6 +517,10 @@ ${question}`
   }
 
   const handleCancel = (): void => {
+    // Actually abort the in-flight request, not just the local UI state
+    if (pendingSessionRef.current) {
+      void window.api.agent.stop(pendingSessionRef.current).catch(() => {})
+    }
     pendingSessionRef.current = null
     if (timerRef.current) {
       clearInterval(timerRef.current)
@@ -945,6 +994,18 @@ ${question}`
     // ── IDLE state ────────────────────────────────────────────────────────
     return (
       <div className="flex flex-1 flex-col overflow-y-auto px-6 pb-6">
+        {analysisError && (
+          <div className="mb-3 flex items-start justify-between gap-2 rounded-md border border-att-red/30 bg-att-red/5 px-3 py-2">
+            <p className="text-xs text-att-red">{analysisError}</p>
+            <button
+              onClick={() => setAnalysisError(null)}
+              className="shrink-0 text-att-red/60 hover:text-att-red"
+              aria-label="Dismiss"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+        )}
         {/* Dynamic input area */}
         <div className="mb-4">
           {sourceType === 'text' && (

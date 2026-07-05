@@ -24,8 +24,8 @@ export const useUsageStore = create<UsageStore>((set) => ({
       set({
         costUsd: usage.totalCostUsd ?? 0,
         requestCount: usage.requestCount ?? 0,
-        models: (usage as any).models ?? {},
-        budgetAlert: (usage as any).budgetAlert ?? null,
+        models: usage.models ?? {},
+        budgetAlert: usage.budgetAlert ?? null,
         loading: false
       })
     } catch {

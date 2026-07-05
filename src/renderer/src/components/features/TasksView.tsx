@@ -511,7 +511,21 @@ function LocalTaskDetail({
       setSending(false)
       if (data.message) addChatMessage(taskId, { role: 'agent', text: data.message, ts: Date.now() })
     })
-    return unsub
+    // Agent errors arrive as events — without this the "sending" bubble is stuck forever
+    const unsubError = window.api.agent.onError((data) => {
+      if (!pendingRef.current || data.sessionKey !== pendingRef.current) return
+      pendingRef.current = null
+      setSending(false)
+      addChatMessage(taskId, {
+        role: 'agent',
+        text: data.error || 'Something went wrong. Please try again.',
+        ts: Date.now()
+      })
+    })
+    return () => {
+      unsub()
+      unsubError()
+    }
   }, [taskId, addChatMessage])
 
   if (!task) {
@@ -689,7 +703,21 @@ function ClickUpTaskDetail({ task }: { task: ClickUpTask }): React.JSX.Element |
       setSending(false)
       if (data.message) addChatMessage(taskKey, { role: 'agent', text: data.message, ts: Date.now() })
     })
-    return unsub
+    // Agent errors arrive as events — without this the "sending" bubble is stuck forever
+    const unsubError = window.api.agent.onError((data) => {
+      if (!pendingRef.current || data.sessionKey !== pendingRef.current) return
+      pendingRef.current = null
+      setSending(false)
+      addChatMessage(taskKey, {
+        role: 'agent',
+        text: data.error || 'Something went wrong. Please try again.',
+        ts: Date.now()
+      })
+    })
+    return () => {
+      unsub()
+      unsubError()
+    }
   }, [task?.id, taskKey, addChatMessage])
 
   if (!task) return null

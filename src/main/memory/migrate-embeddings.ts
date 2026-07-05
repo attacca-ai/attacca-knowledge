@@ -55,11 +55,14 @@ export async function migrateEmbeddings(): Promise<{ migrated: number; failed: n
  */
 export async function backfillEmbeddings(): Promise<{ filled: number; failed: number }> {
   const db = getMemoryDb()
+  // Also pick up wrong-dimension blobs (e.g. rows embedded by an older model),
+  // not just missing ones — otherwise they never self-heal.
+  const expectedBytes = EMBEDDING_DIMS * 4
   const rows = db
     .prepare(
-      'SELECT id, content, summary FROM memories WHERE embedding IS NULL AND superseded_by IS NULL'
+      'SELECT id, content, summary FROM memories WHERE superseded_by IS NULL AND (embedding IS NULL OR LENGTH(embedding) != ?)'
     )
-    .all() as Array<{ id: string; content: string; summary: string }>
+    .all(expectedBytes) as Array<{ id: string; content: string; summary: string }>
 
   if (rows.length === 0) return { filled: 0, failed: 0 }
 

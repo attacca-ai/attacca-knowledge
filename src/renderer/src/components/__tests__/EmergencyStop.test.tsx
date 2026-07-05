@@ -44,7 +44,7 @@ describe('EmergencyStop', () => {
 
     expect(useTaskStore.getState().currentTask).toBeNull()
     expect(useTaskStore.getState().isProcessing).toBe(false)
-    expect(window.api.agent.stop).toHaveBeenCalledWith('main')
+    expect(window.api.agent.stop).toHaveBeenCalledWith('*')
   })
 
   it('auto-resets confirmation after 3 seconds', () => {
@@ -66,7 +66,7 @@ describe('EmergencyStop', () => {
     fireEvent.click(screen.getByRole('button'))
     fireEvent.click(screen.getByRole('button'))
 
-    expect(window.api.agent.stop).toHaveBeenCalledWith('main')
+    expect(window.api.agent.stop).toHaveBeenCalledWith('*')
   })
 
   it('resets confirming state after executing stop', () => {

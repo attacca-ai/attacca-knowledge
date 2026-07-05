@@ -1,9 +1,10 @@
 import { randomUUID } from 'crypto'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
-import { join, dirname } from 'path'
-import { app } from 'electron'
+import { dirname } from 'path'
 import { llmCompletion } from '../llm/completion'
 import { parseLlmJson } from '../lib/parse-llm-json'
+import { localDateStr } from '../lib/dates'
+import { vaultPath } from '../vault/paths'
 import {
   getMemoriesSince,
   getAllIdentityTraits,
@@ -51,10 +52,23 @@ interface ImportanceAdjustment {
   reason: string
 }
 
+/** Cap the memories inlined into a synthesis prompt — the first-ever run has
+ * since=0 and would otherwise inline the entire memory table into one Haiku
+ * prompt (cost blowup / context overflow). */
+const MAX_MEMORIES_PER_SYNTHESIS = 200
+
+function capMemories(memories: MemoryRow[]): MemoryRow[] {
+  if (memories.length <= MAX_MEMORIES_PER_SYNTHESIS) return memories
+  return [...memories]
+    .sort((a, b) => b.created_at - a.created_at)
+    .slice(0, MAX_MEMORIES_PER_SYNTHESIS)
+    .reverse()
+}
+
 export async function runDailySynthesis(): Promise<void> {
   const lastDaily = getLastSynthesis('daily')
   const since = lastDaily?.created_at ?? 0
-  const memories = getMemoriesSince(since)
+  const memories = capMemories(getMemoriesSince(since))
 
   if (memories.length < MIN_MEMORIES_FOR_DAILY) {
     console.log(
@@ -142,7 +156,7 @@ Rules:
   // Log synthesis run
   const logEntry: SynthesisLogRow = {
     id: `synth_daily_${randomUUID()}`,
-    run_date: new Date().toISOString().slice(0, 10),
+    run_date: localDateStr(),
     type: 'daily',
     input_memory_ids: JSON.stringify(memories.map((m) => m.id)),
     output_memory_ids: JSON.stringify([]),
@@ -183,7 +197,7 @@ export async function runWeeklySynthesis(): Promise<void> {
   }
 
   const since = lastWeekly?.created_at ?? weekAgo
-  const memories = getMemoriesSince(since)
+  const memories = capMemories(getMemoriesSince(since))
   const currentTraits = getAllIdentityTraits()
 
   if (memories.length === 0) {
@@ -313,7 +327,7 @@ Rules:
   // Log synthesis run
   const logEntry: SynthesisLogRow = {
     id: runId,
-    run_date: new Date().toISOString().slice(0, 10),
+    run_date: localDateStr(),
     type: 'weekly',
     input_memory_ids: JSON.stringify(memories.map((m) => m.id)),
     output_memory_ids: JSON.stringify([]),
@@ -358,7 +372,10 @@ export function runImportanceDecay(): number {
 // ── CONTEXT.md Update ───────────────────────────────────────────────────────
 
 function updateContextSummary(summary: string): void {
-  const ctxPath = join(app.getPath('userData'), 'attacca-kb', 'memory', 'CONTEXT.md')
+  // Resolve through the vault layer — a hardcoded legacy attacca-kb path would
+  // write to a folder nothing reads after the Phase 1 migration / in external
+  // Obsidian mode.
+  const ctxPath = vaultPath('memory', 'CONTEXT.md')
   const dir = dirname(ctxPath)
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
 
@@ -376,6 +393,19 @@ function updateContextSummary(summary: string): void {
   } else {
     // Prepend weekly summary before other sections
     content = weeklySectionContent + '\n' + content
+  }
+
+  // Enforce the 150-line cap (spec: CONTEXT.md max 150 lines). Keep scaffold
+  // lines (headers, agent-managed markers) plus the most recent content —
+  // same policy as the kb:save-capture handler.
+  const lines = content.split('\n')
+  if (lines.length > 150) {
+    const isScaffold = (line: string): boolean =>
+      line.startsWith('# ') || line.startsWith('## ') || line.startsWith('<!-- ')
+    const scaffold = lines.filter(isScaffold)
+    const body = lines.filter((l) => !isScaffold(l))
+    const budget = Math.max(0, 150 - scaffold.length)
+    content = [...scaffold, ...body.slice(-budget)].join('\n')
   }
 
   writeFileSync(ctxPath, content, 'utf-8')

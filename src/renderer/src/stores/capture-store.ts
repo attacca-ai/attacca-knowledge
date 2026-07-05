@@ -35,6 +35,12 @@ interface CaptureStore {
 const RAW_CAPTURES_LIMIT = 200
 let captureIdCounter = 0
 
+/** Derived pending count — manual increment/decrement bookkeeping drifted
+ * (double decrements from the confirm flow, hydrate resetting to 0). */
+function pendingCount(list: CaptureEntry[]): number {
+  return list.filter((c) => c.agentNote === null && !c.archived).length
+}
+
 export const useCaptureStore = create<CaptureStore>((set) => ({
   rawCaptures: [],
   rawCapturesCount: 0,
@@ -47,7 +53,7 @@ export const useCaptureStore = create<CaptureStore>((set) => ({
       const n = parseInt(c.id.replace('cap_', ''))
       if (!isNaN(n) && n > captureIdCounter) captureIdCounter = n
     }
-    set({ rawCaptures: saved })
+    set({ rawCaptures: saved, rawCapturesCount: pendingCount(saved) })
   },
 
   addRawCapture: (e) => {
@@ -56,18 +62,18 @@ export const useCaptureStore = create<CaptureStore>((set) => ({
       id: `cap_${++captureIdCounter}`,
       timestamp: Date.now()
     }
-    set((s) => ({
-      rawCaptures: [entry, ...s.rawCaptures].slice(0, RAW_CAPTURES_LIMIT),
-      rawCapturesCount: s.rawCapturesCount + (e.agentNote === null ? 1 : 0)
-    }))
+    set((s) => {
+      const rawCaptures = [entry, ...s.rawCaptures].slice(0, RAW_CAPTURES_LIMIT)
+      return { rawCaptures, rawCapturesCount: pendingCount(rawCaptures) }
+    })
     schedulePersist()
   },
 
   updateCaptureNote: (id, agentNote) => {
-    set((s) => ({
-      rawCaptures: s.rawCaptures.map((c) => (c.id === id ? { ...c, agentNote } : c)),
-      rawCapturesCount: Math.max(0, s.rawCapturesCount - 1)
-    }))
+    set((s) => {
+      const rawCaptures = s.rawCaptures.map((c) => (c.id === id ? { ...c, agentNote } : c))
+      return { rawCaptures, rawCapturesCount: pendingCount(rawCaptures) }
+    })
     schedulePersist()
   },
 
@@ -81,23 +87,18 @@ export const useCaptureStore = create<CaptureStore>((set) => ({
   },
 
   deleteCapture: (id) => {
-    set((s) => ({
-      rawCaptures: s.rawCaptures.filter((c) => c.id !== id),
-      rawCapturesCount: Math.max(
-        0,
-        s.rawCapturesCount -
-          (s.rawCaptures.find((c) => c.id === id && !c.agentNote) ? 1 : 0)
-      )
-    }))
+    set((s) => {
+      const rawCaptures = s.rawCaptures.filter((c) => c.id !== id)
+      return { rawCaptures, rawCapturesCount: pendingCount(rawCaptures) }
+    })
     schedulePersist()
   },
 
   archiveCapture: (id) => {
-    set((s) => ({
-      rawCaptures: s.rawCaptures.map((c) =>
-        c.id === id ? { ...c, archived: true } : c
-      )
-    }))
+    set((s) => {
+      const rawCaptures = s.rawCaptures.map((c) => (c.id === id ? { ...c, archived: true } : c))
+      return { rawCaptures, rawCapturesCount: pendingCount(rawCaptures) }
+    })
     schedulePersist()
   }
 }))
